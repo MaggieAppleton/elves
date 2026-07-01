@@ -3,6 +3,7 @@ import cors from 'cors'
 import { readCanvas, writeCanvas, CanvasSnapshot } from './store'
 import { isChangeSet, ChangeSet, changeSetWritesText } from '../src/model/changeset'
 import { snapshotToCards } from './digest'
+import { assetsDir, extForMime, saveAsset, resolveAssetPath } from './assets'
 
 // Express 4 does not await async handlers, so a rejected promise becomes a fatal
 // unhandled rejection that takes down the whole server. wrap() turns any handler
@@ -59,6 +60,27 @@ export function createServer(dataPath: string, onChangeSet?: (cs: ChangeSet) => 
     }
     onChangeSet?.(req.body)
     res.json({ ok: true })
+  })
+
+  app.post('/assets', express.raw({ type: ['image/*'], limit: '25mb' }), async (req, res) => {
+    const ext = extForMime((req.headers['content-type'] ?? '').split(';')[0].trim())
+    if (!ext || !Buffer.isBuffer(req.body) || req.body.length === 0) {
+      res.status(400).json({ error: 'expected a non-empty image body' })
+      return
+    }
+    const assetId = await saveAsset(assetsDir(dataPath), req.body, ext)
+    res.json({ assetId })
+  })
+
+  app.get('/assets/:id', (req, res) => {
+    const path = resolveAssetPath(assetsDir(dataPath), req.params.id)
+    if (!path) {
+      res.status(400).json({ error: 'bad asset id' })
+      return
+    }
+    res.sendFile(path, (err) => {
+      if (err && !res.headersSent) res.status(404).end()
+    })
   })
 
   return app

@@ -69,3 +69,31 @@ test('POST /changeset rejects a change-set that would write text (403)', async (
   const res = await request(app).post('/changeset').send(bad)
   expect(res.status).toBe(400) // isChangeSet already rejects unknown kinds first
 })
+
+const TINY_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64',
+)
+
+test('POST /assets stores an image and GET /assets/:id serves it', async () => {
+  const app = createServer(await tmpCanvas())
+  const post = await request(app).post('/assets').set('content-type', 'image/png').send(TINY_PNG)
+  expect(post.status).toBe(200)
+  expect(post.body.assetId).toMatch(/\.png$/)
+
+  const get = await request(app).get(`/assets/${post.body.assetId}`)
+  expect(get.status).toBe(200)
+  expect(get.headers['content-type']).toContain('image/png')
+})
+
+test('POST /assets rejects a non-image body', async () => {
+  const app = createServer(await tmpCanvas())
+  const res = await request(app).post('/assets').set('content-type', 'text/plain').send('nope')
+  expect(res.status).toBe(400)
+})
+
+test('GET /assets rejects a traversal id', async () => {
+  const app = createServer(await tmpCanvas())
+  const res = await request(app).get('/assets/..%2fpackage.json')
+  expect([400, 404]).toContain(res.status)
+})
