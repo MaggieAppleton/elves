@@ -10,6 +10,7 @@ describe('card factories', () => {
     expect(p).toEqual({
       w: CARD_DEFAULT_W, h: CARD_DEFAULT_H, kind: 'prose',
       sourceKind: null, origin: null, text: 'a point I wrote',
+      comments: [], mergedInto: null,
     })
     expect(isProseCard(p)).toBe(true)
     expect(isSourceCard(p)).toBe(false)
@@ -20,6 +21,8 @@ describe('card factories', () => {
     expect(s.kind).toBe('source')
     expect(s.sourceKind).toBe('text')
     expect(s.origin).toBe('typed')
+    expect(s.comments).toEqual([])
+    expect(s.mergedInto).toBeNull()
     expect(isSourceCard(s)).toBe(true)
   })
 
