@@ -23,6 +23,18 @@ The canvas can now receive **change-sets** — the exact mechanism Claude will d
 
 A change-set is `POST`ed to the server's `/changeset` endpoint and broadcast over a websocket (same port, `5199`) to the open app. **The boundary:** a change-set's operations are exactly *comment*, *merge*, and *move* — **none can write a card's text.** Your prose stays yours, structurally.
 
+## Using Claude (Phase 2b)
+
+With the app running (`npm run dev:all`), Claude reaches the canvas through a scoped
+MCP server. In Claude Code, opening this project offers the `elves` MCP server
+(see `.mcp.json`); approve it. Then ask Claude things like "read my canvas and flag
+weak spots", "dedupe my source cards", or "reorder these points for flow". Claude's
+changes appear live and are undoable.
+
+Claude has exactly four tools — `read_canvas`, `add_comment`, `merge_sources`,
+`move_cards`. There is deliberately no tool to write card text: Claude comments,
+dedupes, and reorders, but never writes your prose. See `skill/elves-canvas.md`.
+
 ## Requirements
 
 - **Node.js 18+** (developed on Node 23) and **npm**.

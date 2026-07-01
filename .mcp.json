@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "elves": {
+      "command": "npx",
+      "args": ["tsx", "mcp/index.ts"],
+      "env": { "ELVES_URL": "http://localhost:5199" }
+    }
+  }
+}
