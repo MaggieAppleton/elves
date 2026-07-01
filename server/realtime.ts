@@ -8,6 +8,7 @@ export function attachRealtime(httpServer: Server) {
 
   wss.on('connection', (ws) => {
     clients.add(ws)
+    ws.on('error', (err) => console.error('[ws] client error', err))
     ws.on('close', () => clients.delete(ws))
   })
 

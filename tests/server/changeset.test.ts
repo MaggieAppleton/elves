@@ -30,6 +30,7 @@ test('POST /changeset validates and forwards to onChangeSet', async () => {
 
   const bad = await request(app).post('/changeset').send({ id: 'x', ops: 'nope' })
   expect(bad.status).toBe(400)
+  expect(onChangeSet).toHaveBeenCalledTimes(1) // called once for the valid POST, never for the invalid one
 })
 
 test('attachRealtime broadcasts a change-set to connected websocket clients', async () => {
