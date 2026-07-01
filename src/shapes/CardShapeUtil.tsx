@@ -72,6 +72,13 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
   }
 
   component(shape: CardShape) {
+    if (shape.props.mergedInto) {
+      // Merged into a representative — hidden but recoverable.
+      return <HTMLContainer />
+    }
+    const mergedCount = this.editor
+      .getCurrentPageShapes()
+      .filter((s) => s.type === 'card' && (s as CardShape).props.mergedInto === shape.id).length
     const { kind, origin, text } = shape.props
     const isEditing = this.editor.getEditingShapeId() === shape.id
     const comments = visibleComments(shape.props.comments)
@@ -80,6 +87,9 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
         <div className={`elves-card elves-card--${kind}`} style={{ width: '100%', height: '100%' }}>
           {kind === 'source' && (
             <span className="elves-badge" data-testid="card-badge">{origin ?? 'source'}</span>
+          )}
+          {mergedCount > 0 && (
+            <span className="elves-merged" data-testid="merged-badge">⊕ {mergedCount} merged</span>
           )}
           {isEditing ? (
             <textarea

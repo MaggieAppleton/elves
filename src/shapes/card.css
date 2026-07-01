@@ -59,3 +59,11 @@
   font-size: 14px; line-height: 1; color: inherit; opacity: 0.6;
 }
 .elves-comment__resolve:hover { opacity: 1; }
+.elves-merged {
+  align-self: flex-start;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #e5e0f5;
+  color: #4a3c66;
+}

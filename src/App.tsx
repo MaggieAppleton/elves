@@ -21,13 +21,17 @@ export default function App() {
       })
       .catch((err) => console.error('Elves: canvas load failed, starting empty', err))
       .finally(() => {
-        const save = debounce(() => {
-          saveCanvas(getSnapshot(ed.store)).catch((err) =>
-            console.error('Elves: canvas save failed', err),
-          )
-        }, 500)
+        let saving = false
+        const doSave = () => {
+          if (saving) return
+          saving = true
+          saveCanvas(getSnapshot(ed.store))
+            .catch((err) => console.error('Elves: canvas save failed', err))
+            .finally(() => { saving = false })
+        }
+        const save = debounce(doSave, 500)
         ed.store.listen(save, { source: 'user', scope: 'document' })
-        connectRealtime((cs) => applyChangeSet(ed, cs))
+        connectRealtime((cs) => { applyChangeSet(ed, cs); setTimeout(doSave, 0) })
       })
   }
 
