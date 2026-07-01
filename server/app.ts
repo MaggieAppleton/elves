@@ -1,7 +1,8 @@
 import express from 'express'
 import cors from 'cors'
 import { readCanvas, writeCanvas, CanvasSnapshot } from './store'
-import { isChangeSet, ChangeSet } from '../src/model/changeset'
+import { isChangeSet, ChangeSet, changeSetWritesText } from '../src/model/changeset'
+import { snapshotToCards } from './digest'
 
 export function createServer(dataPath: string, onChangeSet?: (cs: ChangeSet) => void) {
   const app = express()
@@ -22,9 +23,17 @@ export function createServer(dataPath: string, onChangeSet?: (cs: ChangeSet) => 
     res.json({ ok: true })
   })
 
+  app.get('/cards', async (_req, res) => {
+    res.json(snapshotToCards(await readCanvas(dataPath)))
+  })
+
   app.post('/changeset', (req, res) => {
     if (!isChangeSet(req.body)) {
       res.status(400).json({ error: 'invalid change-set' })
+      return
+    }
+    if (changeSetWritesText(req.body)) {
+      res.status(403).json({ error: 'change-set may not write card text' })
       return
     }
     onChangeSet?.(req.body)

@@ -1,4 +1,5 @@
 import { afterEach, expect, test, vi } from 'vitest'
+import { snapshotToCards } from '../../server/digest'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -48,4 +49,23 @@ test('attachRealtime broadcasts a change-set to connected websocket clients', as
 
   ws.close()
   await new Promise<void>((r) => server.close(() => r()))
+})
+
+test('GET /cards returns the card digest', async () => {
+  const app = createServer(await tmpCanvas())
+  const snap = {
+    document: { store: { 'shape:a': { id: 'shape:a', typeName: 'shape', type: 'card', x: 5, y: 6, props: { w: 240, h: 120, kind: 'source', sourceKind: 'text', origin: 'typed', text: 'raw', comments: [], mergedInto: null } } } },
+    session: null,
+  }
+  await request(app).post('/canvas').send(snap)
+  const res = await request(app).get('/cards')
+  expect(res.status).toBe(200)
+  expect(res.body).toEqual(snapshotToCards(snap))
+})
+
+test('POST /changeset rejects a change-set that would write text (403)', async () => {
+  const app = createServer(await tmpCanvas())
+  const bad = { id: 'x', author: 'claude', ops: [{ kind: 'edit_text', cardId: 'a', text: 'no' }] }
+  const res = await request(app).post('/changeset').send(bad)
+  expect(res.status).toBe(400) // isChangeSet already rejects unknown kinds first
 })

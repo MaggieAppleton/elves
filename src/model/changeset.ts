@@ -43,6 +43,26 @@ export function isChangeSet(value: unknown): value is ChangeSet {
     Array.isArray(cs.ops) && cs.ops.every(isOp)
 }
 
+/**
+ * Defense-in-depth for the core rule "Claude never writes prose". Returns true
+ * iff any op in the change-set would write a card's text. The current op
+ * vocabulary (add_comment / merge_sources / move_cards) has no such op, so this
+ * is always false — but the server calls it before applying, so if a text-writing
+ * op is ever added it must be added here consciously.
+ */
+export function changeSetWritesText(cs: ChangeSet): boolean {
+  return cs.ops.some((op) => {
+    switch (op.kind) {
+      case 'add_comment':
+      case 'merge_sources':
+      case 'move_cards':
+        return false
+      default:
+        return true // unknown op: treat as unsafe
+    }
+  })
+}
+
 export interface MergePlan {
   representativeId: string
   hiddenIds: string[]
