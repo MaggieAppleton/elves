@@ -1,7 +1,8 @@
-import { Editor } from 'tldraw'
+import { Editor, createShapeId } from 'tldraw'
 import { ChangeSet, Op, planMerge } from '../model/changeset'
 import { CardShape } from '../shapes/CardShapeUtil'
 import { makeComment, addComment } from '../model/comments'
+import { makeSourceCardProps } from '../model/cards'
 
 function newId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`
@@ -34,6 +35,16 @@ function applyMove(editor: Editor, op: Extract<Op, { kind: 'move_cards' }>): voi
   }
 }
 
+function applyCreateSourceCard(editor: Editor, op: Extract<Op, { kind: 'create_source_card' }>): void {
+  editor.createShape<CardShape>({
+    id: createShapeId(),
+    type: 'card',
+    x: op.x,
+    y: op.y,
+    props: makeSourceCardProps(op.text, 'transcribed'),
+  })
+}
+
 function applyOp(editor: Editor, op: Op): void {
   switch (op.kind) {
     case 'add_comment':
@@ -44,6 +55,9 @@ function applyOp(editor: Editor, op: Op): void {
       break
     case 'move_cards':
       applyMove(editor, op)
+      break
+    case 'create_source_card':
+      applyCreateSourceCard(editor, op)
       break
   }
 }
