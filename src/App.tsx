@@ -11,12 +11,21 @@ const shapeUtils = [CardShapeUtil]
 export default function App() {
   const [editor, setEditor] = useState<Editor | null>(null)
 
-  const handleMount = async (ed: Editor) => {
+  const handleMount = (ed: Editor) => {
     setEditor(ed)
-    const snapshot = await loadCanvas()
-    if (snapshot && snapshot.document) loadSnapshot(ed.store, snapshot)
-    const save = debounce(() => saveCanvas(getSnapshot(ed.store)), 500)
-    ed.store.listen(save, { source: 'user', scope: 'document' })
+    loadCanvas()
+      .then((snapshot) => {
+        if (snapshot?.document) loadSnapshot(ed.store, snapshot)
+      })
+      .catch((err) => console.error('Elves: canvas load failed, starting empty', err))
+      .finally(() => {
+        const save = debounce(() => {
+          saveCanvas(getSnapshot(ed.store)).catch((err) =>
+            console.error('Elves: canvas save failed', err),
+          )
+        }, 500)
+        ed.store.listen(save, { source: 'user', scope: 'document' })
+      })
   }
 
   const addCard = (kind: 'prose' | 'source') => {

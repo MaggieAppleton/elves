@@ -17,10 +17,10 @@ test('saveCanvas POSTs the snapshot as JSON', async () => {
   const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ ok: true }) }))
   vi.stubGlobal('fetch', fetchMock)
   await saveCanvas({ a: 1 })
-  const [, init] = fetchMock.mock.calls[0]
+  const init = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1]
   expect(init.method).toBe('POST')
-  expect(JSON.parse(init.body)).toEqual({ a: 1 })
-  expect(init.headers['content-type']).toBe('application/json')
+  expect(JSON.parse(init.body as string)).toEqual({ a: 1 })
+  expect((init.headers as Record<string, string>)['content-type']).toBe('application/json')
 })
 
 test('debounce collapses rapid calls into one trailing call', () => {
