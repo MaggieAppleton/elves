@@ -5,6 +5,8 @@ import './theme.css'
 import { CardShapeUtil, CardShape } from './shapes/CardShapeUtil'
 import { makeProseCardProps, makeSourceCardProps } from './model/cards'
 import { loadCanvas, saveCanvas, debounce } from './client/persistence'
+import { applyChangeSet } from './apply/applyChangeSet'
+import { connectRealtime } from './client/realtime'
 
 const shapeUtils = [CardShapeUtil]
 
@@ -25,6 +27,7 @@ export default function App() {
           )
         }, 500)
         ed.store.listen(save, { source: 'user', scope: 'document' })
+        connectRealtime((cs) => applyChangeSet(ed, cs))
       })
   }
 

@@ -5,6 +5,7 @@ import {
 } from 'tldraw'
 import type { CardKind, SourceKind, Origin, Comment } from '../model/types'
 import { makeProseCardProps } from '../model/cards'
+import { visibleComments, resolveComment } from '../model/comments'
 import './card.css'
 
 export type CardShape = TLBaseShape<'card', {
@@ -73,6 +74,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
   component(shape: CardShape) {
     const { kind, origin, text } = shape.props
     const isEditing = this.editor.getEditingShapeId() === shape.id
+    const comments = visibleComments(shape.props.comments)
     return (
       <HTMLContainer>
         <div className={`elves-card elves-card--${kind}`} style={{ width: '100%', height: '100%' }}>
@@ -95,6 +97,33 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
             />
           ) : (
             <div className="elves-card__text" data-testid="card-text">{text}</div>
+          )}
+          {comments.length > 0 && (
+            <div className="elves-comments">
+              {comments.map((c) => (
+                <div
+                  key={c.id}
+                  className="elves-comment"
+                  data-type={c.type ?? 'freeform'}
+                  onPointerDown={(e) => e.stopPropagation()}
+                >
+                  {c.type && <span className="elves-comment__type">{c.type}</span>}
+                  <span className="elves-comment__text">{c.text}</span>
+                  <button
+                    className="elves-comment__resolve"
+                    data-testid="comment-resolve"
+                    onClick={() =>
+                      this.editor.updateShape<CardShape>({
+                        id: shape.id, type: 'card',
+                        props: { comments: resolveComment(shape.props.comments, c.id) },
+                      })
+                    }
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </HTMLContainer>
