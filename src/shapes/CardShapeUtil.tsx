@@ -1,7 +1,7 @@
 import {
   ShapeUtil, TLBaseShape, HTMLContainer, Rectangle2d, T, RecordProps,
-  createShapePropsMigrationSequence, createShapePropsMigrationIds,
-  type Geometry2d,
+  createShapePropsMigrationSequence, createShapePropsMigrationIds, resizeBox,
+  type Geometry2d, type TLResizeInfo,
 } from 'tldraw'
 import type { CardKind, SourceKind, Origin, Comment } from '../model/types'
 import { makeProseCardProps } from '../model/cards'
@@ -83,45 +83,49 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     const isEditing = this.editor.getEditingShapeId() === shape.id
     const comments = visibleComments(shape.props.comments)
     return (
-      <HTMLContainer>
-        <div className={`elves-card elves-card--${kind}`} style={{ width: '100%', height: '100%' }}>
-          {kind === 'source' && (
-            <span className="elves-badge" data-testid="card-badge">{origin ?? 'source'}</span>
-          )}
-          {mergedCount > 0 && (
-            <span className="elves-merged" data-testid="merged-badge">⊕ {mergedCount} merged</span>
-          )}
-          {isEditing ? (
-            <textarea
-              className="elves-card__editor"
-              autoFocus
-              defaultValue={text}
-              onPointerDown={(e) => e.stopPropagation()}
-              onChange={(e) =>
-                this.editor.updateShape<CardShape>({
-                  id: shape.id,
-                  type: 'card',
-                  props: { text: e.currentTarget.value },
-                })
-              }
-            />
-          ) : (
-            <div className="elves-card__text" data-testid="card-text">{text}</div>
-          )}
+      <HTMLContainer style={{ overflow: 'visible' }}>
+        <div className="elves-card-wrap" style={{ position: 'relative', width: '100%', height: '100%' }}>
+          <div className={`elves-card elves-card--${kind}`} style={{ width: '100%', height: '100%' }}>
+            {kind === 'source' && (
+              <span className="elves-badge" data-testid="card-badge">{origin ?? 'source'}</span>
+            )}
+            {mergedCount > 0 && (
+              <span className="elves-merged" data-testid="merged-badge">⊕ {mergedCount} merged</span>
+            )}
+            {isEditing ? (
+              <textarea
+                className="elves-card__editor"
+                autoFocus
+                defaultValue={text}
+                onPointerDown={(e) => e.stopPropagation()}
+                onChange={(e) =>
+                  this.editor.updateShape<CardShape>({
+                    id: shape.id,
+                    type: 'card',
+                    props: { text: e.currentTarget.value },
+                  })
+                }
+              />
+            ) : (
+              <div className="elves-card__text" data-testid="card-text">{text}</div>
+            )}
+          </div>
           {comments.length > 0 && (
-            <div className="elves-comments">
+            <div className="elves-comments" onPointerDown={(e) => e.stopPropagation()}>
               {comments.map((c) => (
                 <div
                   key={c.id}
                   className="elves-comment"
                   data-type={c.type ?? 'freeform'}
-                  onPointerDown={(e) => e.stopPropagation()}
                 >
-                  {c.type && <span className="elves-comment__type">{c.type}</span>}
-                  <span className="elves-comment__text">{c.text}</span>
+                  <div className="elves-comment__body">
+                    {c.type && <span className="elves-comment__type">{c.type}</span>}
+                    <span className="elves-comment__text">{c.text}</span>
+                  </div>
                   <button
                     className="elves-comment__resolve"
                     data-testid="comment-resolve"
+                    title="Resolve"
                     onClick={() =>
                       this.editor.updateShape<CardShape>({
                         id: shape.id, type: 'card',
@@ -146,4 +150,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
 
   override canResize() { return true }
   override canEdit() { return true }
+  override onResize(shape: CardShape, info: TLResizeInfo<CardShape>) {
+    return resizeBox(shape, info)
+  }
 }
