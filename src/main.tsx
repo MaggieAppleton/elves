@@ -1,9 +1,6 @@
-import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-)
+// Note: React.StrictMode is omitted here — tldraw disposes its editor on
+// unmount, which causes a crash in StrictMode's double-mount dev cycle.
+createRoot(document.getElementById('root')!).render(<App />)

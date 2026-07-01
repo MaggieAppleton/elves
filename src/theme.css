@@ -1,0 +1,5 @@
+:root {
+  --elves-card-font: 'Inter', system-ui, -apple-system, sans-serif;
+}
+html, body, #root { height: 100%; margin: 0; }
+#app-root { position: fixed; inset: 0; }
