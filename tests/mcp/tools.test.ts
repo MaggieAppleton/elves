@@ -3,7 +3,7 @@ import http from 'node:http'
 import { WebSocket } from 'ws'
 import { createServer } from '../../server/app'
 import { attachRealtime } from '../../server/realtime'
-import { makeChangeSet, addCommentTool, moveCardsTool, mergeSourcesTool, readCanvasTool } from '../../mcp/tools'
+import { makeChangeSet, addCommentTool, readCanvasTool } from '../../mcp/tools'
 
 let servers: http.Server[] = []
 async function liveElves(): Promise<string> {
