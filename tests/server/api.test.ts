@@ -38,3 +38,18 @@ test('POST rejects a non-object body', async () => {
   const res = await request(app).post('/canvas').send([1, 2, 3])
   expect(res.status).toBe(400)
 })
+
+test('a write failure returns 500 instead of crashing the server', async () => {
+  const d = await fs.mkdtemp(join(tmpdir(), 'elves-api-'))
+  dirs.push(d)
+  // Force writeCanvas to fail deterministically: make the data path's parent a
+  // FILE, so mkdir(dirname(path)) throws ENOTDIR. Without an error boundary the
+  // rejected promise is fatal; with one, the request should get a clean 500.
+  const filePath = join(d, 'not-a-dir')
+  await fs.writeFile(filePath, 'x', 'utf8')
+  const app = createServer(join(filePath, 'canvas.json'))
+  const res = await request(app)
+    .post('/canvas')
+    .send({ document: null, session: null })
+  expect(res.status).toBe(500)
+}, 10000)
