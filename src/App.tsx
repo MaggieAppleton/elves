@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Tldraw, Editor, getSnapshot, loadSnapshot, createShapeId } from 'tldraw'
 import 'tldraw/tldraw.css'
 import './theme.css'
 import { CardShapeUtil, CardShape } from './shapes/CardShapeUtil'
-import { makeProseCardProps, makeSourceCardProps } from './model/cards'
+import { makeProseCardProps, makeSourceCardProps, makeImageSourceCardProps } from './model/cards'
 import { loadCanvas, saveCanvas, debounce } from './client/persistence'
+import { uploadAsset } from './client/assets'
 import { applyChangeSet } from './apply/applyChangeSet'
 import { connectRealtime } from './client/realtime'
 
@@ -12,6 +13,26 @@ const shapeUtils = [CardShapeUtil]
 
 export default function App() {
   const [editor, setEditor] = useState<Editor | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const addImageCard = async (ed: Editor, file: File, point?: { x: number; y: number }) => {
+    let aspect = 0.7
+    try {
+      const bmp = await createImageBitmap(file)
+      if (bmp.width > 0) aspect = bmp.height / bmp.width
+      bmp.close?.()
+    } catch { /* keep default aspect */ }
+    const w = 280
+    const h = Math.max(80, Math.round(w * aspect))
+    const assetId = await uploadAsset(file)
+    const at = point ?? ed.getViewportPageBounds().center
+    const id = createShapeId()
+    ed.createShape<CardShape>({
+      id, type: 'card', x: at.x - w / 2, y: at.y - h / 2,
+      props: { ...makeImageSourceCardProps(assetId), w, h },
+    })
+    ed.select(id)
+  }
 
   const handleMount = (ed: Editor) => {
     setEditor(ed)
@@ -32,6 +53,11 @@ export default function App() {
         const save = debounce(doSave, 500)
         ed.store.listen(save, { source: 'user', scope: 'document' })
         connectRealtime((cs) => { applyChangeSet(ed, cs); setTimeout(doSave, 0) })
+        ed.registerExternalContentHandler('files', async ({ files, point }) => {
+          for (const file of files) {
+            if (file.type.startsWith('image/')) await addImageCard(ed, file, point)
+          }
+        })
       })
   }
 
@@ -53,6 +79,19 @@ export default function App() {
       <div className="elves-toolbar">
         <button data-testid="new-prose" onClick={() => addCard('prose')}>+ Prose</button>
         <button data-testid="new-source" onClick={() => addCard('source')}>+ Source</button>
+        <button data-testid="new-image" onClick={() => fileInputRef.current?.click()}>+ Image</button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          style={{ display: 'none' }}
+          data-testid="image-input"
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            if (file && editor) addImageCard(editor, file)
+            e.target.value = ''
+          }}
+        />
       </div>
       <Tldraw shapeUtils={shapeUtils} onMount={handleMount} />
     </div>

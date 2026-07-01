@@ -6,6 +6,7 @@ import {
 import type { CardKind, SourceKind, Origin, Comment } from '../model/types'
 import { makeProseCardProps } from '../model/cards'
 import { visibleComments, resolveComment } from '../model/comments'
+import { assetUrl } from '../client/assets'
 import './card.css'
 
 export type CardShape = TLBaseShape<'card', {
@@ -92,7 +93,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     const mergedCount = this.editor
       .getCurrentPageShapes()
       .filter((s) => s.type === 'card' && (s as CardShape).props.mergedInto === shape.id).length
-    const { kind, origin, text } = shape.props
+    const { kind, origin, text, sourceKind, assetId } = shape.props
     const isEditing = this.editor.getEditingShapeId() === shape.id
     const comments = visibleComments(shape.props.comments)
     return (
@@ -105,7 +106,15 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
             {mergedCount > 0 && (
               <span className="elves-merged" data-testid="merged-badge">⊕ {mergedCount} merged</span>
             )}
-            {isEditing ? (
+            {sourceKind === 'image' && assetId ? (
+              <img
+                className="elves-card__image"
+                src={assetUrl(assetId)}
+                alt=""
+                draggable={false}
+                data-testid="card-image"
+              />
+            ) : isEditing ? (
               <textarea
                 className="elves-card__editor"
                 autoFocus

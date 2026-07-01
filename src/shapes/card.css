@@ -85,3 +85,11 @@
   background: #e5e0f5;
   color: #4a3c66;
 }
+.elves-card__image {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  object-fit: contain;
+  display: block;
+  border-radius: 6px;
+}
