@@ -3,7 +3,7 @@ import http from 'node:http'
 import { WebSocket } from 'ws'
 import { createServer } from '../../server/app'
 import { attachRealtime } from '../../server/realtime'
-import { makeChangeSet, addCommentTool, readCanvasTool } from '../../mcp/tools'
+import { makeChangeSet, addCommentTool, readCanvasTool, createSourceCardTool } from '../../mcp/tools'
 
 let servers: http.Server[] = []
 async function liveElves(): Promise<string> {
@@ -42,10 +42,24 @@ test('addCommentTool posts a valid change-set that the server broadcasts', async
   ws.close()
 })
 
+test('createSourceCardTool posts a create_source_card change-set', async () => {
+  const base = await liveElves()
+  const ws = new WebSocket(base.replace('http', 'ws') + '/ws')
+  const received = new Promise<any>((res) => ws.on('message', (d) => res(JSON.parse(d.toString()))))
+  await new Promise<void>((r) => ws.on('open', () => r()))
+
+  await createSourceCardTool(base, { text: 'typed handwriting', x: 5, y: 6 })
+
+  const cs = await received
+  expect(cs.author).toBe('claude')
+  expect(cs.ops).toEqual([{ kind: 'create_source_card', text: 'typed handwriting', x: 5, y: 6 }])
+  ws.close()
+})
+
 test('readCanvasTool reads the card digest', async () => {
   const base = await liveElves()
   const snap = { document: { store: { 'shape:a': { id: 'shape:a', typeName: 'shape', type: 'card', x: 1, y: 2, props: { w: 240, h: 120, kind: 'prose', sourceKind: null, origin: null, text: 'hi', comments: [], mergedInto: null } } } }, session: null }
   await fetch(`${base}/canvas`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(snap) })
   const cards = await readCanvasTool(base)
-  expect(cards).toEqual([{ id: 'shape:a', kind: 'prose', sourceKind: null, origin: null, text: 'hi', x: 1, y: 2, comments: [], mergedInto: null }])
+  expect(cards).toEqual([{ id: 'shape:a', kind: 'prose', sourceKind: null, origin: null, text: 'hi', x: 1, y: 2, comments: [], mergedInto: null, assetPath: null }])
 })

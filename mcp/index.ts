@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
-import { readCanvasTool, addCommentTool, mergeSourcesTool, moveCardsTool } from './tools'
+import { readCanvasTool, addCommentTool, mergeSourcesTool, moveCardsTool, createSourceCardTool } from './tools'
 
 const COMMENT_TYPE = z.enum(['needs-evidence', 'weak-argument', 'needs-citation'])
 
@@ -42,6 +42,16 @@ export function createMcpServer(baseUrl: string): McpServer {
     async ({ moves }) => {
       await moveCardsTool(baseUrl, { moves })
       return { content: [{ type: 'text', text: 'cards moved' }] }
+    },
+  )
+
+  server.tool(
+    'create_source_card',
+    "Create a SOURCE card containing text you transcribed from an image. First read the image card's file (read_canvas gives each image card an `assetPath`), then transcribe the handwriting FAITHFULLY — these are the user's own words; digitize them, do not summarize. Position (x, y) near the image. Creates a SOURCE card only — never a prose card.",
+    { text: z.string(), x: z.number(), y: z.number() },
+    async ({ text, x, y }) => {
+      await createSourceCardTool(baseUrl, { text, x, y })
+      return { content: [{ type: 'text', text: 'source card created' }] }
     },
   )
 

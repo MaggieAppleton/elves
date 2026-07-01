@@ -30,3 +30,12 @@ export function moveCardsTool(
 ): Promise<void> {
   return postChangeSet(baseUrl, makeChangeSet([{ kind: 'move_cards', moves: args.moves }]))
 }
+
+export function createSourceCardTool(
+  baseUrl: string,
+  args: { text: string; x: number; y: number },
+): Promise<void> {
+  return postChangeSet(baseUrl, makeChangeSet([
+    { kind: 'create_source_card', text: args.text, x: args.x, y: args.y },
+  ]))
+}
