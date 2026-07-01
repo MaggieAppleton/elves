@@ -3,3 +3,21 @@
 }
 html, body, #root { height: 100%; margin: 0; }
 #app-root { position: fixed; inset: 0; }
+.elves-toolbar {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 300;
+  display: flex;
+  gap: 8px;
+}
+.elves-toolbar button {
+  font-family: var(--elves-card-font);
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid #d8d4cf;
+  background: #fff;
+  cursor: pointer;
+}

@@ -37,13 +37,30 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
 
   component(shape: CardShape) {
     const { kind, origin, text } = shape.props
+    const isEditing = this.editor.getEditingShapeId() === shape.id
     return (
       <HTMLContainer>
         <div className={`elves-card elves-card--${kind}`} style={{ width: '100%', height: '100%' }}>
           {kind === 'source' && (
             <span className="elves-badge" data-testid="card-badge">{origin ?? 'source'}</span>
           )}
-          <div className="elves-card__text" data-testid="card-text">{text}</div>
+          {isEditing ? (
+            <textarea
+              className="elves-card__editor"
+              autoFocus
+              defaultValue={text}
+              onPointerDown={(e) => e.stopPropagation()}
+              onChange={(e) =>
+                this.editor.updateShape<CardShape>({
+                  id: shape.id,
+                  type: 'card',
+                  props: { text: e.currentTarget.value },
+                })
+              }
+            />
+          ) : (
+            <div className="elves-card__text" data-testid="card-text">{text}</div>
+          )}
         </div>
       </HTMLContainer>
     )
