@@ -2,7 +2,7 @@
 
 A local-first, canvas-based writing studio for taking a piece from scattered notes to a shaped set of your-own-voice points. You think spatially on an infinite canvas of cards; the tool keeps everything on your machine in a plain, human-readable file.
 
-> **Status: Phase 2b (Claude connected).** Create, edit, arrange, and persist cards; apply *change-sets* — comments, source-merges, and reorders — all natively undoable; and connect Claude, who reads your canvas and comments / dedupes / reorders within a hard boundary (never writing your prose). Images and Tana/MDX bridges are later — see [Roadmap](#roadmap).
+> **Status: Phase 3a (images on the canvas).** Create, edit, arrange, and persist cards; apply *change-sets* — comments, source-merges, and reorders — all natively undoable; connect Claude, who comments / dedupes / reorders within a hard boundary (never writing your prose); and drop in **images** (photos of paper notes, sketches) as source cards. Tana import and MDX are later — see [Roadmap](#roadmap).
 
 ## What it does (Phase 1)
 
@@ -34,6 +34,17 @@ changes appear live and are undoable.
 Claude has exactly four tools — `read_canvas`, `add_comment`, `merge_sources`,
 `move_cards`. There is deliberately no tool to write card text: Claude comments,
 dedupes, and reorders, but never writes your prose. See `skill/elves-canvas.md`.
+
+## Images (Phase 3a)
+
+Drag an image onto the canvas — or use the **+ Image** button — to add it as an
+**image source card**: a photo of paper notes, a Procreate/iPad sketch, or any
+picture that supports a nearby point. Image cards drag and resize like any card.
+
+Images are stored **local-first as files** in `data/assets/`; `canvas.json` keeps
+only a small `assetId`, so your canvas stays a portable folder no matter how many
+sketches you add. (Claude reading a handwritten-notes image and transcribing it into
+a text card is Phase 3b — see [Roadmap](#roadmap).)
 
 ## Requirements
 
@@ -78,7 +89,8 @@ npm run dev       # web app on :5173
 ## Using it
 
 - **+ Prose** / **+ Source** in the toolbar add a card at the centre of the view.
-- **Drag** cards to arrange them; use the canvas to group and lay out your argument spatially.
+- **+ Image** (or drag an image file onto the canvas) adds an image source card.
+- **Drag** cards to arrange them; use the canvas to group and lay out your argument spatially. Drag a card's corner to **resize** it.
 - **Double-click** a card to edit its text; click empty canvas to commit.
 - Edits save automatically (debounced) to `data/canvas.json`.
 
@@ -127,27 +139,31 @@ The e2e suite runs its own server against a throwaway `.e2e/canvas.json`, so it 
 
 ```
 src/
-  App.tsx                 # mounts the tldraw canvas + wires persistence + realtime
+  App.tsx                 # tldraw canvas + persistence + realtime + image upload
   main.tsx                # React entry
   theme.css               # --elves-card-font and layout
   model/                  # pure data model: cards, comments, change-set ops
   apply/applyChangeSet.ts # applies a change-set as one undoable tldraw step
   client/persistence.ts   # load/save the canvas via the server
   client/realtime.ts      # websocket client receiving change-sets
-  shapes/                 # the custom tldraw "card" shape (comments, merged) + CSS
+  client/assets.ts        # upload images, build asset URLs
+  shapes/                 # the custom tldraw "card" shape (text, image, comments) + CSS
 server/
   store.ts                # atomic read/write of canvas.json
-  app.ts                  # Express app: GET/POST /canvas, POST /changeset
+  assets.ts               # image files on disk (path-traversal-safe)
+  app.ts                  # Express: /canvas, /changeset, /cards, /assets
   realtime.ts             # websocket broadcast of change-sets
   index.ts                # server entrypoint (http + ws + express)
+mcp/                      # scoped MCP server — Claude's four tools
+skill/                    # the Claude skill (how to work the canvas)
 tests/                    # Vitest unit tests
 e2e/                      # Playwright end-to-end tests
-data/                     # your canvas.json lives here (git-ignored)
+data/                     # canvas.json + assets/ live here (git-ignored)
 ```
 
 ## Data & privacy
 
-Local-first by design. Your canvas is a plain, human-readable JSON file on your machine (`data/canvas.json`), which is git-ignored. Nothing is sent anywhere.
+Local-first by design. Your canvas is a plain, human-readable JSON file (`data/canvas.json`) and your images are plain files (`data/assets/`), all on your machine and git-ignored. Nothing is sent anywhere.
 
 ## Design principle
 
@@ -157,7 +173,8 @@ Your writing stays yours. The data model separates **source** (reference) cards 
 
 - **Phase 2a — Claude-ready canvas (done):** change-sets for comments, merge, and reorder, applied live and undoably.
 - **Phase 2b — Claude connected (done):** a scoped MCP server exposing the change-set operations + a Claude skill, so Claude reads the canvas and comments / dedupes / reorders within the boundary.
-- **Phase 3 — Images + vision:** drag-in image source cards; derive source cards from a photo or sketch.
+- **Phase 3a — images on the canvas (done):** drag-in / **+ Image** source cards, stored as local files.
+- **Phase 3b — transcription (next):** Claude reads a handwritten-notes image and transcribes it into a text source card (your words), via a `create_source_card` tool — still never writing your prose.
 - **Later:** assisted Tana import, MDX export, multi-device.
 
-See the design specs and build plans for the full rationale: [`2026-07-01-elves-design.md`](./2026-07-01-elves-design.md) (overall) · [`2026-07-01-elves-mvp-phase1-plan.md`](./2026-07-01-elves-mvp-phase1-plan.md) (Phase 1) · [`2026-07-01-elves-phase2-design.md`](./2026-07-01-elves-phase2-design.md) + [`2026-07-01-elves-phase2a-plan.md`](./2026-07-01-elves-phase2a-plan.md) (Phase 2).
+See the design specs and build plans for the full rationale: [`2026-07-01-elves-design.md`](./2026-07-01-elves-design.md) (overall) · [`2026-07-01-elves-mvp-phase1-plan.md`](./2026-07-01-elves-mvp-phase1-plan.md) (Phase 1) · [`2026-07-01-elves-phase2-design.md`](./2026-07-01-elves-phase2-design.md) + [`2026-07-01-elves-phase2a-plan.md`](./2026-07-01-elves-phase2a-plan.md) (Phase 2) · [`2026-07-01-elves-phase3-design.md`](./2026-07-01-elves-phase3-design.md) + [`2026-07-01-elves-phase3a-plan.md`](./2026-07-01-elves-phase3a-plan.md) (Phase 3).
