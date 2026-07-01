@@ -1,8 +1,9 @@
 import {
   ShapeUtil, TLBaseShape, HTMLContainer, Rectangle2d, T, RecordProps,
+  createShapePropsMigrationSequence, createShapePropsMigrationIds,
   type Geometry2d,
 } from 'tldraw'
-import type { CardKind, SourceKind, Origin } from '../model/types'
+import type { CardKind, SourceKind, Origin, Comment } from '../model/types'
 import { makeProseCardProps } from '../model/cards'
 import './card.css'
 
@@ -13,10 +14,34 @@ export type CardShape = TLBaseShape<'card', {
   sourceKind: SourceKind | null
   origin: Origin | null
   text: string
+  comments: Comment[]
+  mergedInto: string | null
 }>
+
+export function addCommentsUp(props: Record<string, unknown>): void {
+  props.comments = []
+  props.mergedInto = null
+}
+
+const cardVersions = createShapePropsMigrationIds('card', { AddComments: 1 })
+
+export const cardMigrations = createShapePropsMigrationSequence({
+  sequence: [
+    {
+      id: cardVersions.AddComments,
+      up: (props) => addCommentsUp(props as Record<string, unknown>),
+      down: (props) => {
+        const p = props as Record<string, unknown>
+        delete p.comments
+        delete p.mergedInto
+      },
+    },
+  ],
+})
 
 export class CardShapeUtil extends ShapeUtil<CardShape> {
   static override type = 'card' as const
+  static override migrations = cardMigrations
   static override props: RecordProps<CardShape> = {
     w: T.number,
     h: T.number,
@@ -24,6 +49,16 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     sourceKind: T.nullable(T.literalEnum('text', 'image')),
     origin: T.nullable(T.literalEnum('tana', 'image', 'typed')),
     text: T.string,
+    comments: T.arrayOf(
+      T.object({
+        id: T.string,
+        type: T.nullable(T.literalEnum('needs-evidence', 'weak-argument', 'needs-citation')),
+        text: T.string,
+        resolved: T.boolean,
+        author: T.literalEnum('claude'),
+      }),
+    ),
+    mergedInto: T.nullable(T.string),
   }
 
   getDefaultProps(): CardShape['props'] {
