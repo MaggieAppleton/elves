@@ -62,15 +62,19 @@ export function createServer(dataPath: string, onChangeSet?: (cs: ChangeSet) => 
     res.json({ ok: true })
   })
 
-  app.post('/assets', express.raw({ type: ['image/*'], limit: '25mb' }), async (req, res) => {
-    const ext = extForMime((req.headers['content-type'] ?? '').split(';')[0].trim())
-    if (!ext || !Buffer.isBuffer(req.body) || req.body.length === 0) {
-      res.status(400).json({ error: 'expected a non-empty image body' })
-      return
-    }
-    const assetId = await saveAsset(assetsDir(dataPath), req.body, ext)
-    res.json({ assetId })
-  })
+  app.post(
+    '/assets',
+    express.raw({ type: ['image/*'], limit: '25mb' }),
+    wrap(async (req, res) => {
+      const ext = extForMime((req.headers['content-type'] ?? '').split(';')[0].trim())
+      if (!ext || !Buffer.isBuffer(req.body) || req.body.length === 0) {
+        res.status(400).json({ error: 'expected a non-empty image body' })
+        return
+      }
+      const assetId = await saveAsset(assetsDir(dataPath), req.body, ext)
+      res.json({ assetId })
+    }),
+  )
 
   app.get('/assets/:id', (req, res) => {
     const path = resolveAssetPath(assetsDir(dataPath), req.params.id)

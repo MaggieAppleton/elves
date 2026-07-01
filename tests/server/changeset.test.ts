@@ -84,6 +84,16 @@ test('POST /assets stores an image and GET /assets/:id serves it', async () => {
   const get = await request(app).get(`/assets/${post.body.assetId}`)
   expect(get.status).toBe(200)
   expect(get.headers['content-type']).toContain('image/png')
+
+  const bytes = await request(app)
+    .get(`/assets/${post.body.assetId}`)
+    .buffer(true)
+    .parse((res, cb) => {
+      const chunks: Buffer[] = []
+      res.on('data', (c) => chunks.push(Buffer.from(c)))
+      res.on('end', () => cb(null, Buffer.concat(chunks)))
+    })
+  expect(bytes.body).toEqual(TINY_PNG)
 })
 
 test('POST /assets rejects a non-image body', async () => {
