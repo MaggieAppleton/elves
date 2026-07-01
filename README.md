@@ -2,7 +2,7 @@
 
 A local-first, canvas-based writing studio for taking a piece from scattered notes to a shaped set of your-own-voice points. You think spatially on an infinite canvas of cards; the tool keeps everything on your machine in a plain, human-readable file.
 
-> **Status: Phase 2a (Claude-ready canvas).** Create, edit, arrange, and persist cards, and apply Claude-style *change-sets* — comments, source-merges, and reorders — all natively undoable. Claude itself connects in Phase 2b; images and Tana/MDX bridges are later — see [Roadmap](#roadmap).
+> **Status: Phase 2b (Claude connected).** Create, edit, arrange, and persist cards; apply *change-sets* — comments, source-merges, and reorders — all natively undoable; and connect Claude, who reads your canvas and comments / dedupes / reorders within a hard boundary (never writing your prose). Images and Tana/MDX bridges are later — see [Roadmap](#roadmap).
 
 ## What it does (Phase 1)
 
@@ -14,7 +14,7 @@ A local-first, canvas-based writing studio for taking a piece from scattered not
 
 ## What it does (Phase 2a — the Claude-ready canvas)
 
-The canvas can now receive **change-sets** — the exact mechanism Claude will drive in Phase 2b — applied live and undoably, with no Claude yet:
+The canvas receives **change-sets** — the mechanism Claude drives in Phase 2b — applied live and undoably. Phase 2a built and proved this machinery on its own; Phase 2b (below) connects Claude to it:
 
 - **Comments** on any card: color-coded by type (`needs-evidence` · `weak-argument` · `needs-citation`) or freeform, each resolvable (resolve → hidden, kept).
 - **Merge** duplicate source cards: they collapse under a representative (hidden, recoverable) with a "N merged" badge.
@@ -156,7 +156,7 @@ Your writing stays yours. The data model separates **source** (reference) cards 
 ## Roadmap
 
 - **Phase 2a — Claude-ready canvas (done):** change-sets for comments, merge, and reorder, applied live and undoably.
-- **Phase 2b — Claude connected (next):** a scoped MCP server exposing the change-set operations + a Claude skill, so Claude reads the canvas and comments / dedupes / reorders within the boundary.
+- **Phase 2b — Claude connected (done):** a scoped MCP server exposing the change-set operations + a Claude skill, so Claude reads the canvas and comments / dedupes / reorders within the boundary.
 - **Phase 3 — Images + vision:** drag-in image source cards; derive source cards from a photo or sketch.
 - **Later:** assisted Tana import, MDX export, multi-device.
 
