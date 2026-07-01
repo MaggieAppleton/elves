@@ -8,6 +8,7 @@ test('none of the Phase 2 ops write card text', () => {
       { kind: 'add_comment' as const, cardId: 'a', comment: { type: null, text: 'note' } },
       { kind: 'merge_sources' as const, cardIds: ['a', 'b'] },
       { kind: 'move_cards' as const, moves: [{ cardId: 'a', x: 1, y: 2 }] },
+      { kind: 'create_source_card' as const, text: 'note', x: 1, y: 2 },
     ],
   }
   expect(changeSetWritesText(cs)).toBe(false)

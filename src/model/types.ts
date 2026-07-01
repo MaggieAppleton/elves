@@ -1,6 +1,6 @@
 export type CardKind = 'source' | 'prose'
 export type SourceKind = 'text' | 'image'
-export type Origin = 'tana' | 'image' | 'typed'
+export type Origin = 'tana' | 'image' | 'typed' | 'transcribed'
 
 export type CommentType = 'needs-evidence' | 'weak-argument' | 'needs-citation'
 

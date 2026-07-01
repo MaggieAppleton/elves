@@ -61,7 +61,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     h: T.number,
     kind: T.literalEnum('source', 'prose'),
     sourceKind: T.nullable(T.literalEnum('text', 'image')),
-    origin: T.nullable(T.literalEnum('tana', 'image', 'typed')),
+    origin: T.nullable(T.literalEnum('tana', 'image', 'typed', 'transcribed')),
     text: T.string,
     comments: T.arrayOf(
       T.object({

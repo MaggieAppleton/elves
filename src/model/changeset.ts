@@ -4,6 +4,7 @@ export type Op =
   | { kind: 'add_comment'; cardId: string; comment: { type: CommentType | null; text: string } }
   | { kind: 'merge_sources'; cardIds: string[] }
   | { kind: 'move_cards'; moves: { cardId: string; x: number; y: number }[] }
+  | { kind: 'create_source_card'; text: string; x: number; y: number }
 
 export interface ChangeSet {
   id: string
@@ -31,6 +32,8 @@ function isOp(v: unknown): v is Op {
         const mm = m as Record<string, unknown>
         return typeof mm.cardId === 'string' && typeof mm.x === 'number' && typeof mm.y === 'number'
       })
+    case 'create_source_card':
+      return typeof op.text === 'string' && typeof op.x === 'number' && typeof op.y === 'number'
     default:
       return false
   }
@@ -45,10 +48,10 @@ export function isChangeSet(value: unknown): value is ChangeSet {
 
 /**
  * Defense-in-depth for the core rule "Claude never writes prose". Returns true
- * iff any op in the change-set would write a card's text. The current op
- * vocabulary (add_comment / merge_sources / move_cards) has no such op, so this
- * is always false — but the server calls it before applying, so if a text-writing
- * op is ever added it must be added here consciously.
+ * iff any op in the change-set would write prose text or edit an existing card's text.
+ * create_source_card creates a new source card (allowed), so it returns false for it.
+ * The server calls this before applying, so if a text-writing op is ever added it must
+ * be added here consciously.
  */
 export function changeSetWritesText(cs: ChangeSet): boolean {
   return cs.ops.some((op) => {
@@ -56,6 +59,7 @@ export function changeSetWritesText(cs: ChangeSet): boolean {
       case 'add_comment':
       case 'merge_sources':
       case 'move_cards':
+      case 'create_source_card':
         return false
       default:
         return true // unknown op: treat as unsafe

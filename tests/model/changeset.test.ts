@@ -18,6 +18,7 @@ describe('isChangeSet', () => {
         { kind: 'add_comment', cardId: 'card1', comment: { type: 'needs-evidence', text: 'hi' } },
         { kind: 'merge_sources', cardIds: ['a', 'b'] },
         { kind: 'move_cards', moves: [{ cardId: 'a', x: 10, y: 20 }] },
+        { kind: 'create_source_card', text: 'transcribed words', x: 10, y: 20 },
       ],
     }
     expect(isChangeSet(cs)).toBe(true)
@@ -27,5 +28,8 @@ describe('isChangeSet', () => {
     expect(isChangeSet({ id: 'x', author: 'claude', ops: 'nope' })).toBe(false)
     expect(isChangeSet(null)).toBe(false)
     expect(isChangeSet({ id: 'x', ops: [] })).toBe(false) // missing author
+  })
+  test('rejects a malformed create_source_card', () => {
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'create_source_card', text: 'hi' }] })).toBe(false) // missing x/y
   })
 })
