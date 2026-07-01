@@ -18,7 +18,7 @@ export function snapshotToCards(snapshot: CanvasSnapshot): CardDigest[] {
   if (!doc) return []
   const store = doc.store ?? doc.records ?? {}
   return Object.values(store)
-    .filter((r: any) => r && r.typeName === 'shape' && r.type === 'card')
+    .filter((r: any) => r && r.typeName === 'shape' && r.type === 'card' && r.props)
     .map((r: any) => ({
       id: r.id,
       kind: r.props.kind,

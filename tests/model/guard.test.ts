@@ -12,3 +12,8 @@ test('none of the Phase 2 ops write card text', () => {
   }
   expect(changeSetWritesText(cs)).toBe(false)
 })
+
+test('an unknown op kind is treated as unsafe (writes text)', () => {
+  const cs = { id: 'x', author: 'claude' as const, ops: [{ kind: 'edit_text', cardId: 'a', text: 'no' }] as any }
+  expect(changeSetWritesText(cs)).toBe(true)
+})
