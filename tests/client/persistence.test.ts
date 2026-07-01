@@ -20,6 +20,7 @@ test('saveCanvas POSTs the snapshot as JSON', async () => {
   const [, init] = fetchMock.mock.calls[0]
   expect(init.method).toBe('POST')
   expect(JSON.parse(init.body)).toEqual({ a: 1 })
+  expect(init.headers['content-type']).toBe('application/json')
 })
 
 test('debounce collapses rapid calls into one trailing call', () => {
@@ -31,4 +32,14 @@ test('debounce collapses rapid calls into one trailing call', () => {
   vi.advanceTimersByTime(500)
   expect(spy).toHaveBeenCalledTimes(1)
   expect(spy).toHaveBeenCalledWith('c')
+})
+
+test('loadCanvas throws when the response is not ok', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) })))
+  await expect(loadCanvas()).rejects.toThrow('load failed: 500')
+})
+
+test('saveCanvas throws when the response is not ok', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) })))
+  await expect(saveCanvas({ a: 1 })).rejects.toThrow('save failed: 500')
 })
