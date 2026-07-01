@@ -8,7 +8,7 @@ export function makeProseCardProps(text = ''): CardProps {
   return {
     w: CARD_DEFAULT_W, h: CARD_DEFAULT_H,
     kind: 'prose', sourceKind: null, origin: null, text,
-    comments: [], mergedInto: null,
+    comments: [], mergedInto: null, assetId: null,
   }
 }
 
@@ -16,7 +16,15 @@ export function makeSourceCardProps(text = '', origin: Origin = 'typed'): CardPr
   return {
     w: CARD_DEFAULT_W, h: CARD_DEFAULT_H,
     kind: 'source', sourceKind: 'text', origin, text,
-    comments: [], mergedInto: null,
+    comments: [], mergedInto: null, assetId: null,
+  }
+}
+
+export function makeImageSourceCardProps(assetId: string): CardProps {
+  return {
+    w: 280, h: 200,
+    kind: 'source', sourceKind: 'image', origin: 'image', text: '',
+    comments: [], mergedInto: null, assetId,
   }
 }
 

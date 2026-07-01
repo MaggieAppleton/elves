@@ -17,6 +17,7 @@ export type CardShape = TLBaseShape<'card', {
   text: string
   comments: Comment[]
   mergedInto: string | null
+  assetId: string | null
 }>
 
 export function addCommentsUp(props: Record<string, unknown>): void {
@@ -24,7 +25,11 @@ export function addCommentsUp(props: Record<string, unknown>): void {
   props.mergedInto = null
 }
 
-const cardVersions = createShapePropsMigrationIds('card', { AddComments: 1 })
+export function addAssetIdUp(props: Record<string, unknown>): void {
+  props.assetId = null
+}
+
+const cardVersions = createShapePropsMigrationIds('card', { AddComments: 1, AddAssetId: 2 })
 
 export const cardMigrations = createShapePropsMigrationSequence({
   sequence: [
@@ -35,6 +40,13 @@ export const cardMigrations = createShapePropsMigrationSequence({
         const p = props as Record<string, unknown>
         delete p.comments
         delete p.mergedInto
+      },
+    },
+    {
+      id: cardVersions.AddAssetId,
+      up: (props) => addAssetIdUp(props as Record<string, unknown>),
+      down: (props) => {
+        delete (props as Record<string, unknown>).assetId
       },
     },
   ],
@@ -60,6 +72,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
       }),
     ),
     mergedInto: T.nullable(T.string),
+    assetId: T.nullable(T.string),
   }
 
   getDefaultProps(): CardShape['props'] {

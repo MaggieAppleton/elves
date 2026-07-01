@@ -27,6 +27,8 @@ export interface CardProps {
   comments: Comment[]
   /** If set, this source card was merged into the referenced representative card (hidden, recoverable). */
   mergedInto: string | null
+  /** For image source cards: the stored asset id (a filename under data/assets/). null otherwise. */
+  assetId: string | null
 }
 
 export const CARD_DEFAULT_W = 240
