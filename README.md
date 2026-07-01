@@ -2,7 +2,7 @@
 
 A local-first, canvas-based writing studio for taking a piece from scattered notes to a shaped set of your-own-voice points. You think spatially on an infinite canvas of cards; the tool keeps everything on your machine in a plain, human-readable file.
 
-> **Status: Phase 1 (canvas skeleton).** You can create, edit, arrange, and persist cards today. Claude integration, images, and Tana/MDX bridges are later phases — see [Roadmap](#roadmap).
+> **Status: Phase 2a (Claude-ready canvas).** Create, edit, arrange, and persist cards, and apply Claude-style *change-sets* — comments, source-merges, and reorders — all natively undoable. Claude itself connects in Phase 2b; images and Tana/MDX bridges are later — see [Roadmap](#roadmap).
 
 ## What it does (Phase 1)
 
@@ -11,6 +11,17 @@ A local-first, canvas-based writing studio for taking a piece from scattered not
   - **Source cards** — raw reference material, shown muted with an origin badge.
 - Create cards from a toolbar, drag to arrange, and **double-click to edit** text inline.
 - Everything autosaves to a local `data/canvas.json` and **survives reload**.
+
+## What it does (Phase 2a — the Claude-ready canvas)
+
+The canvas can now receive **change-sets** — the exact mechanism Claude will drive in Phase 2b — applied live and undoably, with no Claude yet:
+
+- **Comments** on any card: color-coded by type (`needs-evidence` · `weak-argument` · `needs-citation`) or freeform, each resolvable (resolve → hidden, kept).
+- **Merge** duplicate source cards: they collapse under a representative (hidden, recoverable) with a "N merged" badge.
+- **Move / reorder**: cards reposition along the left→right narrative axis (left = earlier, right = later).
+- Each change-set applies as **one Ctrl-Z-undoable** step and persists.
+
+A change-set is `POST`ed to the server's `/changeset` endpoint and broadcast over a websocket (same port, `5199`) to the open app. **The boundary:** a change-set's operations are exactly *comment*, *merge*, and *move* — **none can write a card's text.** Your prose stays yours, structurally.
 
 ## Requirements
 
@@ -104,16 +115,19 @@ The e2e suite runs its own server against a throwaway `.e2e/canvas.json`, so it 
 
 ```
 src/
-  App.tsx                 # mounts the tldraw canvas + wires persistence
+  App.tsx                 # mounts the tldraw canvas + wires persistence + realtime
   main.tsx                # React entry
   theme.css               # --elves-card-font and layout
-  model/                  # pure card data model (types, factories, invariants)
+  model/                  # pure data model: cards, comments, change-set ops
+  apply/applyChangeSet.ts # applies a change-set as one undoable tldraw step
   client/persistence.ts   # load/save the canvas via the server
-  shapes/                 # the custom tldraw "card" shape + its CSS
+  client/realtime.ts      # websocket client receiving change-sets
+  shapes/                 # the custom tldraw "card" shape (comments, merged) + CSS
 server/
   store.ts                # atomic read/write of canvas.json
-  app.ts                  # Express app: GET/POST /canvas
-  index.ts                # server entrypoint
+  app.ts                  # Express app: GET/POST /canvas, POST /changeset
+  realtime.ts             # websocket broadcast of change-sets
+  index.ts                # server entrypoint (http + ws + express)
 tests/                    # Vitest unit tests
 e2e/                      # Playwright end-to-end tests
 data/                     # your canvas.json lives here (git-ignored)
@@ -125,12 +139,13 @@ Local-first by design. Your canvas is a plain, human-readable JSON file on your 
 
 ## Design principle
 
-Your writing stays yours. The data model separates **source** (reference) cards from **prose** (your words), and the codebase enforces — structurally — that only a human, editing in the app, can write a card's prose text. This is the foundation for later phases where Claude helps organize and critique, but never writes your prose.
+Your writing stays yours. The data model separates **source** (reference) cards from **prose** (your words), and the codebase enforces — structurally — that only a human, editing in the app, can write a card's prose text. As of Phase 2a this holds even for automated change-sets: the operations they may contain (comment, merge, move) structurally cannot write a card's text. Claude helps organize and critique, but never writes your prose.
 
 ## Roadmap
 
-- **Phase 2 — Claude's capability boundary:** a scoped tool API (no prose-write), plus flags, comments, tags, clustering, and dedupe suggestions.
+- **Phase 2a — Claude-ready canvas (done):** change-sets for comments, merge, and reorder, applied live and undoably.
+- **Phase 2b — Claude connected (next):** a scoped MCP server exposing the change-set operations + a Claude skill, so Claude reads the canvas and comments / dedupes / reorders within the boundary.
 - **Phase 3 — Images + vision:** drag-in image source cards; derive source cards from a photo or sketch.
 - **Later:** assisted Tana import, MDX export, multi-device.
 
-See [`2026-07-01-elves-design.md`](./2026-07-01-elves-design.md) (design spec) and [`2026-07-01-elves-mvp-phase1-plan.md`](./2026-07-01-elves-mvp-phase1-plan.md) (Phase 1 build plan) for the full rationale.
+See the design specs and build plans for the full rationale: [`2026-07-01-elves-design.md`](./2026-07-01-elves-design.md) (overall) · [`2026-07-01-elves-mvp-phase1-plan.md`](./2026-07-01-elves-mvp-phase1-plan.md) (Phase 1) · [`2026-07-01-elves-phase2-design.md`](./2026-07-01-elves-phase2-design.md) + [`2026-07-01-elves-phase2a-plan.md`](./2026-07-01-elves-phase2a-plan.md) (Phase 2).
