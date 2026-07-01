@@ -1,5 +1,6 @@
 import type { CanvasSnapshot } from './store'
 import type { CardKind, SourceKind, Origin, Comment } from '../src/model/types'
+import { resolveAssetPath } from './assets'
 
 export interface CardDigest {
   id: string
@@ -11,9 +12,10 @@ export interface CardDigest {
   y: number
   comments: Comment[]
   mergedInto: string | null
+  assetPath: string | null
 }
 
-export function snapshotToCards(snapshot: CanvasSnapshot): CardDigest[] {
+export function snapshotToCards(snapshot: CanvasSnapshot, assetsDir?: string): CardDigest[] {
   const doc = (snapshot?.document ?? null) as { store?: Record<string, any>; records?: Record<string, any> } | null
   if (!doc) return []
   const store = doc.store ?? doc.records ?? {}
@@ -29,5 +31,9 @@ export function snapshotToCards(snapshot: CanvasSnapshot): CardDigest[] {
       y: r.y,
       comments: r.props.comments ?? [],
       mergedInto: r.props.mergedInto ?? null,
+      assetPath:
+        assetsDir && r.props.sourceKind === 'image' && r.props.assetId
+          ? resolveAssetPath(assetsDir, r.props.assetId)
+          : null,
     }))
 }

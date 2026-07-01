@@ -8,6 +8,7 @@ import { WebSocket } from 'ws'
 import request from 'supertest'
 import { createServer } from '../../server/app'
 import { attachRealtime } from '../../server/realtime'
+import { assetsDir } from '../../server/assets'
 
 let dirs: string[] = []
 async function tmpCanvas() {
@@ -52,7 +53,8 @@ test('attachRealtime broadcasts a change-set to connected websocket clients', as
 })
 
 test('GET /cards returns the card digest', async () => {
-  const app = createServer(await tmpCanvas())
+  const canvasPath = await tmpCanvas()
+  const app = createServer(canvasPath)
   const snap = {
     document: { store: { 'shape:a': { id: 'shape:a', typeName: 'shape', type: 'card', x: 5, y: 6, props: { w: 240, h: 120, kind: 'source', sourceKind: 'text', origin: 'typed', text: 'raw', comments: [], mergedInto: null } } } },
     session: null,
@@ -60,7 +62,7 @@ test('GET /cards returns the card digest', async () => {
   await request(app).post('/canvas').send(snap)
   const res = await request(app).get('/cards')
   expect(res.status).toBe(200)
-  expect(res.body).toEqual(snapshotToCards(snap))
+  expect(res.body).toEqual(snapshotToCards(snap, assetsDir(canvasPath)))
 })
 
 test('POST /changeset rejects a change-set that would write text (403)', async () => {

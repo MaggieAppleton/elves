@@ -45,7 +45,7 @@ export function createServer(dataPath: string, onChangeSet?: (cs: ChangeSet) => 
   app.get(
     '/cards',
     wrap(async (_req, res) => {
-      res.json(snapshotToCards(await readCanvas(dataPath)))
+      res.json(snapshotToCards(await readCanvas(dataPath), assetsDir(dataPath)))
     }),
   )
 
