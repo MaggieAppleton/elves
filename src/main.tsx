@@ -1,3 +1,4 @@
+import '@fontsource-variable/inter/wght.css' // self-hosted Inter (variable weight) — one intentional typeface for cards + all tldraw chrome
 import { createRoot } from 'react-dom/client'
 import App from './App'
 

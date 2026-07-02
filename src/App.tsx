@@ -13,7 +13,7 @@ const shapeUtils = [CardShapeUtil]
 
 export default function App() {
   const [editor, setEditor] = useState<Editor | null>(null)
-  const [showStyle, setShowStyle] = useState(false)
+  const [showTools, setShowTools] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const addImageCard = async (ed: Editor, file: File, point?: { x: number; y: number }) => {
@@ -76,12 +76,12 @@ export default function App() {
   }
 
   return (
-    <div id="app-root" className={showStyle ? undefined : 'elves-hide-style'}>
+    <div id="app-root" className={showTools ? undefined : 'elves-hide-tools'}>
       <button
-        className="elves-style-toggle"
-        data-active={showStyle}
-        title="Show/hide style controls"
-        onClick={() => setShowStyle((v) => !v)}
+        className="elves-tools-toggle"
+        data-active={showTools}
+        title="Show/hide drawing tools"
+        onClick={() => setShowTools((v) => !v)}
       >
         <svg
           viewBox="0 0 24 24"

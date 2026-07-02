@@ -17,6 +17,7 @@
     "mcp": "tsx mcp/index.ts"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "^5.2.8",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cors": "^2.8.5",
     "express": "^4.19.2",

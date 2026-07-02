@@ -1,36 +1,47 @@
+/* =========================================================================
+   Cards — soft, warm paper with fine borders and small layered shadows.
+   Tokens come from theme.css (:root / .tl-container).
+   ========================================================================= */
 .elves-card {
   box-sizing: border-box;
   padding: 12px 14px;
   border-radius: 10px;
   font-family: var(--elves-card-font);
   font-size: 15px;
-  line-height: 1.4;
+  line-height: 1.45;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 6px;
   background: var(--elves-surface);
-  border: 1px solid var(--elves-line);
-  box-shadow: 0 1px 2px oklch(0.3 0.02 70 / 0.07);
+  border: 1px solid var(--elves-border);
+  box-shadow: var(--elves-shadow-sm), var(--elves-highlight);
 }
-.elves-card--prose { color: var(--elves-ink); border-color: var(--elves-line-strong); }
+.elves-card--prose {
+  color: var(--elves-ink);
+  border-color: var(--elves-border-strong);
+}
+/* Source cards read as secondary reference material: a muted paper fill and a
+   soft hairline (no dashed border — the badge already marks them as sources). */
 .elves-card--source {
   color: var(--elves-ink-soft);
   background: var(--elves-surface-muted);
-  border-style: dashed;
-  border-color: var(--elves-line-strong);
+  border-color: var(--elves-border);
 }
+
+/* Origin tag — a small neutral badge; accent green is reserved for state. */
 .elves-badge {
   align-self: flex-start;
   font-size: 10px;
-  letter-spacing: 0.04em;
+  font-weight: 600;
+  letter-spacing: 0.02em;
   text-transform: uppercase;
   padding: 2px 6px;
-  border-radius: 999px;
-  background: var(--elves-primary-tint-2);
-  color: var(--elves-primary-strong);
+  border-radius: 4px;
+  background: var(--elves-tertiary);
+  color: var(--elves-ink-faint);
 }
-.elves-card__text { white-space: pre-wrap; flex: 1; }
+.elves-card__text { white-space: pre-wrap; flex: 1; overflow-wrap: anywhere; }
 .elves-card__editor {
   flex: 1;
   border: none;
@@ -40,51 +51,18 @@
   font: inherit;
   color: inherit;
 }
-/* Comments render as margin notes BELOW the card, outside its clipped box,
-   so they never get cut off and don't fight the card's fixed geometry. */
-.elves-comments {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  width: 100%;
-  margin-top: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  pointer-events: all;
-  z-index: 10;
-  /* Claude's notes use the system UI font, distinct from your chosen card typeface. */
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-}
-.elves-comment {
-  display: flex; align-items: flex-start; gap: 6px;
-  font-size: 14px; line-height: 1.35;
-  padding: 6px 8px; border-radius: 8px;
-  background: oklch(0.955 0.018 200); color: var(--elves-ink);
-  border-left: 3px solid var(--elves-c-freeform);
-  pointer-events: all;
-  box-shadow: 0 1px 2px oklch(0.3 0.02 70 / 0.07);
-}
-.elves-comment[data-type="needs-evidence"] { background: oklch(0.955 0.030 40);  color: oklch(0.44 0.09 40);  border-left-color: var(--elves-c-evidence); }
-.elves-comment[data-type="weak-argument"]  { background: oklch(0.960 0.035 78);  color: oklch(0.45 0.08 72);  border-left-color: var(--elves-c-weak); }
-.elves-comment[data-type="needs-citation"] { background: oklch(0.955 0.028 168); color: oklch(0.42 0.06 168); border-left-color: var(--elves-c-citation); }
-.elves-comment__body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.elves-comment__type { font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: 0.03em; opacity: 0.85; }
-.elves-comment__text { overflow-wrap: anywhere; white-space: pre-wrap; }
-.elves-comment__resolve {
-  flex-shrink: 0;
-  border: none; background: transparent; cursor: pointer;
-  font-size: 14px; line-height: 1; color: inherit; opacity: 0.6;
-}
-.elves-comment__resolve:hover { opacity: 1; }
+
+/* Merged-count chip — a meaningful aggregate state, so a faint green tint. */
 .elves-merged {
   align-self: flex-start;
   font-size: 10px;
+  font-weight: 600;
   padding: 2px 6px;
-  border-radius: 999px;
-  background: var(--elves-primary-tint-2);
+  border-radius: 4px;
+  background: var(--elves-primary-tint);
   color: var(--elves-primary-strong);
 }
+
 .elves-card__image {
   flex: 1;
   min-height: 0;
@@ -92,4 +70,77 @@
   object-fit: contain;
   display: block;
   border-radius: 6px;
+}
+
+/* =========================================================================
+   Comments — Claude's margin notes, rendered BELOW the card (outside its
+   clipped box). Neutral elevated notes with one colored accent stripe + label
+   per type, rather than fully-tinted boxes. System sans keeps them visually
+   distinct from the user's own card typeface.
+   ========================================================================= */
+.elves-comments {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 100%;
+  margin-top: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: all;
+  z-index: 10;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+.elves-comment {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13.5px;
+  line-height: 1.4;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--elves-surface);
+  color: var(--elves-ink);
+  border: 1px solid var(--elves-border);
+  border-left: 3px solid var(--elves-c-freeform);
+  box-shadow: var(--elves-shadow-sm);
+  pointer-events: all;
+}
+.elves-comment[data-type="needs-evidence"] { border-left-color: var(--elves-c-evidence); }
+.elves-comment[data-type="weak-argument"]  { border-left-color: var(--elves-c-weak); }
+.elves-comment[data-type="needs-citation"] { border-left-color: var(--elves-c-citation); }
+
+.elves-comment__body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.elves-comment__type {
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  color: var(--elves-c-freeform);
+}
+.elves-comment[data-type="needs-evidence"] .elves-comment__type { color: var(--elves-c-evidence); }
+.elves-comment[data-type="weak-argument"]  .elves-comment__type { color: var(--elves-c-weak); }
+.elves-comment[data-type="needs-citation"] .elves-comment__type { color: var(--elves-c-citation); }
+
+.elves-comment__text { overflow-wrap: anywhere; white-space: pre-wrap; color: var(--elves-ink); }
+.elves-comment__resolve {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--elves-ink-faint);
+  border-radius: 5px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 100ms ease, color 100ms ease;
+}
+.elves-comment__resolve:hover { color: var(--elves-ink); background: var(--elves-tertiary); }
+
+@media (prefers-reduced-motion: reduce) {
+  .elves-comment__resolve { transition: none; }
 }

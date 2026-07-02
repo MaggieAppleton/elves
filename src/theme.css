@@ -1,55 +1,115 @@
 :root {
-  /* ---- Elves palette (OKLCH): warm cream + desaturated deep green ---- */
+  /* =========================================================================
+     Elves design tokens — warm cream + desaturated deep green, OKLCH.
+     Structured as a Campsite-style semantic layer: neutral surfaces separated
+     by fine translucent borders and small, soft, layered shadows. Accent
+     (green) is used sparingly — selection, primary state, meaningful status.
+     ========================================================================= */
 
-  /* Warm cream surfaces */
-  --elves-bg:            oklch(0.953 0.007 100);  /* canvas — soft warm greige (≈ #F1F0EB) */
-  --elves-surface:       oklch(0.988 0.010 84);   /* prose card face */
-  --elves-surface-muted: oklch(0.945 0.018 82);   /* source card face */
-  --elves-ink:           oklch(0.30 0.018 70);    /* warm near-black text */
-  --elves-ink-soft:      oklch(0.50 0.020 72);    /* muted text */
-  --elves-line:          oklch(0.90 0.018 82);    /* warm hairline */
-  --elves-line-strong:   oklch(0.85 0.022 82);    /* warm border */
+  /* ---- Neutral layer cake (warm paper) ---- */
+  --elves-bg:            oklch(0.9718 0.0066 106.5);  /* canvas — soft warm off-white (≈ #F6F6F1) */
+  --elves-surface:       oklch(0.992 0.008 90);   /* primary/elevated card + panel face */
+  --elves-surface-muted: oklch(0.947 0.016 84);   /* secondary surface — source cards */
+  --elves-tertiary:      oklch(0.922 0.014 84);   /* hover / pressed / selected fill */
 
-  /* Primary — desaturated deep green / teal (≈ #348585) */
+  /* ---- Text ---- */
+  --elves-ink:       oklch(0.28 0.018 68);        /* primary — warm near-black */
+  --elves-ink-soft:  oklch(0.48 0.018 70);        /* secondary — labels, muted body */
+  --elves-ink-faint: oklch(0.62 0.016 72);        /* tertiary — metadata, hints */
+
+  /* ---- Borders as translucent ink (sit correctly on any surface) ---- */
+  --elves-border:        oklch(0.28 0.018 68 / 0.10);
+  --elves-border-strong: oklch(0.28 0.018 68 / 0.16);
+  --elves-border-subtle: oklch(0.28 0.018 68 / 0.055);
+
+  /* ---- Soft, warm, layered shadows (tactile depth, not drama) ---- */
+  --elves-shadow-sm:
+    0 1px 2px oklch(0.28 0.02 68 / 0.06),
+    0 0 0 0.5px oklch(0.28 0.02 68 / 0.045);
+  --elves-shadow-md:
+    0 1px 2px oklch(0.28 0.02 68 / 0.05),
+    0 4px 12px oklch(0.28 0.02 68 / 0.07),
+    0 0 0 0.5px oklch(0.28 0.02 68 / 0.05);
+  --elves-shadow-lg:
+    0 2px 8px oklch(0.28 0.02 68 / 0.06),
+    0 10px 32px oklch(0.28 0.02 68 / 0.12),
+    0 0 0 0.5px oklch(0.28 0.02 68 / 0.06);
+  /* White inset top highlight — gives raised controls a touchable, lit edge */
+  --elves-highlight: inset 0 1px 0 oklch(1 0 0 / 0.65);
+
+  /* ---- Primary — desaturated deep green / teal (≈ #348585) ---- */
   --elves-primary:        oklch(0.568 0.062 195);
   --elves-primary-strong: oklch(0.500 0.066 195);
   --elves-primary-tint:   oklch(0.955 0.020 195); /* faint green wash */
   --elves-primary-tint-2: oklch(0.915 0.032 195); /* stronger green wash */
   --elves-on-primary:     oklch(0.99 0.008 195);  /* text on primary */
+  --elves-focus-ring:     oklch(0.568 0.062 195 / 0.45);
 
-  /* Comment accents — warm earth tones + green (no cool blue/purple) */
+  /* ---- Comment accents — warm earth tones + green (no cool blue/purple) ---- */
   --elves-c-freeform: oklch(0.58 0.050 200);
   --elves-c-evidence: oklch(0.60 0.100 40);
   --elves-c-weak:     oklch(0.68 0.095 75);
   --elves-c-citation: oklch(0.55 0.055 165);
 
-  --elves-card-font: 'Inter', system-ui, -apple-system, sans-serif;
+  /* ---- Typography — one clean, dense sans across the whole app ---- */
+  --elves-card-font: 'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif;
 
-  /* tldraw uses var(--font-body) but never defines it (→ serif fallback).
-     Define it at :root so tldraw's portaled menus/popovers inherit our font too. */
+  /* tldraw draws its UI with var(--font-body) but never defines it (→ serif
+     fallback via inheritance). Define it here so every tldraw surface —
+     including portaled menus/popovers — resolves to our typeface. */
   --font-body: var(--elves-card-font);
 }
 
 html, body, #root { height: 100%; margin: 0; }
+body {
+  font-family: var(--elves-card-font);
+  color: var(--elves-ink);
+  background: var(--elves-bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
 #app-root { position: fixed; inset: 0; background: var(--elves-bg); }
 
-/* Warm the tldraw canvas, chrome, and selection to match the palette. */
+/* =========================================================================
+   tldraw, re-skinned through its OWN design tokens.
+   theme.css is imported after tldraw.css, so these .tl-container overrides win.
+   Remapping radius/shadow/color at the token level restyles every piece of
+   tldraw chrome coherently — menu zone, zoom panel, style panel, dropdowns,
+   dialogs, page menu — instead of fighting each component.
+   ========================================================================= */
 .tl-container {
-  font-family: var(--elves-card-font);   /* tldraw UI font — docs-recommended override */
+  font-family: var(--elves-card-font);
   --font-body: var(--elves-card-font);
+
+  /* Shallower, more consistent radii (Campsite: soft, not rounded-pill) */
+  --radius-1: 5px;
+  --radius-2: 7px;
+  --radius-3: 9px;
+  --radius-4: 11px;
+
+  /* Warm, soft, layered shadows replacing tldraw's hard 25%-black drop */
+  --shadow-1: var(--elves-shadow-sm);
+  --shadow-2: var(--elves-shadow-md);
+  --shadow-3: var(--elves-shadow-lg);
+  --shadow-4: var(--elves-shadow-lg);
+
+  /* Surfaces + text */
   --color-background: var(--elves-bg);
   --color-low: var(--elves-bg);
   --color-panel: var(--elves-surface);
   --color-panel-contrast: var(--elves-surface);
-  --color-divider: var(--elves-line);
-  --color-muted-0: oklch(0.30 0.02 70 / 0.04);
-  --color-muted-1: oklch(0.30 0.02 70 / 0.06);
-  --color-muted-2: oklch(0.30 0.02 70 / 0.10);
+  --color-divider: var(--elves-border-subtle);
+  --color-muted-0: oklch(0.28 0.02 68 / 0.03);
+  --color-muted-1: oklch(0.28 0.02 68 / 0.06);
+  --color-muted-2: oklch(0.28 0.02 68 / 0.10);
   --color-hint: var(--elves-primary-tint-2);
-  --color-text: var(--elves-ink);
+  --color-text:   var(--elves-ink);
+  --color-text-0: var(--elves-ink);
   --color-text-1: var(--elves-ink);
   --color-text-2: var(--elves-ink-soft);
-  --color-text-3: var(--elves-ink-soft);
+  --color-text-3: var(--elves-ink-faint);
+
+  /* Selection + focus in the brand green */
   --color-selected: var(--elves-primary);
   --color-selected-contrast: var(--elves-on-primary);
   --color-selection-fill: var(--elves-primary);
@@ -58,37 +118,80 @@ html, body, #root { height: 100%; margin: 0; }
 }
 .tl-background { background-color: var(--elves-bg) !important; }
 
-/* Force the UI font onto tldraw's menus/popovers too (incl. portaled ones). */
+/* Belt-and-suspenders: force the typeface onto any tlui surface, incl. portaled ones. */
 [class*="tlui-"] { font-family: var(--elves-card-font); }
 
-/* Hide ONLY tldraw's color/style panel by default; the ghost paintbrush button
-   (top-right) shows/hides it. The top-left menu and bottom-left zoom stay put. */
-#app-root.elves-hide-style .tlui-style-panel__wrapper { display: none; }
-/* When shown, open the style panel below our toggle button (not under it).
-   Match tldraw's :only-child specificity so this margin actually wins. */
-.tlui-style-panel__wrapper,
-.tlui-style-panel__wrapper:only-child { margin-top: 44px; }
-.elves-style-toggle {
+/* ---- Floating chrome as elevated clusters ------------------------------- */
+/* Top-left menu zone + bottom-left zoom: lift them off the canvas into clean,
+   fine-bordered, soft-shadowed surfaces so the icon controls read as a group. */
+.tlui-menu-zone {
+  background-color: var(--elves-surface);
+  border-bottom: 1px solid var(--elves-border);
+  border-right: 1px solid var(--elves-border);
+  border-bottom-right-radius: 11px;
+  box-shadow: var(--elves-shadow-md);
+}
+.tlui-navigation-panel::before {
+  background-color: var(--elves-surface);
+  border-top: 1px solid var(--elves-border);
+  border-right: 1px solid var(--elves-border);
+  border-top-right-radius: 11px;
+  box-shadow: var(--elves-shadow-md);
+}
+
+/* Dropdown menus + style panel: elevated popover surface with a hairline ring. */
+.tlui-menu,
+.tlui-style-panel__wrapper {
+  border: 1px solid var(--elves-border);
+}
+.tlui-menu { padding: 4px; }
+
+/* Keyboard-focus ring on tldraw buttons, tuned to the brand green. */
+.tl-container__focused:not(.tl-container__no-focus-ring) .tlui-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring);
+}
+
+/* ---- Shape-toolbar toggle (pencil, bottom-left beside the zoom) --------- */
+/* Elves never uses tldraw's colour/style panel — hide it permanently. */
+.tl-container .tlui-style-panel__wrapper { display: none; }
+/* The pencil toggle shows/hides tldraw's shape toolbar (bottom-center).
+   The top-left menu and the bottom-left zoom panel always stay put. */
+#app-root.elves-hide-tools .tlui-toolbar { display: none; }
+
+.elves-tools-toggle {
   position: fixed;
-  top: 8px;
-  right: 12px;
+  bottom: 6px;
+  left: 108px;         /* just right of the zoom panel (which ends at ~96px) */
   z-index: 500;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: none;
+  border-radius: 7px;
   background: transparent;
-  color: var(--elves-ink-soft);
+  color: var(--elves-ink-faint);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: color 120ms ease;
+  transition: color 100ms ease, background-color 100ms ease;
 }
-.elves-style-toggle:hover { color: var(--elves-ink); }
-.elves-style-toggle[data-active="true"] { color: var(--elves-primary); }
-.elves-style-toggle svg { width: 15px; height: 15px; display: block; }
+.elves-tools-toggle:hover {
+  color: var(--elves-ink);
+  background: var(--elves-tertiary);
+}
+.elves-tools-toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--elves-bg), 0 0 0 4px var(--elves-focus-ring);
+}
+.elves-tools-toggle[data-active="true"] {
+  color: var(--elves-primary);
+  background: var(--elves-primary-tint);
+}
+.elves-tools-toggle svg { width: 15px; height: 15px; display: block; }
 
+/* ---- Creation toolbar (top-center) as an elevated action cluster -------- */
 .elves-toolbar {
   position: fixed;
   top: 12px;
@@ -96,20 +199,37 @@ html, body, #root { height: 100%; margin: 0; }
   transform: translateX(-50%);
   z-index: 300;
   display: flex;
-  gap: 8px;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 11px;
+  background: var(--elves-surface);
+  border: 1px solid var(--elves-border);
+  box-shadow: var(--elves-shadow-md), var(--elves-highlight);
 }
 .elves-toolbar button {
   font-family: var(--elves-card-font);
   font-size: 13px;
-  padding: 6px 12px;
+  font-weight: 500;
+  line-height: 1;
+  padding: 6px 11px;
   border-radius: 8px;
-  border: 1px solid var(--elves-line-strong);
-  background: var(--elves-surface);
-  color: var(--elves-ink);
+  border: none;
+  background: transparent;
+  color: var(--elves-ink-soft);
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition: background-color 100ms ease, color 100ms ease;
 }
 .elves-toolbar button:hover {
-  background: var(--elves-surface-muted);
-  border-color: var(--elves-ink-soft);
+  background: var(--elves-tertiary);
+  color: var(--elves-ink);
+}
+.elves-toolbar button:active { background: var(--elves-tertiary); }
+.elves-toolbar button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .elves-tools-toggle,
+  .elves-toolbar button { transition: none; }
 }
