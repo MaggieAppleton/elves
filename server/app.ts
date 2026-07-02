@@ -9,6 +9,7 @@ import {
   referencedSectionIds,
 } from '../src/model/changeset'
 import { snapshotToCards, snapshotToSections, snapshotToCanvasDigest } from './digest'
+import { applyChangeSetToSnapshot } from './applyChangeSet'
 import { extForMime, saveAsset, resolveAssetPath } from './assets'
 import {
   listProjects,
@@ -145,12 +146,12 @@ export function createServer(
         res.status(403).json({ error: 'change-set may not write card text' })
         return
       }
+      const canvas = await readCanvas(paths.canvasPath)
       // Cross-check: every referenced existing card/section must live in THIS
       // project, so a mistargeted operation fails loudly instead of silently
       // landing nowhere.
-      const snapshot = await readCanvas(paths.canvasPath)
-      const cardIds = new Set(snapshotToCards(snapshot).map((c) => c.id))
-      const sectionIds = new Set(snapshotToSections(snapshot).map((s) => s.id))
+      const cardIds = new Set(snapshotToCards(canvas).map((c) => c.id))
+      const sectionIds = new Set(snapshotToSections(canvas).map((s) => s.id))
       const missing = [
         ...referencedCardIds(req.body).filter((cardId) => !cardIds.has(cardId)),
         ...referencedSectionIds(req.body).filter((sectionId) => !sectionIds.has(sectionId)),
@@ -159,6 +160,14 @@ export function createServer(
         res.status(409).json({ error: 'card not in project', missing })
         return
       }
+      // Apply and persist here, on the server, rather than relying on some
+      // connected browser tab to have this project open and save it back —
+      // that dependency meant a change-set could report success while never
+      // landing on disk. A brand-new project with no canvas yet has no
+      // tldraw schema to write into, so it still falls back to broadcast-only
+      // until a browser bootstraps the document for the first time.
+      const applied = applyChangeSetToSnapshot(canvas, req.body)
+      if (applied) await writeCanvas(paths.canvasPath, applied)
       onChangeSet?.(req.params.id, req.body)
       res.json({ ok: true })
     }),
