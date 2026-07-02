@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { isChangeSet, planMerge } from '../../src/model/changeset'
+import { isChangeSet, planMerge, referencedCardIds } from '../../src/model/changeset'
 
 describe('planMerge', () => {
   test('first card is the representative, the rest are hidden', () => {
@@ -31,5 +31,19 @@ describe('isChangeSet', () => {
   })
   test('rejects a malformed create_source_card', () => {
     expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'create_source_card', text: 'hi' }] })).toBe(false) // missing x/y
+  })
+})
+
+describe('referencedCardIds', () => {
+  test('collects existing-card references, ignores create_source_card', () => {
+    const cs = {
+      id: 'x', author: 'claude' as const, ops: [
+        { kind: 'add_comment' as const, cardId: 'shape:a', comment: { type: null, text: 'hi' } },
+        { kind: 'merge_sources' as const, cardIds: ['shape:b', 'shape:c'] },
+        { kind: 'move_cards' as const, moves: [{ cardId: 'shape:d', x: 1, y: 2 }] },
+        { kind: 'create_source_card' as const, text: 't', x: 0, y: 0 },
+      ],
+    }
+    expect(referencedCardIds(cs).sort()).toEqual(['shape:a', 'shape:b', 'shape:c', 'shape:d'])
   })
 })

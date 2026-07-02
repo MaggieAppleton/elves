@@ -77,3 +77,19 @@ export function planMerge(cardIds: string[]): MergePlan {
   const hiddenIds = [...new Set(cardIds.slice(1))].filter((id) => id !== representativeId)
   return { representativeId, hiddenIds }
 }
+
+/**
+ * Card ids an op references as an EXISTING card (comment target, merge members,
+ * move targets). create_source_card mints a new id and references nothing, so it
+ * is excluded. The server uses this to reject a change-set that targets a card
+ * outside the project it was posted to.
+ */
+export function referencedCardIds(cs: ChangeSet): string[] {
+  const ids: string[] = []
+  for (const op of cs.ops) {
+    if (op.kind === 'add_comment') ids.push(op.cardId)
+    else if (op.kind === 'merge_sources') ids.push(...op.cardIds)
+    else if (op.kind === 'move_cards') ids.push(...op.moves.map((m) => m.cardId))
+  }
+  return ids
+}
