@@ -266,7 +266,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  max-width: 240px;
+  max-width: 180px;
   font-family: var(--elves-card-font);
   font-size: 13px;
   font-weight: 500;
@@ -352,6 +352,14 @@ body {
   height: 1px;
   margin: 4px 2px;
   background: var(--elves-border);
+}
+
+/* The project switcher owns the top-left corner. Push tldraw's own top-left
+   controls to the right so they clear the switcher, and down so they sit level
+   with it rather than hugging the very top edge. */
+.tlui-layout__top__left {
+  padding-left: 200px;
+  padding-top: 7px;
 }
 
 /* ---- Empty state (no projects yet) ------------------------------------- */

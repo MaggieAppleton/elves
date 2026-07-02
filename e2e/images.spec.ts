@@ -1,9 +1,8 @@
 import { test, expect } from '@playwright/test'
-
-const BASE = 'http://localhost:5199'
+import { resetProject } from './helpers'
 
 test.beforeEach(async ({ request }) => {
-  await request.post(`${BASE}/canvas`, { data: { document: null, session: null } })
+  await resetProject(request)
 })
 
 test('adding an image creates an image source card that renders and persists', async ({ page }) => {
@@ -14,7 +13,7 @@ test('adding an image creates an image source card that renders and persists', a
 
   const img = page.locator('img.elves-card__image')
   await expect(img).toBeVisible({ timeout: 10000 })
-  await expect(img).toHaveAttribute('src', /\/assets\/.+\.png$/)
+  await expect(img).toHaveAttribute('src', /\/projects\/.+\/assets\/.+\.png$/)
 
   await page.waitForTimeout(800) // debounced save
   await page.reload()

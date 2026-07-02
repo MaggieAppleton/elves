@@ -1,10 +1,9 @@
 import { test, expect } from '@playwright/test'
+import { resetProject } from './helpers'
 
 test.beforeEach(async ({ request }) => {
-  // Reset the shared canvas so tests don't bleed into each other.
-  await request.post('http://localhost:5199/canvas', {
-    data: { document: null, session: null },
-  })
+  // Ensure a project exists and reset its canvas so tests don't bleed together.
+  await resetProject(request)
 })
 
 test('create a prose card, type into it, and it survives reload', async ({ page }) => {
