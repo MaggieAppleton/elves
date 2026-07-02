@@ -92,6 +92,30 @@ test('POST canvas rejects a non-object body', async () => {
   expect((await request(app).post('/projects/essay/canvas').send([1, 2, 3])).status).toBe(400)
 })
 
+test('unfurl requires a valid http(s) url', async () => {
+  const app = await appWithTmp()
+  await request(app).post('/projects').send({ name: 'Essay' })
+  expect((await request(app).post('/projects/essay/unfurl').send({})).status).toBe(400)
+  expect((await request(app).post('/projects/essay/unfurl').send({ url: 'ftp://x' })).status).toBe(400)
+})
+
+test('unfurl on an unknown project → 404', async () => {
+  const app = await appWithTmp()
+  expect((await request(app).post('/projects/ghost/unfurl').send({ url: 'https://x.com' })).status).toBe(404)
+})
+
+test('unfurl degrades to a minimal reference when the page cannot be fetched', async () => {
+  const app = await appWithTmp()
+  await request(app).post('/projects').send({ name: 'Essay' })
+  // A .invalid host fails DNS immediately — exercises the graceful fallback with
+  // no real outbound request.
+  const res = await request(app).post('/projects/essay/unfurl').send({ url: 'https://elves.invalid/paper' })
+  expect(res.status).toBe(200)
+  expect(res.body.reference).toMatchObject({
+    url: 'https://elves.invalid/paper', fetchedBy: 'unfurl', title: null,
+  })
+}, 15000)
+
 test('a write failure returns 500 instead of crashing the server', async () => {
   const d = await fs.mkdtemp(join(tmpdir(), 'elves-api-'))
   dirs.push(d)

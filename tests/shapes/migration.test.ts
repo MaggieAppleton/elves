@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { addCommentsUp, addAssetIdUp } from '../../src/shapes/CardShapeUtil'
+import { addCommentsUp, addAssetIdUp, addReferenceUp } from '../../src/shapes/CardShapeUtil'
 
 test('migration adds comments[] and mergedInto to a pre-Phase-2 card', () => {
   const oldProps: Record<string, unknown> = {
@@ -17,4 +17,13 @@ test('AddAssetId migration adds assetId to a pre-image card', () => {
   }
   addAssetIdUp(props)
   expect(props.assetId).toBeNull()
+})
+
+test('AddReference migration adds reference to a pre-reference card', () => {
+  const props: Record<string, unknown> = {
+    w: 240, h: 120, kind: 'source', sourceKind: 'text', origin: 'typed', text: 'x',
+    comments: [], mergedInto: null, assetId: null,
+  }
+  addReferenceUp(props)
+  expect(props.reference).toBeNull()
 })

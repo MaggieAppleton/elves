@@ -1,8 +1,44 @@
 export type CardKind = 'source' | 'prose'
-export type SourceKind = 'text' | 'image'
-export type Origin = 'tana' | 'image' | 'typed' | 'transcribed'
+export type SourceKind = 'text' | 'image' | 'reference'
+export type Origin = 'tana' | 'image' | 'typed' | 'transcribed' | 'reference'
 
 export type CommentType = 'needs-evidence' | 'weak-argument' | 'needs-citation'
+
+/** The kind of external thing a reference points at — drives its card face. */
+export type RefType =
+  | 'paper' | 'article' | 'book' | 'software'
+  | 'social' | 'video' | 'wiki' | 'link'
+
+/** Who resolved a reference's metadata, in precedence order user > claude > unfurl. */
+export type RefFetcher = 'unfurl' | 'claude' | 'user'
+
+/**
+ * Structured metadata for a reference source card (sourceKind === 'reference').
+ * These are bibliographic *facts* — the app (unfurl) or Claude (research) may
+ * write them. They are distinct from the card's `text`, which stays the user's
+ * own annotation about the source. Favicon/thumbnail are stored as local asset
+ * files (ids only here), so a project stays a portable, offline folder.
+ */
+export interface Reference {
+  url: string
+  refType: RefType
+  title: string | null
+  /** Authors (papers/books), or ["@handle"] for social, or a blog author. */
+  authors: string[]
+  siteName: string | null
+  year: number | null
+  /** "CHI 2025", a journal, or a publisher. */
+  venue: string | null
+  /** OG description, an abstract snippet, or a post's text. */
+  description: string | null
+  faviconAssetId: string | null
+  thumbnailAssetId: string | null
+  doi: string | null
+  arxivId: string | null
+  fetchedBy: RefFetcher | null
+  /** ISO timestamp of when the metadata was last resolved. */
+  fetchedAt: string | null
+}
 
 export interface Comment {
   id: string
@@ -29,7 +65,14 @@ export interface CardProps {
   mergedInto: string | null
   /** For image source cards: the stored asset id (a filename under data/assets/). null otherwise. */
   assetId: string | null
+  /** For reference source cards (sourceKind === 'reference'): structured metadata; null otherwise. */
+  reference: Reference | null
 }
 
 export const CARD_DEFAULT_W = 240
 export const CARD_DEFAULT_H = 120
+
+// Reference cards are a touch wider than notes to hold a title + a metadata row
+// comfortably; height is measured to fit the type-adaptive face.
+export const REFERENCE_DEFAULT_W = 260
+export const REFERENCE_DEFAULT_H = 116

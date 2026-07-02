@@ -7,6 +7,9 @@ const EXT_BY_MIME: Record<string, string> = {
   'image/gif': 'gif',
   'image/webp': 'webp',
   'image/svg+xml': 'svg',
+  'image/x-icon': 'ico',
+  'image/vnd.microsoft.icon': 'ico',
+  'image/avif': 'avif',
 }
 
 export function assetsDir(canvasPath: string): string {

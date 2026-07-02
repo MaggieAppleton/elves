@@ -1,13 +1,45 @@
-import { CommentType } from './types'
+import { CommentType, Reference, RefType } from './types'
 
 export type Op =
   | { kind: 'add_comment'; cardId: string; comment: { type: CommentType | null; text: string } }
   | { kind: 'merge_sources'; cardIds: string[] }
   | { kind: 'move_cards'; moves: { cardId: string; x: number; y: number }[] }
   | { kind: 'create_source_card'; text: string; x: number; y: number }
+  | { kind: 'create_reference'; reference: Reference; x: number; y: number }
   | { kind: 'create_section'; text: string; x: number; y: number }
   | { kind: 'move_sections'; moves: { sectionId: string; x: number; y: number }[] }
   | { kind: 'edit_section_text'; sectionId: string; text: string }
+
+const REF_TYPES: readonly RefType[] = [
+  'paper', 'article', 'book', 'software', 'social', 'video', 'wiki', 'link',
+]
+const REF_FETCHERS: readonly (Reference['fetchedBy'])[] = ['unfurl', 'claude', 'user', null]
+
+function isStringOrNull(v: unknown): boolean {
+  return v === null || typeof v === 'string'
+}
+
+/** Structural validation for a Reference carried by a create_reference op. */
+export function isReference(v: unknown): v is Reference {
+  if (typeof v !== 'object' || v === null) return false
+  const r = v as Record<string, unknown>
+  return (
+    typeof r.url === 'string' &&
+    REF_TYPES.includes(r.refType as RefType) &&
+    isStringOrNull(r.title) &&
+    Array.isArray(r.authors) && r.authors.every((a) => typeof a === 'string') &&
+    isStringOrNull(r.siteName) &&
+    (r.year === null || typeof r.year === 'number') &&
+    isStringOrNull(r.venue) &&
+    isStringOrNull(r.description) &&
+    isStringOrNull(r.faviconAssetId) &&
+    isStringOrNull(r.thumbnailAssetId) &&
+    isStringOrNull(r.doi) &&
+    isStringOrNull(r.arxivId) &&
+    REF_FETCHERS.includes(r.fetchedBy as Reference['fetchedBy']) &&
+    isStringOrNull(r.fetchedAt)
+  )
+}
 
 export interface ChangeSet {
   id: string
@@ -37,6 +69,8 @@ function isOp(v: unknown): v is Op {
       })
     case 'create_source_card':
       return typeof op.text === 'string' && typeof op.x === 'number' && typeof op.y === 'number'
+    case 'create_reference':
+      return isReference(op.reference) && typeof op.x === 'number' && typeof op.y === 'number'
     case 'create_section':
       return typeof op.text === 'string' && typeof op.x === 'number' && typeof op.y === 'number'
     case 'move_sections':
@@ -69,6 +103,11 @@ export function isChangeSet(value: unknown): value is ChangeSet {
  * organizational headings, not prose or reference material, so Claude is
  * explicitly permitted to write and rename them. That permission is scoped to
  * this one op — it does not touch card text in any way.
+ *
+ * create_reference is likewise allowed: it creates a new SOURCE card carrying
+ * structured bibliographic *facts* (the reference object) with an EMPTY
+ * annotation `text`. It writes reference material and metadata, never the user's
+ * own words — the same side of the boundary as create_source_card.
  */
 export function changeSetWritesText(cs: ChangeSet): boolean {
   return cs.ops.some((op) => {
@@ -77,6 +116,7 @@ export function changeSetWritesText(cs: ChangeSet): boolean {
       case 'merge_sources':
       case 'move_cards':
       case 'create_source_card':
+      case 'create_reference':
       case 'create_section':
       case 'move_sections':
       case 'edit_section_text':

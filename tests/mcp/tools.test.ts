@@ -12,6 +12,7 @@ import {
   addCommentTool,
   readCanvasTool,
   createSourceCardTool,
+  createReferenceTool,
   createSectionTool,
   moveSectionsTool,
   editSectionTextTool,
@@ -102,10 +103,39 @@ test('readCanvasTool reads the cards+sections digest for the project', async () 
   const digest = await readCanvasTool(base, 'essay')
   expect(digest).toEqual({
     cards: [
-      { id: 'shape:a', kind: 'prose', sourceKind: null, origin: null, text: 'hi', x: 1, y: 2, comments: [], mergedInto: null, assetPath: null },
+      { id: 'shape:a', kind: 'prose', sourceKind: null, origin: null, text: 'hi', x: 1, y: 2, comments: [], mergedInto: null, assetPath: null, reference: null },
     ],
     sections: [],
   })
+})
+
+test('createReferenceTool unfurls a url and posts a create_reference change-set, Claude fields winning', async () => {
+  const { base } = await liveElves()
+  const ws = new WebSocket(base.replace('http', 'ws') + '/ws')
+  const received = new Promise<any>((res) => ws.on('message', (d) => res(JSON.parse(d.toString()))))
+  await new Promise<void>((r) => ws.on('open', () => r()))
+
+  // Point at the server's own JSON endpoint: unfurl fetches it, sees non-HTML,
+  // and degrades to a minimal reference — no external network in the test.
+  const url = `${base}/projects`
+  await createReferenceTool(base, 'essay', {
+    url, x: 5, y: 6,
+    fields: { title: 'Malleable Software', refType: 'paper', authors: ['Cao', 'Jiang', 'Xia'], year: 2025 },
+  })
+
+  const { projectId, changeSet } = await received
+  expect(projectId).toBe('essay')
+  expect(changeSet.ops).toHaveLength(1)
+  const op = changeSet.ops[0]
+  expect(op.kind).toBe('create_reference')
+  expect(op.x).toBe(5)
+  expect(op.reference.url).toBe(url)
+  expect(op.reference.title).toBe('Malleable Software')     // Claude field wins
+  expect(op.reference.refType).toBe('paper')
+  expect(op.reference.authors).toEqual(['Cao', 'Jiang', 'Xia'])
+  expect(op.reference.year).toBe(2025)
+  expect(op.reference.fetchedBy).toBe('claude')
+  ws.close()
 })
 
 test('a tool call for an unknown project rejects with a helpful error', async () => {

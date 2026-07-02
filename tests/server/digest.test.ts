@@ -19,7 +19,7 @@ test('snapshotToCards projects card shapes into a clean digest', () => {
     session: null,
   }
   expect(snapshotToCards(snapshot)).toEqual([
-    { id: 'shape:a', kind: 'prose', sourceKind: null, origin: null, text: 'my point', x: 10, y: 20, comments: [], mergedInto: null, assetPath: null },
+    { id: 'shape:a', kind: 'prose', sourceKind: null, origin: null, text: 'my point', x: 10, y: 20, comments: [], mergedInto: null, assetPath: null, reference: null },
   ])
 })
 
@@ -38,6 +38,25 @@ test('snapshotToCards resolves assetPath for image cards when given an assets di
   const [card] = snapshotToCards(snapshot, '/assets')
   expect(card.assetPath).toBe(resolveAssetPath('/assets', 'pic.png'))
   expect(snapshotToCards(snapshot)[0].assetPath).toBeNull() // no assetsDir → null
+})
+
+test('snapshotToCards passes a reference card\'s structured metadata through to the digest', () => {
+  const reference = {
+    url: 'https://arxiv.org/abs/2501.00001', refType: 'paper', title: 'Task-Driven Data Models',
+    authors: ['Ruanqianqian Cao', 'Yuan Jiang'], siteName: 'arxiv.org', year: 2025, venue: 'CHI 2025',
+    description: null, faviconAssetId: 'fav.ico', thumbnailAssetId: null, doi: null,
+    arxivId: '2501.00001', fetchedBy: 'claude', fetchedAt: '2026-07-02T00:00:00.000Z',
+  }
+  const snapshot = {
+    document: { store: { 'shape:r': {
+      id: 'shape:r', typeName: 'shape', type: 'card', x: 3, y: 4,
+      props: { w: 260, h: 116, kind: 'source', sourceKind: 'reference', origin: 'reference', text: '', comments: [], mergedInto: null, assetId: null, reference },
+    } } },
+    session: null,
+  }
+  const [card] = snapshotToCards(snapshot)
+  expect(card.sourceKind).toBe('reference')
+  expect(card.reference).toEqual(reference)
 })
 
 test('snapshotToSections projects section shapes into a clean digest, ignoring cards', () => {

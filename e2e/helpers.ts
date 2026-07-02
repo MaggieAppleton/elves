@@ -1,6 +1,8 @@
 import type { APIRequestContext } from '@playwright/test'
 
-export const BASE = 'http://localhost:5199'
+// Defaults to the standard dev server; ELVES_E2E_BASE lets a run target an
+// isolated server on another port (e.g. when the usual 5199 is already in use).
+export const BASE = process.env.ELVES_E2E_BASE ?? 'http://localhost:5199'
 
 /**
  * Ensure a single writing project exists and hand back its id, with an empty

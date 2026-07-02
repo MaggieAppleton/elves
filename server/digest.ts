@@ -1,5 +1,5 @@
 import type { CanvasSnapshot } from './store'
-import type { CardKind, SourceKind, Origin, Comment } from '../src/model/types'
+import type { CardKind, SourceKind, Origin, Comment, Reference } from '../src/model/types'
 import type { SectionAuthor } from '../src/model/sections'
 import { resolveAssetPath } from './assets'
 
@@ -14,6 +14,8 @@ export interface CardDigest {
   comments: Comment[]
   mergedInto: string | null
   assetPath: string | null
+  /** Structured metadata when this is a reference source card; null otherwise. */
+  reference: Reference | null
 }
 
 export interface SectionDigest {
@@ -53,6 +55,7 @@ export function snapshotToCards(snapshot: CanvasSnapshot, assetsDir?: string): C
         assetsDir && r.props.sourceKind === 'image' && r.props.assetId
           ? resolveAssetPath(assetsDir, r.props.assetId)
           : null,
+      reference: r.props.reference ?? null,
     }))
 }
 

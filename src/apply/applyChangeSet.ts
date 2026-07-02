@@ -3,7 +3,7 @@ import { ChangeSet, Op, planMerge } from '../model/changeset'
 import { CardShape } from '../shapes/CardShapeUtil'
 import { SectionShape } from '../shapes/SectionShapeUtil'
 import { makeComment, addComment } from '../model/comments'
-import { makeSourceCardProps } from '../model/cards'
+import { makeSourceCardProps, makeReferenceCardProps } from '../model/cards'
 import { makeSectionProps } from '../model/sections'
 
 function newId(prefix: string): string {
@@ -47,6 +47,16 @@ function applyCreateSourceCard(editor: Editor, op: Extract<Op, { kind: 'create_s
   })
 }
 
+function applyCreateReference(editor: Editor, op: Extract<Op, { kind: 'create_reference' }>): void {
+  editor.createShape<CardShape>({
+    id: createShapeId(),
+    type: 'card',
+    x: op.x,
+    y: op.y,
+    props: makeReferenceCardProps(op.reference),
+  })
+}
+
 function applyCreateSection(editor: Editor, op: Extract<Op, { kind: 'create_section' }>): void {
   editor.createShape<SectionShape>({
     id: createShapeId(),
@@ -86,6 +96,9 @@ function applyOp(editor: Editor, op: Op): void {
       break
     case 'create_source_card':
       applyCreateSourceCard(editor, op)
+      break
+    case 'create_reference':
+      applyCreateReference(editor, op)
       break
     case 'create_section':
       applyCreateSection(editor, op)

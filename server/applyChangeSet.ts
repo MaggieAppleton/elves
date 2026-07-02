@@ -3,7 +3,7 @@ import { getIndexAbove, IndexKey } from '@tldraw/utils'
 import type { CanvasSnapshot } from './store'
 import { ChangeSet, planMerge } from '../src/model/changeset'
 import { makeComment, addComment } from '../src/model/comments'
-import { makeSourceCardProps } from '../src/model/cards'
+import { makeSourceCardProps, makeReferenceCardProps } from '../src/model/cards'
 import { makeSectionProps } from '../src/model/sections'
 
 type StoreRecords = Record<string, any>
@@ -94,6 +94,24 @@ export function applyChangeSetToSnapshot(
           parentId: defaultPageId(store),
           index: getIndexAbove(topIndex(store)),
           props: makeSourceCardProps(op.text, 'transcribed'),
+        }
+        break
+      }
+      case 'create_reference': {
+        const id = createShapeId()
+        store[id] = {
+          id,
+          typeName: 'shape',
+          type: 'card',
+          x: op.x,
+          y: op.y,
+          rotation: 0,
+          isLocked: false,
+          opacity: 1,
+          meta: {},
+          parentId: defaultPageId(store),
+          index: getIndexAbove(topIndex(store)),
+          props: makeReferenceCardProps(op.reference),
         }
         break
       }

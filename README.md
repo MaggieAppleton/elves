@@ -2,7 +2,7 @@
 
 A local-first, canvas-based writing studio for taking a piece from scattered notes to a shaped set of your-own-voice points. You think spatially on an infinite canvas of cards; the tool keeps everything on your machine in a plain, human-readable file.
 
-> **Status: Phase 4 (multiple projects).** Create, edit, arrange, and persist cards; keep several **projects** (separate pieces) and switch between them; drop in **images** (photos of paper notes, sketches) as source cards; and work with Claude, who comments / dedupes / reorders and **transcribes handwritten notes** into text source cards — all within a hard boundary (never writing your prose), everything natively undoable. Tana import and MDX are later — see [Roadmap](#roadmap).
+> **Status: Phase 5 (external references).** Create, edit, arrange, and persist cards; keep several **projects** (separate pieces) and switch between them; drop in **images** (photos of paper notes, sketches) as source cards; add **references** (papers, links, tweets, books…) as rich, clickable cards — paste a url to unfurl it, or ask Claude to enrich a mention or research a topic onto the canvas; and work with Claude, who comments / dedupes / reorders and **transcribes handwritten notes** into text source cards — all within a hard boundary (never writing your prose), everything natively undoable. Tana import and MDX are later — see [Roadmap](#roadmap).
 
 ## What it does (Phase 1)
 
@@ -44,14 +44,15 @@ MCP server. In Claude Code, opening this project offers the `elves` MCP server
 weak spots", "dedupe my source cards", or "reorder these points for flow". Claude's
 changes appear live and are undoable.
 
-Claude has six tools — `list_projects`, `read_canvas`, `add_comment`,
-`merge_sources`, `move_cards`, and `create_source_card` (transcribe an image, Phase
-3b). Every canvas tool takes a **required `project` id**: Claude calls `list_projects`
-to discover them and confirms which one you mean before acting — it never guesses, and
-the server rejects an operation that targets a card outside the named project. There is
-deliberately no tool to write or edit your **prose**: Claude comments, dedupes,
-reorders, and transcribes into *source* cards, but never writes your prose. See
-`skill/elves-canvas.md`.
+Claude's tools include `list_projects`, `read_canvas`, `add_comment`,
+`merge_sources`, `move_cards`, `create_source_card` (transcribe an image, Phase 3b),
+`create_reference` (turn a mention or url into a rich reference card, Phase 5), and the
+section tools. Every canvas tool takes a **required `project` id**: Claude calls
+`list_projects` to discover them and confirms which one you mean before acting — it never
+guesses, and the server rejects an operation that targets a card outside the named
+project. There is deliberately no tool to write or edit your **prose**: Claude comments,
+dedupes, reorders, transcribes into *source* cards, and creates *reference* cards, but
+never writes your prose. See `skill/elves-canvas.md`.
 
 ## Images (Phase 3a)
 
@@ -63,6 +64,28 @@ Images are stored **local-first as files** in the project's `data/projects/<id>/
 `canvas.json` keeps only a small `assetId`, so each project stays a portable folder no
 matter how many sketches you add. Ask Claude to **transcribe** a handwritten-notes image and it types
 your handwriting into a text source card next to it (Phase 3b, below).
+
+## External references (Phase 5)
+
+Papers, articles, books, software, tweets/posts, videos, Wikipedia, links — the outside
+sources an essay leans on — belong on the canvas as **reference cards**: clickable, with a
+**type-adaptive face** (a paper shows authors · year · venue; a blog shows favicon +
+title; a tweet shows the handle + post text; a book shows its cover). Every reference card
+has an **↗ open** control, and hovering it reveals the full metadata.
+
+- **Paste or drop a link**, or use **+ Link** — the server *unfurls* the url (OpenGraph /
+  oEmbed / `citation_*` metadata) into a card and caches its favicon + hero image as local
+  files, so the card is rich, clickable, and stays offline-usable.
+- **Ask Claude to enrich a mention.** A note that names a source in plain text (*"Andy
+  Matuschak: 'A startling glimpse…'"*, or a card listing several papers) becomes proper
+  reference cards **beside** the note — the note is left untouched. For papers Claude looks
+  up authoritative authors/year/venue/DOI.
+- **Ask Claude to research a topic** and drop the relevant references near a card you point
+  at, optionally under a section label.
+
+A reference is a **source** card (reference material, never prose), so Claude authoring one
+respects the same boundary as transcription — it writes the source's *facts*, never your
+words. A reference card's own text stays *your* annotation.
 
 ## Requirements
 
@@ -108,6 +131,7 @@ npm run dev       # web app on :5173
 
 - **+ Prose** / **+ Source** in the toolbar add a card at the centre of the view.
 - **+ Image** (or drag an image file onto the canvas) adds an image source card.
+- **+ Link** (or paste/drop a url) unfurls it into a rich, clickable reference card.
 - **Drag** cards to arrange them; use the canvas to group and lay out your argument spatially. Drag a card's corner to **resize** it.
 - **Double-click** a card to edit its text; click empty canvas to commit.
 - The **project switcher** (top-right) creates / switches / renames projects.
@@ -167,16 +191,20 @@ src/
   client/persistence.ts   # projects API + load/save a project's canvas
   client/realtime.ts      # websocket client receiving {projectId, change-set}
   client/assets.ts        # upload images, build asset URLs (per project)
-  shapes/                 # the custom tldraw "card" shape (text, image, comments) + CSS
+  client/references.ts    # unfurl a url into a Reference (paste / + Link)
+  model/references.ts     # pure reference display helpers + guessRefType (type-adaptive faces)
+  shapes/                 # custom tldraw "card" shape (text, image, reference, comments) + CSS
+  shapes/ReferenceCardFace.tsx # the type-adaptive reference face + hover metadata
 server/
   store.ts                # atomic read/write of a canvas.json
   projects.ts             # project registry: create / list / rename, slug + path guards
   migrate.ts              # one-time legacy canvas -> projects/my-first-essay
   assets.ts               # image files on disk (path-traversal-safe)
-  app.ts                  # Express: /projects[/:id/{canvas,cards,changeset,assets}]
+  unfurl.ts               # fetch a url -> structured Reference (OG / oEmbed / citation_*)
+  app.ts                  # Express: /projects[/:id/{canvas,cards,changeset,assets,unfurl}]
   realtime.ts             # websocket broadcast of change-sets (tagged by project)
   index.ts                # server entrypoint (http + ws + express)
-mcp/                      # scoped MCP server — Claude's six tools (project-targeted)
+mcp/                      # scoped MCP server — Claude's tools (project-targeted)
 skill/                    # the Claude skill (how to work the canvas)
 tests/                    # Vitest unit tests
 e2e/                      # Playwright end-to-end tests
@@ -185,7 +213,13 @@ data/projects/<id>/       # each project's canvas.json + assets/ (git-ignored)
 
 ## Data & privacy
 
-Local-first by design. Each project is a plain, human-readable folder (`data/projects/<id>/canvas.json` plus an `assets/` folder of image files), all on your machine and git-ignored. Nothing is sent anywhere.
+Local-first by design. Each project is a plain, human-readable folder (`data/projects/<id>/canvas.json` plus an `assets/` folder of image files), all on your machine and git-ignored. **Your canvas is never sent anywhere.**
+
+The one thing that reaches outside your machine is **reference unfurling**: when you paste
+a link (or ask Claude to enrich/research references), the server fetches *that public URL*
+to read its metadata and cache its favicon/image. This is always an **explicit,
+per-action** fetch of a page you named — never a background upload of your work. If you
+never add a reference, nothing leaves your machine.
 
 ## Design principle
 
@@ -198,6 +232,7 @@ Your writing stays yours. The data model separates **source** (reference) cards 
 - **Phase 3a — images on the canvas (done):** drag-in / **+ Image** source cards, stored as local files.
 - **Phase 3b — transcription (done):** Claude reads a handwritten-notes image and transcribes it into a text source card (your words), via a `create_source_card` tool — still never writing your prose.
 - **Phase 4 — multiple projects (done):** self-contained project folders with an in-app switcher (create / switch / rename) and a required `project` target on every Claude tool (+ `list_projects`), so Claude always knows which piece it's working in.
-- **Later:** assisted Tana import, MDX export, multi-device.
+- **Phase 5 — external references (done):** first-class **reference cards** with a type-adaptive face (paper / article / social / book / software / …), click-to-open + hover metadata; a server *unfurl* endpoint (paste/drop a url → rich card, favicon + hero cached locally); and a `create_reference` Claude tool for enriching plain-text mentions and researching a topic onto the canvas — all as *source* cards, never prose.
+- **Later:** the citation loop (a `needs-citation` comment → attach a reference), reference→claim links, references surviving Tana import / MDX export, multi-device.
 
 See the design specs and build plans for the full rationale: [`2026-07-01-elves-design.md`](./2026-07-01-elves-design.md) (overall) · [`2026-07-01-elves-mvp-phase1-plan.md`](./2026-07-01-elves-mvp-phase1-plan.md) (Phase 1) · [`2026-07-01-elves-phase2-design.md`](./2026-07-01-elves-phase2-design.md) + [`2026-07-01-elves-phase2a-plan.md`](./2026-07-01-elves-phase2a-plan.md) (Phase 2) · [`2026-07-01-elves-phase3-design.md`](./2026-07-01-elves-phase3-design.md) + [`2026-07-01-elves-phase3a-plan.md`](./2026-07-01-elves-phase3a-plan.md) (Phase 3).

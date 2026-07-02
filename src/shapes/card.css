@@ -86,6 +86,161 @@
 }
 
 /* =========================================================================
+   Reference cards — a source card whose face adapts to what it points at
+   (paper / article / social / book / software / wiki / video / link). The face
+   manages its own padding, so the card padding is zeroed; overflow is visible
+   so the hover metadata panel can escape below the card (like comments).
+   ========================================================================= */
+.elves-card--reference {
+  padding: 0;
+  overflow: visible;
+  color: var(--elves-ink);
+  background: var(--elves-surface);
+  border-color: var(--elves-border-strong);
+}
+.elves-ref {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 13px;
+  box-sizing: border-box;
+  overflow: visible;
+}
+.elves-ref__row { display: flex; gap: 10px; align-items: flex-start; }
+.elves-ref__media {
+  width: 46px;
+  height: 46px;
+  flex-shrink: 0;
+  object-fit: cover;
+  border-radius: 6px;
+  box-shadow: var(--elves-shadow-sm);
+}
+.elves-ref__media--book { height: 62px; width: 44px; border-radius: 4px; }
+.elves-ref__media--social { border-radius: 50%; }
+.elves-ref__body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 5px; }
+
+.elves-ref__eyebrow { display: flex; align-items: center; gap: 6px; min-width: 0; padding-right: 22px; }
+.elves-ref__favicon { width: 14px; height: 14px; flex-shrink: 0; border-radius: 3px; object-fit: cover; }
+/* Fallback kind-dot when a favicon hasn't been fetched: a small tinted chip,
+   coloured per reference type so the kind still reads at a glance. */
+.elves-ref__glyph { width: 12px; height: 12px; flex-shrink: 0; border-radius: 3px; background: var(--elves-ink-faint); }
+.elves-ref__glyph[data-reftype="paper"]    { background: oklch(0.60 0.12 250); }
+.elves-ref__glyph[data-reftype="software"] { background: oklch(0.60 0.13 150); }
+.elves-ref__glyph[data-reftype="social"]   { background: oklch(0.62 0.14 230); }
+.elves-ref__glyph[data-reftype="book"]     { background: oklch(0.58 0.11 60); }
+.elves-ref__glyph[data-reftype="video"]    { background: oklch(0.60 0.15 25); }
+.elves-ref__glyph[data-reftype="wiki"]     { background: var(--elves-ink-soft); }
+.elves-ref__kind {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--elves-ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.elves-ref__title {
+  font-family: var(--elves-card-font);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--elves-ink);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.elves-ref__meta {
+  font-size: 12.5px;
+  color: var(--elves-ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.elves-ref__desc {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--elves-ink-soft);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* ↗ open — the one interactive target on the face. It opts back into pointer
+   events (the rest of the card stays click-through so tldraw can select/drag
+   it), opens the url, and on hover reveals the full-metadata panel. */
+.elves-ref__open {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  z-index: 5;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--elves-ink-faint);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: all;
+  transition: background-color 100ms ease, color 100ms ease;
+}
+.elves-ref__open:hover { color: var(--elves-primary); background: var(--elves-primary-tint); }
+.elves-ref__open:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring);
+}
+.elves-ref__open svg { width: 14px; height: 14px; display: block; }
+
+/* Full-metadata panel: hidden until the ↗ is hovered, rendered below the card
+   (escaping the card box), non-interactive so it never blocks the canvas. */
+.elves-ref__hover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 100%;
+  margin-top: 7px;
+  z-index: 20;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--elves-surface);
+  border: 1px solid var(--elves-border);
+  box-shadow: var(--elves-shadow-lg), var(--elves-highlight);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 120ms ease, transform 120ms ease;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+.elves-ref__open:hover ~ .elves-ref__hover { opacity: 1; transform: none; }
+.elves-ref__hover-title { font-size: 13px; font-weight: 600; color: var(--elves-ink); }
+.elves-ref__hover-line { font-size: 12px; color: var(--elves-ink-soft); overflow-wrap: anywhere; }
+.elves-ref__hover-desc {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--elves-ink-soft);
+  max-height: 7em;
+  overflow: hidden;
+}
+.elves-ref__hover-url { font-size: 11px; color: var(--elves-ink-faint); overflow-wrap: anywhere; }
+
+@media (prefers-reduced-motion: reduce) {
+  .elves-ref__open,
+  .elves-ref__hover { transition: none; }
+}
+
+/* =========================================================================
    Comments — Claude's margin notes, rendered BELOW the card (outside its
    clipped box). Each type gets a very lightly tinted background + a subtly
    tinted border + a coloured label, drawn from calm desaturated colour ramps.

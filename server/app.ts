@@ -11,6 +11,7 @@ import {
 import { snapshotToCards, snapshotToSections, snapshotToCanvasDigest } from './digest'
 import { applyChangeSetToSnapshot } from './applyChangeSet'
 import { extForMime, saveAsset, resolveAssetPath } from './assets'
+import { unfurl, type UnfurlDeps, type FetchedImage } from './unfurl'
 import {
   listProjects,
   createProject,
@@ -20,6 +21,53 @@ import {
   assetsDirFor,
   ProjectError,
 } from './projects'
+
+const UNFURL_UA = 'ElvesBot/0.1 (+local-first writing studio; reference unfurl)'
+const FETCH_TIMEOUT_MS = 8000
+const MAX_HTML_BYTES = 2_000_000
+const MAX_IMAGE_BYTES = 5_000_000
+
+// Real network + asset I/O for unfurl, scoped to one project's assets dir. The
+// fetches are http(s)-only, time-limited, and size-capped; images are stored as
+// local files so a reference card stays offline-usable and portable.
+function unfurlDepsFor(assetsDir: string): UnfurlDeps {
+  const withTimeout = async (url: string, accept: string) => {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS)
+    try {
+      return await fetch(url, {
+        signal: ctrl.signal,
+        redirect: 'follow',
+        headers: { 'user-agent': UNFURL_UA, accept },
+      })
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+  return {
+    fetchText: async (url) => {
+      const res = await withTimeout(url, 'text/html,application/xhtml+xml')
+      const ct = (res.headers.get('content-type') ?? '').toLowerCase()
+      if (!res.ok || !ct.includes('html')) throw new Error(`not html (${res.status})`)
+      const html = (await res.text()).slice(0, MAX_HTML_BYTES)
+      return { html, finalUrl: res.url || url }
+    },
+    fetchImage: async (url): Promise<FetchedImage | null> => {
+      const res = await withTimeout(url, 'image/*')
+      if (!res.ok) return null
+      const contentType = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase()
+      if (!contentType.startsWith('image/')) return null
+      const bytes = Buffer.from(await res.arrayBuffer())
+      if (bytes.length === 0 || bytes.length > MAX_IMAGE_BYTES) return null
+      return { bytes, contentType }
+    },
+    saveImage: async (img) => {
+      const ext = extForMime(img.contentType)
+      return ext ? saveAsset(assetsDir, img.bytes, ext) : null
+    },
+    now: () => new Date().toISOString(),
+  }
+}
 
 // Express 4 does not await async handlers, so a rejected promise becomes a fatal
 // unhandled rejection that takes down the whole server. wrap() turns any handler
@@ -204,6 +252,26 @@ export function createServer(
       res.sendFile(path, (err) => {
         if (err && !res.headersSent) res.status(404).end()
       })
+    }),
+  )
+
+  // --- Reference unfurl -----------------------------------------------------
+  // Given a URL, fetch it and return a structured Reference draft (title,
+  // authors, favicon + hero cached as local assets). This makes an OUTBOUND
+  // request to the URL the user pasted / asked Claude to enrich — always an
+  // explicit, per-action fetch, never background. The canvas itself stays local.
+  app.post(
+    '/projects/:id/unfurl',
+    wrap(async (req, res) => {
+      const paths = await requireProject(req.params.id, res)
+      if (!paths) return
+      const url = req.body?.url
+      if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+        res.status(400).json({ error: 'a valid http(s) url is required' })
+        return
+      }
+      const reference = await unfurl(url, unfurlDepsFor(paths.assetsDir))
+      res.json({ reference })
     }),
   )
 

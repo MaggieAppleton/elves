@@ -1,6 +1,7 @@
 import type { ChangeSet } from '../src/model/changeset'
 import type { CanvasDigest } from '../server/digest'
 import type { Project } from '../server/projects'
+import type { Reference } from '../src/model/types'
 
 export type ProjectSummary = Pick<Project, 'id' | 'name'>
 
@@ -16,6 +17,22 @@ export async function readCanvasDigest(baseUrl: string, projectId: string): Prom
   if (res.status === 404) throw new Error(`unknown project '${projectId}' — call list_projects to see valid ids`)
   if (!res.ok) throw new Error(`read_canvas failed: ${res.status}`)
   return res.json() as Promise<CanvasDigest>
+}
+
+export async function unfurlReference(
+  baseUrl: string,
+  projectId: string,
+  url: string,
+): Promise<Reference> {
+  const res = await fetch(`${baseUrl}/projects/${encodeURIComponent(projectId)}/unfurl`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ url }),
+  })
+  if (res.status === 404) throw new Error(`unknown project '${projectId}' — call list_projects to see valid ids`)
+  if (!res.ok) throw new Error(`unfurl failed: ${res.status}`)
+  const { reference } = (await res.json()) as { reference: Reference }
+  return reference
 }
 
 export async function postChangeSet(

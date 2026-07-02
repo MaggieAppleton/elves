@@ -7,6 +7,7 @@ import {
   mergeSourcesTool,
   moveCardsTool,
   createSourceCardTool,
+  createReferenceTool,
   createSectionTool,
   moveSectionsTool,
   editSectionTextTool,
@@ -14,6 +15,7 @@ import {
 } from './tools'
 
 const COMMENT_TYPE = z.enum(['needs-evidence', 'weak-argument', 'needs-citation'])
+const REF_TYPE = z.enum(['paper', 'article', 'book', 'software', 'social', 'video', 'wiki', 'link'])
 
 // Every tool that touches a canvas requires this. Claude must know which project
 // it is working in before doing anything; if it doesn't, it calls list_projects
@@ -36,7 +38,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'read_canvas',
-    'Read a project\'s canvas as { cards, sections }. Cards: id, kind (prose|source), text, x/y position (x is narrative order: left=earlier, right=later), comments, and mergedInto. Sections: id, text (a short thematic label), x/y, and authoredBy (user|claude — who wrote its current wording). Call this (with the project id) to get ids before commenting, merging, moving, or renaming.',
+    'Read a project\'s canvas as { cards, sections }. Cards: id, kind (prose|source), sourceKind (text|image|reference), text, x/y position (x is narrative order: left=earlier, right=later), comments, mergedInto, and — for reference cards — a `reference` object (url, refType, title, authors, year, venue, doi, …). Sections: id, text (a short thematic label), x/y, and authoredBy (user|claude — who wrote its current wording). Call this (with the project id) to get ids before commenting, merging, moving, renaming, or enriching mentions into references.',
     { project: PROJECT },
     async ({ project }) => ({
       content: [{ type: 'text', text: JSON.stringify(await readCanvasTool(baseUrl, project), null, 2) }],
@@ -80,6 +82,32 @@ export function createMcpServer(baseUrl: string): McpServer {
     async ({ project, text, x, y }) => {
       await createSourceCardTool(baseUrl, project, { text, x, y })
       return { content: [{ type: 'text', text: 'source card created' }] }
+    },
+  )
+
+  server.tool(
+    'create_reference',
+    "Create a REFERENCE source card from a url — a clickable, metadata-bearing card for an external source (paper, article, book, software, tweet/post, video, wiki, link). The server unfurls the url for a baseline (title, site, favicon, hero image, and citation metadata for papers); pass any fields you researched to override it — for an academic paper, look up authoritative `authors`, `year`, `venue`, and `doi` (e.g. via arXiv/Crossref) and pass them. Two main uses: (1) ENRICH a plain-text mention — read the note, and for EACH source it names call create_reference positioned just to the right of that note, leaving the note itself untouched (augment alongside, never delete). (2) RESEARCH a topic — find good sources and place them clustered near the card the user pointed at, optionally with a create_section label over them. x is narrative order like other cards. This creates a SOURCE card carrying reference facts; it never writes the user's prose or annotation.",
+    {
+      project: PROJECT,
+      url: z.string().describe('The canonical url of the source (the link the card opens).'),
+      x: z.number(),
+      y: z.number(),
+      refType: REF_TYPE.optional().describe('Override the guessed kind if you know better.'),
+      title: z.string().optional(),
+      authors: z.array(z.string()).optional().describe('Full author names; for papers, the authoritative list.'),
+      year: z.number().optional(),
+      venue: z.string().optional().describe('Conference/journal/publisher, e.g. "CHI 2025".'),
+      description: z.string().optional().describe('A short abstract/summary or the post text.'),
+      siteName: z.string().optional(),
+      doi: z.string().optional(),
+    },
+    async ({ project, url, x, y, refType, title, authors, year, venue, description, siteName, doi }) => {
+      await createReferenceTool(baseUrl, project, {
+        url, x, y,
+        fields: { refType, title, authors, year, venue, description, siteName, doi },
+      })
+      return { content: [{ type: 'text', text: 'reference card created' }] }
     },
   )
 

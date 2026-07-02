@@ -4,8 +4,11 @@ import 'tldraw/tldraw.css'
 import './theme.css'
 import { CardShapeUtil, CardShape } from './shapes/CardShapeUtil'
 import { SectionShapeUtil, SectionShape } from './shapes/SectionShapeUtil'
-import { makeProseCardProps, makeSourceCardProps, makeImageSourceCardProps } from './model/cards'
+import {
+  makeProseCardProps, makeSourceCardProps, makeImageSourceCardProps, makeReferenceCardProps,
+} from './model/cards'
 import { makeSectionProps } from './model/sections'
+import { requestUnfurl } from './client/references'
 import {
   loadCanvas,
   saveCanvas,
@@ -104,6 +107,19 @@ export default function App() {
     ed.select(id)
   }
 
+  // Turn a url into a reference card: unfurl it (title/site/favicon/hero, cached
+  // as local assets) and drop the type-adaptive card at the given point.
+  const addReferenceFromUrl = async (ed: Editor, url: string, point?: { x: number; y: number }) => {
+    const pid = projectIdRef.current
+    if (!pid) return
+    const reference = await requestUnfurl(pid, url)
+    const props = makeReferenceCardProps(reference)
+    const at = point ?? ed.getViewportPageBounds().center
+    const id = createShapeId()
+    ed.createShape<CardShape>({ id, type: 'card', x: at.x - props.w / 2, y: at.y - props.h / 2, props })
+    ed.select(id)
+  }
+
   const handleMount = (ed: Editor) => {
     editorRef.current = ed
     setEditor(ed)
@@ -131,6 +147,11 @@ export default function App() {
           for (const file of files) {
             if (file.type.startsWith('image/')) await addImageCard(ed, file, point)
           }
+        })
+        // Pasting or dropping a URL becomes a reference card (instead of tldraw's
+        // default bookmark shape).
+        ed.registerExternalContentHandler('url', async ({ url, point }) => {
+          await addReferenceFromUrl(ed, url, point)
         })
       })
   }
@@ -164,6 +185,14 @@ export default function App() {
     })
     editor.select(id)
     editor.setEditingShape(id)
+  }
+
+  const addLinkFlow = async () => {
+    if (!editor) return
+    const raw = window.prompt('Paste a link to add as a reference')?.trim()
+    if (!raw) return
+    const url = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`
+    await addReferenceFromUrl(editor, url)
   }
 
   const switchProject = async (id: string) => {
@@ -256,6 +285,7 @@ export default function App() {
         <button data-testid="new-prose" onClick={() => addCard('prose')}><PlusIcon />Prose</button>
         <button data-testid="new-source" onClick={() => addCard('source')}><PlusIcon />Notes</button>
         <button data-testid="new-image" onClick={() => fileInputRef.current?.click()}><PlusIcon />Image</button>
+        <button data-testid="new-link" onClick={addLinkFlow}><PlusIcon />Link</button>
         <button data-testid="new-section" onClick={addSection}><PlusIcon />Section</button>
         <input
           ref={fileInputRef}

@@ -1,4 +1,6 @@
 import type { Editor } from 'tldraw'
+import type { Reference } from '../model/types'
+import { refMeta, refDescription, refTitle, hasLeftMedia } from '../model/references'
 
 /**
  * Text auto-sizing for cards and section headers.
@@ -38,6 +40,48 @@ export function measuredCardHeight(
     padding: '0px',
   })
   return Math.ceil(h + CARD_PAD_Y + (hasBadge ? CARD_BADGE_ROW : 0))
+}
+
+// --- Reference cards -----------------------------------------------------
+// card.css .elves-card--reference: padding 13px; a title (15px/600, 1.3,
+// clamped to 2 lines), an optional meta row and a 2-line description (13px,
+// 1.4), under a fixed eyebrow row. Social/book cards also carry a 46px left
+// media thumbnail, so the card is never shorter than that.
+const REF_PAD = 26 // 13 left + 13 right (and 13 top + 13 bottom vertically)
+const REF_PAD_Y = 26
+const REF_EYEBROW = 18 // favicon/glyph row + its gap
+const REF_GAP = 5
+const REF_MEDIA = 46
+const REF_MEDIA_GAP = 10
+
+function clampLines(measuredH: number, fontSize: number, lineHeight: number, maxLines: number): number {
+  return Math.min(measuredH, Math.ceil(fontSize * lineHeight * maxLines))
+}
+
+export function measuredReferenceHeight(editor: Editor, reference: Reference, width: number): number {
+  const leftMedia = hasLeftMedia(reference)
+  const textWidth = Math.max(60, width - REF_PAD - (leftMedia ? REF_MEDIA + REF_MEDIA_GAP : 0))
+
+  const title = editor.textMeasure.measureText(refTitle(reference) || ' ', {
+    fontFamily: FONT_FAMILY, fontSize: 15, lineHeight: 1.3, fontWeight: '600', fontStyle: 'normal',
+    maxWidth: textWidth, padding: '0px',
+  })
+  let h = REF_EYEBROW + REF_GAP + clampLines(title.h, 15, 1.3, 2)
+
+  if (refMeta(reference)) h += REF_GAP + 17
+
+  const desc = refDescription(reference)
+  if (desc) {
+    const d = editor.textMeasure.measureText(desc, {
+      fontFamily: FONT_FAMILY, fontSize: 13, lineHeight: 1.4, fontWeight: '400', fontStyle: 'normal',
+      maxWidth: textWidth, padding: '0px',
+    })
+    h += REF_GAP + clampLines(d.h, 13, 1.4, 2)
+  }
+
+  h += REF_PAD_Y
+  if (leftMedia) h = Math.max(h, REF_PAD_Y + REF_MEDIA)
+  return Math.ceil(h)
 }
 
 // --- Section headers -----------------------------------------------------

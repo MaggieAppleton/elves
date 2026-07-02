@@ -4,11 +4,12 @@ import {
   type Editor, type Geometry2d, type TLResizeInfo,
 } from 'tldraw'
 import { useLayoutEffect, type ReactNode } from 'react'
-import type { CardKind, SourceKind, Origin, Comment } from '../model/types'
+import type { CardKind, SourceKind, Origin, Comment, Reference } from '../model/types'
 import { makeProseCardProps } from '../model/cards'
 import { visibleComments, resolveComment } from '../model/comments'
 import { assetUrl } from '../client/assets'
-import { measuredCardHeight } from './autosize'
+import { measuredCardHeight, measuredReferenceHeight } from './autosize'
+import { ReferenceCardFace } from './ReferenceCardFace'
 import './card.css'
 
 export type CardShape = TLBaseShape<'card', {
@@ -21,7 +22,26 @@ export type CardShape = TLBaseShape<'card', {
   comments: Comment[]
   mergedInto: string | null
   assetId: string | null
+  reference: Reference | null
 }>
+
+// Validator for the structured reference metadata (sourceKind === 'reference').
+const referenceValidator = T.object({
+  url: T.string,
+  refType: T.literalEnum('paper', 'article', 'book', 'software', 'social', 'video', 'wiki', 'link'),
+  title: T.nullable(T.string),
+  authors: T.arrayOf(T.string),
+  siteName: T.nullable(T.string),
+  year: T.nullable(T.number),
+  venue: T.nullable(T.string),
+  description: T.nullable(T.string),
+  faviconAssetId: T.nullable(T.string),
+  thumbnailAssetId: T.nullable(T.string),
+  doi: T.nullable(T.string),
+  arxivId: T.nullable(T.string),
+  fetchedBy: T.nullable(T.literalEnum('unfurl', 'claude', 'user')),
+  fetchedAt: T.nullable(T.string),
+})
 
 export function addCommentsUp(props: Record<string, unknown>): void {
   props.comments = []
@@ -32,7 +52,13 @@ export function addAssetIdUp(props: Record<string, unknown>): void {
   props.assetId = null
 }
 
-const cardVersions = createShapePropsMigrationIds('card', { AddComments: 1, AddAssetId: 2 })
+export function addReferenceUp(props: Record<string, unknown>): void {
+  props.reference = null
+}
+
+const cardVersions = createShapePropsMigrationIds('card', {
+  AddComments: 1, AddAssetId: 2, AddReference: 3,
+})
 
 export const cardMigrations = createShapePropsMigrationSequence({
   sequence: [
@@ -52,6 +78,13 @@ export const cardMigrations = createShapePropsMigrationSequence({
         delete (props as Record<string, unknown>).assetId
       },
     },
+    {
+      id: cardVersions.AddReference,
+      up: (props) => addReferenceUp(props as Record<string, unknown>),
+      down: (props) => {
+        delete (props as Record<string, unknown>).reference
+      },
+    },
   ],
 })
 
@@ -65,14 +98,16 @@ export const cardMigrations = createShapePropsMigrationSequence({
 function AutosizeCard({
   editor, shape, children,
 }: { editor: Editor; shape: CardShape; children: ReactNode }) {
-  const { text, w, h, kind, sourceKind } = shape.props
+  const { text, w, h, kind, sourceKind, reference } = shape.props
   useLayoutEffect(() => {
     let cancelled = false
     const fit = () => {
       if (cancelled) return
       const cur = editor.getShape<CardShape>(shape.id)
       if (!cur || cur.props.mergedInto || cur.props.sourceKind === 'image') return
-      const want = measuredCardHeight(editor, cur.props.text, cur.props.w, cur.props.kind === 'source')
+      const want = cur.props.sourceKind === 'reference' && cur.props.reference
+        ? measuredReferenceHeight(editor, cur.props.reference, cur.props.w)
+        : measuredCardHeight(editor, cur.props.text, cur.props.w, cur.props.kind === 'source')
       if (Math.abs(want - cur.props.h) > 1) {
         editor.updateShape<CardShape>({ id: cur.id, type: 'card', props: { h: want } })
       }
@@ -80,7 +115,7 @@ function AutosizeCard({
     fit()
     document.fonts?.ready?.then(fit)
     return () => { cancelled = true }
-  }, [editor, shape.id, text, w, h, kind, sourceKind])
+  }, [editor, shape.id, text, w, h, kind, sourceKind, reference])
   return <>{children}</>
 }
 
@@ -91,8 +126,8 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     w: T.number,
     h: T.number,
     kind: T.literalEnum('source', 'prose'),
-    sourceKind: T.nullable(T.literalEnum('text', 'image')),
-    origin: T.nullable(T.literalEnum('tana', 'image', 'typed', 'transcribed')),
+    sourceKind: T.nullable(T.literalEnum('text', 'image', 'reference')),
+    origin: T.nullable(T.literalEnum('tana', 'image', 'typed', 'transcribed', 'reference')),
     text: T.string,
     comments: T.arrayOf(
       T.object({
@@ -105,6 +140,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     ),
     mergedInto: T.nullable(T.string),
     assetId: T.nullable(T.string),
+    reference: T.nullable(referenceValidator),
   }
 
   getDefaultProps(): CardShape['props'] {
@@ -124,8 +160,9 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     const mergedCount = this.editor
       .getCurrentPageShapes()
       .filter((s) => s.type === 'card' && (s as CardShape).props.mergedInto === shape.id).length
-    const { kind, text, sourceKind, assetId } = shape.props
+    const { kind, text, sourceKind, assetId, reference } = shape.props
     const isImage = sourceKind === 'image' && !!assetId
+    const isReference = sourceKind === 'reference' && !!reference
     const isEditing = this.editor.getEditingShapeId() === shape.id
     const comments = visibleComments(shape.props.comments)
     return (
@@ -133,18 +170,27 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
       <HTMLContainer style={{ overflow: 'visible' }}>
         <div className="elves-card-wrap" style={{ position: 'relative', width: '100%', height: '100%' }}>
           <div
-            className={`elves-card elves-card--${kind}${isImage ? ' elves-card--image' : ''}`}
+            className={`elves-card elves-card--${kind}${isImage ? ' elves-card--image' : ''}${isReference ? ' elves-card--reference' : ''}`}
             style={{ width: '100%', height: '100%' }}
           >
-            {sourceKind === 'image' && assetId ? (
+            {isImage ? (
               // Image cards are just the image — edge-to-edge, no label, no chrome.
               <img
                 className="elves-card__image"
-                src={assetUrl(assetId)}
+                src={assetUrl(assetId!)}
                 alt=""
                 draggable={false}
                 data-testid="card-image"
               />
+            ) : isReference ? (
+              // Reference cards render a type-adaptive face; the annotation text
+              // (shape.props.text) stays the user's own words, edited elsewhere.
+              <>
+                {mergedCount > 0 && (
+                  <span className="elves-merged" data-testid="merged-badge">⊕ {mergedCount} merged</span>
+                )}
+                <ReferenceCardFace reference={reference} />
+              </>
             ) : (
               <>
                 {kind === 'source' && (
@@ -220,7 +266,9 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     const next = resizeBox(shape, info)
     if (shape.props.sourceKind === 'image') return next
     const w = next.props?.w ?? shape.props.w
-    const h = measuredCardHeight(this.editor, shape.props.text, w, shape.props.kind === 'source')
+    const h = shape.props.sourceKind === 'reference' && shape.props.reference
+      ? measuredReferenceHeight(this.editor, shape.props.reference, w)
+      : measuredCardHeight(this.editor, shape.props.text, w, shape.props.kind === 'source')
     return { ...next, props: { ...next.props, h } }
   }
 }

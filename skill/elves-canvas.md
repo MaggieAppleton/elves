@@ -23,6 +23,11 @@ required `project` id, and you must know which project before doing anything.**
 ## The canvas
 - Two kinds of card: **prose** (the user's own words — a point/sentence/paragraph) and
   **source** (raw reference material). Read them with `read_canvas`.
+- A source card can be a plain **note**, an **image**, or a **reference** — an
+  external source (paper, article, book, software, tweet/post, video, wiki, link)
+  with structured metadata. In `read_canvas`, a reference card has
+  `sourceKind: "reference"` and a `reference` object (url, refType, title,
+  authors, year, venue, doi, …). See "Working with references" below.
 - **x = narrative order: left is earlier, right is later.** A card's horizontal
   position is its place in the piece.
 - **Sections** are a third kind of thing, but not a card: a big thematic label (a
@@ -47,6 +52,10 @@ required `project` id, and you must know which project before doing anything.**
   than the points it should come before. Move related points together.
 - **`create_source_card(project, text, x, y)`** — create a SOURCE card from text you
   transcribed from an image. Never used for your own prose.
+- **`create_reference(project, url, x, y, fields?)`** — create a REFERENCE source card
+  for an external source. The server unfurls the url for a baseline; pass researched
+  `fields` (for a paper: authoritative `authors`, `year`, `venue`, `doi`) to override it.
+  See "Working with references".
 - **`create_section(project, text, x, y)`** — add a new section header above a cluster
   of cards. Keep the label to a few words. It renders in your accent color so the user
   can see at a glance that you wrote it.
@@ -71,6 +80,42 @@ Image cards (a `source` card showing an image) include an `assetPath` in `read_c
 
 You create **source** cards, never prose. The transcription is the user's own words as
 reference material they'll distill later.
+
+## Working with references
+
+External sources — papers, articles, books, software, tweets/posts, videos, Wikipedia,
+links — belong on the canvas as **reference cards**: clickable, with structured
+metadata, rendered in a type-adaptive face. A reference is a **source** card, so
+creating one is on the safe side of the boundary (like transcription) — you write the
+source's *facts*, never the user's prose or their annotation of it.
+
+Use **`create_reference(project, url, x, y, fields?)`**. The server unfurls the url for a
+baseline (title, site, favicon, hero image; for papers, `citation_*` metadata). Pass any
+`fields` you researched and they override the baseline — **for an academic paper, look up
+the authoritative `authors`, `year`, `venue`, and `doi`** (e.g. via arXiv / Crossref /
+Semantic Scholar) and pass them, since page metadata for papers is often poor.
+
+Two workflows:
+
+- **Enrich a plain-text mention.** A note often names sources in prose (e.g. *"Andy
+  Matuschak: 'A startling glimpse of malleable software'"*, or a card listing several
+  papers). Read the note, then for **each** source it names, call `create_reference`
+  positioned just to the **right** of that note (step y down for each, ~10px gaps).
+  **Leave the original note untouched — augment alongside, never delete or merge it
+  away.** One note naming three papers becomes three reference cards beside it.
+
+- **Research a topic and place it near a card.** When the user says "research X and put it
+  near this card", find good sources, then `create_reference` for each, clustered near the
+  target card (read its x/y first). Optionally add a `create_section` label over the
+  cluster (e.g. "Prior art: end-user programming"). Keep x roughly at the target's x so it
+  reads in the same part of the narrative.
+
+Positioning: reference cards are ~260px wide. To sit a cluster to the right of a note at
+`(x, y)`, start around `(x + 300, y)` and increment y by ~130 per card. Don't overlap the
+user's existing cards; nudge into nearby empty space.
+
+If a card already has a `reference`, it's already enriched — don't duplicate it. You can
+still `move_cards` or `merge_sources` references like any source card.
 
 ## How to work
 1. Determine the `project` first (`list_projects`, confirm with the user if unclear),

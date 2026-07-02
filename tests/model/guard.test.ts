@@ -14,6 +14,16 @@ test('none of the Phase 2 ops write card text', () => {
   expect(changeSetWritesText(cs)).toBe(false)
 })
 
+test('create_reference writes reference facts, not prose — allowed', () => {
+  const reference = {
+    url: 'https://arxiv.org/abs/1', refType: 'paper' as const, title: 'A paper', authors: ['Cao'],
+    siteName: 'arxiv.org', year: 2025, venue: null, description: null, faviconAssetId: null,
+    thumbnailAssetId: null, doi: null, arxivId: null, fetchedBy: 'claude' as const, fetchedAt: null,
+  }
+  const cs = { id: 'x', author: 'claude' as const, ops: [{ kind: 'create_reference' as const, reference, x: 0, y: 0 }] }
+  expect(changeSetWritesText(cs)).toBe(false)
+})
+
 test('an unknown op kind is treated as unsafe (writes text)', () => {
   const cs = { id: 'x', author: 'claude' as const, ops: [{ kind: 'edit_text', cardId: 'a', text: 'no' }] as any }
   expect(changeSetWritesText(cs)).toBe(true)

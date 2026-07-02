@@ -1,5 +1,6 @@
 import {
-  CardKind, CardProps, Origin, CARD_DEFAULT_W, CARD_DEFAULT_H,
+  CardKind, CardProps, Origin, Reference, CARD_DEFAULT_W, CARD_DEFAULT_H,
+  REFERENCE_DEFAULT_W, REFERENCE_DEFAULT_H,
 } from './types'
 
 export { CARD_DEFAULT_W, CARD_DEFAULT_H }
@@ -8,7 +9,7 @@ export function makeProseCardProps(text = ''): CardProps {
   return {
     w: CARD_DEFAULT_W, h: CARD_DEFAULT_H,
     kind: 'prose', sourceKind: null, origin: null, text,
-    comments: [], mergedInto: null, assetId: null,
+    comments: [], mergedInto: null, assetId: null, reference: null,
   }
 }
 
@@ -16,7 +17,7 @@ export function makeSourceCardProps(text = '', origin: Origin = 'typed'): CardPr
   return {
     w: CARD_DEFAULT_W, h: CARD_DEFAULT_H,
     kind: 'source', sourceKind: 'text', origin, text,
-    comments: [], mergedInto: null, assetId: null,
+    comments: [], mergedInto: null, assetId: null, reference: null,
   }
 }
 
@@ -24,7 +25,20 @@ export function makeImageSourceCardProps(assetId: string): CardProps {
   return {
     w: 280, h: 200,
     kind: 'source', sourceKind: 'image', origin: 'image', text: '',
-    comments: [], mergedInto: null, assetId,
+    comments: [], mergedInto: null, assetId, reference: null,
+  }
+}
+
+/**
+ * A reference source card: structured bibliographic metadata (from unfurl or
+ * Claude) with an empty annotation `text` the user fills in later. It is a
+ * SOURCE card — reference material, never prose — so the boundary holds.
+ */
+export function makeReferenceCardProps(reference: Reference): CardProps {
+  return {
+    w: REFERENCE_DEFAULT_W, h: REFERENCE_DEFAULT_H,
+    kind: 'source', sourceKind: 'reference', origin: 'reference', text: '',
+    comments: [], mergedInto: null, assetId: null, reference,
   }
 }
 
