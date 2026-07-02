@@ -51,6 +51,14 @@
   background: transparent;
   font: inherit;
   color: inherit;
+  /* Same as the section editor: the card has no fill prop, so tldraw leaves
+     its .tl-shape pointer-events:none even while editing and mouse clicks fall
+     through the textarea to the canvas. Opt the textarea back in so the caret
+     and text selection work with the mouse, not just arrow keys. */
+  pointer-events: all;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
 }
 
 /* Merged-count chip — neutral grey, tucked into the card's top-right corner

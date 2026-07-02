@@ -26,4 +26,16 @@
   background: transparent;
   font: inherit;
   color: inherit;
+  /* tldraw only makes a shape's container clickable while editing when the
+     shape reports data-shape-is-filled (i.e. it has a non-"none" fill prop);
+     our section has no fill prop, so the whole .tl-shape stays
+     pointer-events:none and mouse clicks fall through to the canvas — you
+     can't place the caret or select text, only arrow-key around. Re-enable
+     pointer + selection on the textarea itself (a descendant can opt back in
+     under a pointer-events:none ancestor), mirroring tldraw's own
+     .tl-text-input. */
+  pointer-events: all;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
 }
