@@ -254,3 +254,145 @@ body {
   .elves-tools-toggle,
   .elves-toolbar button { transition: none; }
 }
+
+/* ---- Project switcher (top-left) --------------------------------------- */
+.elves-switcher {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 400;
+}
+.elves-switcher__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  font-family: var(--elves-card-font);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--elves-border);
+  background: var(--elves-surface);
+  color: var(--elves-ink);
+  cursor: pointer;
+  box-shadow: var(--elves-shadow-md), var(--elves-highlight);
+  transition: background-color 100ms ease;
+}
+.elves-switcher__button:hover { background: var(--elves-tertiary); }
+.elves-switcher__button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring);
+}
+.elves-switcher__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.elves-switcher__caret {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  color: var(--elves-ink-faint);
+}
+.elves-switcher__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 220px;
+  max-width: 300px;
+  padding: 4px;
+  border-radius: 11px;
+  background: var(--elves-surface);
+  border: 1px solid var(--elves-border);
+  box-shadow: var(--elves-shadow-lg), var(--elves-highlight);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.elves-switcher__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  font-family: var(--elves-card-font);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  text-align: left;
+  padding: 8px 9px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: var(--elves-ink);
+  cursor: pointer;
+  transition: background-color 100ms ease;
+}
+.elves-switcher__item:hover { background: var(--elves-tertiary); }
+.elves-switcher__item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring);
+}
+.elves-switcher__item--action { color: var(--elves-ink-soft); }
+.elves-switcher__item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.elves-switcher__check {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--elves-primary);
+}
+.elves-switcher__check-icon { width: 14px; height: 14px; }
+.elves-switcher__divider {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--elves-border);
+}
+
+/* ---- Empty state (no projects yet) ------------------------------------- */
+.elves-empty {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  padding: 24px;
+}
+.elves-empty__title {
+  font-family: var(--elves-card-font);
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--elves-ink);
+  margin: 0;
+}
+.elves-empty__body {
+  font-family: var(--elves-card-font);
+  font-size: 14px;
+  color: var(--elves-ink-soft);
+  margin: 0 0 6px;
+}
+.elves-empty__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--elves-card-font);
+  font-size: 14px;
+  font-weight: 500;
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--elves-border);
+  background: var(--elves-surface);
+  color: var(--elves-ink);
+  cursor: pointer;
+  box-shadow: var(--elves-shadow-md), var(--elves-highlight);
+  transition: background-color 100ms ease;
+}
+.elves-empty__button:hover { background: var(--elves-tertiary); }

@@ -1,15 +1,25 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Tldraw, Editor, getSnapshot, loadSnapshot, createShapeId } from 'tldraw'
 import 'tldraw/tldraw.css'
 import './theme.css'
 import { CardShapeUtil, CardShape } from './shapes/CardShapeUtil'
 import { makeProseCardProps, makeSourceCardProps, makeImageSourceCardProps } from './model/cards'
-import { loadCanvas, saveCanvas, debounce } from './client/persistence'
-import { uploadAsset } from './client/assets'
+import {
+  loadCanvas,
+  saveCanvas,
+  debounce,
+  listProjects,
+  createProject,
+  renameProject,
+  type Project,
+} from './client/persistence'
+import { uploadAsset, setAssetProject } from './client/assets'
 import { applyChangeSet } from './apply/applyChangeSet'
 import { connectRealtime } from './client/realtime'
+import { ProjectSwitcher } from './components/ProjectSwitcher'
 
 const shapeUtils = [CardShapeUtil]
+const LAST_PROJECT_KEY = 'elves:lastProject'
 
 // Phosphor "Plus" (regular weight), inlined to avoid pulling in the whole icon package.
 function PlusIcon() {
@@ -21,32 +31,83 @@ function PlusIcon() {
 }
 
 export default function App() {
+  const [projects, setProjects] = useState<Project[] | null>(null) // null = still loading
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
   const [editor, setEditor] = useState<Editor | null>(null)
   const [showTools, setShowTools] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const editorRef = useRef<Editor | null>(null)
+  const projectIdRef = useRef<string | null>(null)
+
+  // Keep the refs + the asset base in sync during render so they are correct the
+  // instant tldraw's onMount fires and whenever a card image renders.
+  projectIdRef.current = currentProjectId
+  setAssetProject(currentProjectId)
+
+  // Load the project list once; open the last-used project (or the first).
+  useEffect(() => {
+    listProjects()
+      .then((list) => {
+        setProjects(list)
+        if (list.length) {
+          const last = localStorage.getItem(LAST_PROJECT_KEY)
+          setCurrentProjectId(list.some((p) => p.id === last) ? last : list[0].id)
+        }
+      })
+      .catch((err) => {
+        console.error('Elves: failed to load projects', err)
+        setProjects([])
+      })
+  }, [])
+
+  // One realtime connection for the app's lifetime. Apply a change-set only when
+  // it targets the project currently open (refs stay current across switches).
+  useEffect(
+    () =>
+      connectRealtime((projectId, cs) => {
+        if (projectId !== projectIdRef.current) return
+        const ed = editorRef.current
+        if (!ed) return
+        applyChangeSet(ed, cs)
+        saveCanvas(projectId, getSnapshot(ed.store)).catch((err) =>
+          console.error('Elves: canvas save failed', err),
+        )
+      }),
+    [],
+  )
 
   const addImageCard = async (ed: Editor, file: File, point?: { x: number; y: number }) => {
+    const pid = projectIdRef.current
+    if (!pid) return
     let aspect = 0.7
     try {
       const bmp = await createImageBitmap(file)
       if (bmp.width > 0) aspect = bmp.height / bmp.width
       bmp.close?.()
-    } catch { /* keep default aspect */ }
+    } catch {
+      /* keep default aspect */
+    }
     const w = 280
     const h = Math.max(80, Math.round(w * aspect))
-    const assetId = await uploadAsset(file)
+    const assetId = await uploadAsset(pid, file)
     const at = point ?? ed.getViewportPageBounds().center
     const id = createShapeId()
     ed.createShape<CardShape>({
-      id, type: 'card', x: at.x - w / 2, y: at.y - h / 2,
+      id,
+      type: 'card',
+      x: at.x - w / 2,
+      y: at.y - h / 2,
       props: { ...makeImageSourceCardProps(assetId), w, h },
     })
     ed.select(id)
   }
 
   const handleMount = (ed: Editor) => {
+    editorRef.current = ed
     setEditor(ed)
-    loadCanvas()
+    const pid = projectIdRef.current
+    if (!pid) return
+    loadCanvas(pid)
       .then((snapshot) => {
         if (snapshot?.document) loadSnapshot(ed.store, snapshot)
       })
@@ -56,13 +117,14 @@ export default function App() {
         const doSave = () => {
           if (saving) return
           saving = true
-          saveCanvas(getSnapshot(ed.store))
+          saveCanvas(pid, getSnapshot(ed.store))
             .catch((err) => console.error('Elves: canvas save failed', err))
-            .finally(() => { saving = false })
+            .finally(() => {
+              saving = false
+            })
         }
         const save = debounce(doSave, 500)
         ed.store.listen(save, { source: 'user', scope: 'document' })
-        connectRealtime((cs) => { applyChangeSet(ed, cs); setTimeout(doSave, 0) })
         ed.registerExternalContentHandler('files', async ({ files, point }) => {
           for (const file of files) {
             if (file.type.startsWith('image/')) await addImageCard(ed, file, point)
@@ -77,11 +139,72 @@ export default function App() {
     const props = kind === 'prose' ? makeProseCardProps() : makeSourceCardProps()
     const id = createShapeId()
     editor.createShape<CardShape>({
-      id, type: 'card',
-      x: center.x - props.w / 2, y: center.y - props.h / 2,
+      id,
+      type: 'card',
+      x: center.x - props.w / 2,
+      y: center.y - props.h / 2,
       props,
     })
     editor.select(id)
+  }
+
+  const switchProject = async (id: string) => {
+    if (id === currentProjectId) return
+    // Flush the outgoing project's latest edits before the editor unmounts.
+    const ed = editorRef.current
+    if (ed && currentProjectId) {
+      try {
+        await saveCanvas(currentProjectId, getSnapshot(ed.store))
+      } catch (err) {
+        console.error('Elves: canvas save failed', err)
+      }
+    }
+    localStorage.setItem(LAST_PROJECT_KEY, id)
+    setCurrentProjectId(id)
+  }
+
+  const createFlow = async () => {
+    const name = window.prompt('New project name')?.trim()
+    if (!name) return
+    try {
+      const proj = await createProject(name)
+      setProjects(await listProjects())
+      await switchProject(proj.id)
+    } catch (err) {
+      console.error('Elves: failed to create project', err)
+    }
+  }
+
+  const renameFlow = async () => {
+    if (!currentProjectId) return
+    const cur = projects?.find((p) => p.id === currentProjectId)
+    const name = window.prompt('Rename project', cur?.name ?? '')?.trim()
+    if (!name) return
+    try {
+      await renameProject(currentProjectId, name)
+      setProjects(await listProjects())
+    } catch (err) {
+      console.error('Elves: failed to rename project', err)
+    }
+  }
+
+  // Still loading the project list.
+  if (projects === null) return <div id="app-root" />
+
+  // No projects yet — invite the user to create their first.
+  if (projects.length === 0) {
+    return (
+      <div id="app-root">
+        <div className="elves-empty">
+          <h1 className="elves-empty__title">No projects yet</h1>
+          <p className="elves-empty__body">Create your first writing project to start a canvas.</p>
+          <button className="elves-empty__button" data-testid="project-new" onClick={createFlow}>
+            <PlusIcon />
+            New project
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -104,6 +227,13 @@ export default function App() {
           <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
         </svg>
       </button>
+      <ProjectSwitcher
+        projects={projects}
+        currentId={currentProjectId}
+        onSwitch={switchProject}
+        onCreate={createFlow}
+        onRename={renameFlow}
+      />
       <div className="elves-toolbar">
         <button data-testid="new-prose" onClick={() => addCard('prose')}><PlusIcon />Prose</button>
         <button data-testid="new-source" onClick={() => addCard('source')}><PlusIcon />Notes</button>
@@ -121,7 +251,7 @@ export default function App() {
           }}
         />
       </div>
-      <Tldraw shapeUtils={shapeUtils} onMount={handleMount} />
+      <Tldraw key={currentProjectId ?? 'none'} shapeUtils={shapeUtils} onMount={handleMount} />
     </div>
   )
 }
