@@ -2,7 +2,7 @@
 
 A local-first, canvas-based writing studio for taking a piece from scattered notes to a shaped set of your-own-voice points. You think spatially on an infinite canvas of cards; the tool keeps everything on your machine in a plain, human-readable file.
 
-> **Status: Phase 3b (Claude transcribes images).** Create, edit, arrange, and persist cards; drop in **images** (photos of paper notes, sketches) as source cards; and work with Claude, who comments / dedupes / reorders and now **transcribes handwritten notes** into text source cards — all within a hard boundary (never writing your prose), everything natively undoable. Tana import and MDX are later — see [Roadmap](#roadmap).
+> **Status: Phase 4 (multiple projects).** Create, edit, arrange, and persist cards; keep several **projects** (separate pieces) and switch between them; drop in **images** (photos of paper notes, sketches) as source cards; and work with Claude, who comments / dedupes / reorders and **transcribes handwritten notes** into text source cards — all within a hard boundary (never writing your prose), everything natively undoable. Tana import and MDX are later — see [Roadmap](#roadmap).
 
 ## What it does (Phase 1)
 
@@ -10,7 +10,20 @@ A local-first, canvas-based writing studio for taking a piece from scattered not
   - **Prose cards** — your own words (a point, a sentence, a paragraph), shown in your chosen typeface.
   - **Source cards** — raw reference material, shown muted with an origin badge.
 - Create cards from a toolbar, drag to arrange, and **double-click to edit** text inline.
-- Everything autosaves to a local `data/canvas.json` and **survives reload**.
+- Everything autosaves locally (per project, under `data/projects/<id>/`) and **survives reload**.
+
+## Projects (Phase 4 — multiple pieces)
+
+Elves keeps more than one piece. Each **project** is a self-contained, portable folder
+— `data/projects/<id>/` holding its own `canvas.json` and `assets/`.
+
+- The **project switcher** (top-right of the toolbar) lists your projects, and lets you
+  **create**, **switch** between, and **rename** them without leaving the canvas.
+- The app reopens the project you used last.
+- A first run migrates any pre-Phase-4 `data/canvas.json` into a project named
+  "My first essay"; a fresh install starts by asking you to create your first project.
+- The `id` is a slug of the name, fixed for the life of the project (renaming changes
+  only the display name) — it's what Claude passes to target a project.
 
 ## What it does (Phase 2a — the Claude-ready canvas)
 
@@ -21,7 +34,7 @@ The canvas receives **change-sets** — the mechanism Claude drives in Phase 2b 
 - **Move / reorder**: cards reposition along the left→right narrative axis (left = earlier, right = later).
 - Each change-set applies as **one Ctrl-Z-undoable** step and persists.
 
-A change-set is `POST`ed to the server's `/changeset` endpoint and broadcast over a websocket (same port, `5199`) to the open app. **The boundary:** Claude's operations never write or edit your **prose** — they comment, merge, move, and (as of Phase 3b) create *source* cards from transcribed handwriting. Your prose stays yours, structurally.
+A change-set is `POST`ed to the server's `/projects/<id>/changeset` endpoint and broadcast over a websocket (same port, `5199`, tagged with the project id) to the open app. **The boundary:** Claude's operations never write or edit your **prose** — they comment, merge, move, and (as of Phase 3b) create *source* cards from transcribed handwriting. Your prose stays yours, structurally.
 
 ## Using Claude (Phase 2b)
 
@@ -31,8 +44,11 @@ MCP server. In Claude Code, opening this project offers the `elves` MCP server
 weak spots", "dedupe my source cards", or "reorder these points for flow". Claude's
 changes appear live and are undoable.
 
-Claude has exactly five tools — `read_canvas`, `add_comment`, `merge_sources`,
-`move_cards`, and `create_source_card` (transcribe an image, Phase 3b). There is
+Claude has six tools — `list_projects`, `read_canvas`, `add_comment`,
+`merge_sources`, `move_cards`, and `create_source_card` (transcribe an image, Phase
+3b). Every canvas tool takes a **required `project` id**: Claude calls `list_projects`
+to discover them and confirms which one you mean before acting — it never guesses, and
+the server rejects an operation that targets a card outside the named project. There is
 deliberately no tool to write or edit your **prose**: Claude comments, dedupes,
 reorders, and transcribes into *source* cards, but never writes your prose. See
 `skill/elves-canvas.md`.
@@ -43,9 +59,9 @@ Drag an image onto the canvas — or use the **+ Image** button — to add it as
 **image source card**: a photo of paper notes, a Procreate/iPad sketch, or any
 picture that supports a nearby point. Image cards drag and resize like any card.
 
-Images are stored **local-first as files** in `data/assets/`; `canvas.json` keeps
-only a small `assetId`, so your canvas stays a portable folder no matter how many
-sketches you add. Ask Claude to **transcribe** a handwritten-notes image and it types
+Images are stored **local-first as files** in the project's `data/projects/<id>/assets/`;
+`canvas.json` keeps only a small `assetId`, so each project stays a portable folder no
+matter how many sketches you add. Ask Claude to **transcribe** a handwritten-notes image and it types
 your handwriting into a text source card next to it (Phase 3b, below).
 
 ## Requirements
@@ -77,7 +93,7 @@ npm run dev:all
 Then open **http://localhost:5173**.
 
 - The app runs on `http://localhost:5173` (Vite).
-- The canvas server runs on `http://localhost:5199` and reads/writes `data/canvas.json`.
+- The canvas server runs on `http://localhost:5199` and reads/writes projects under `data/projects/`.
 
 Prefer separate terminals? Run them independently:
 
@@ -94,7 +110,8 @@ npm run dev       # web app on :5173
 - **+ Image** (or drag an image file onto the canvas) adds an image source card.
 - **Drag** cards to arrange them; use the canvas to group and lay out your argument spatially. Drag a card's corner to **resize** it.
 - **Double-click** a card to edit its text; click empty canvas to commit.
-- Edits save automatically (debounced) to `data/canvas.json`.
+- The **project switcher** (top-right) creates / switches / renames projects.
+- Edits save automatically (debounced) to the current project's `canvas.json`.
 
 ## Configuration
 
@@ -102,14 +119,14 @@ Set via environment variables:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ELVES_CANVAS` | `data/canvas.json` (relative to `server/`) | Path to the canvas file — **one file per piece**. |
+| `ELVES_DATA` | `data/` (relative to `server/`) | Data root holding `projects/<id>/…` — **all your projects**. |
 | `PORT` | `5199` | Port for the canvas server. |
 | `VITE_SERVER_URL` | `http://localhost:5199` | Where the web app looks for the server. |
 
-Example — work on a different piece:
+Example — keep a separate set of projects (e.g. for testing):
 
 ```bash
-ELVES_CANVAS=./pieces/my-essay.json npm run server
+ELVES_DATA=./scratch-data npm run server
 ```
 
 ## Scripts
@@ -135,37 +152,40 @@ npm run typecheck  # strict TypeScript check
 npm run e2e        # end-to-end (needs: npx playwright install chromium)
 ```
 
-The e2e suite runs its own server against a throwaway `.e2e/canvas.json`, so it won't touch your real canvas.
+The e2e suite runs its own server against a throwaway `.e2e/data` root, so it won't touch your real projects.
 
 ## Project structure
 
 ```
 src/
-  App.tsx                 # tldraw canvas + persistence + realtime + image upload
+  App.tsx                 # tldraw canvas + projects + persistence + realtime + image upload
   main.tsx                # React entry
   theme.css               # --elves-card-font and layout
+  components/ProjectSwitcher.tsx # top-right project menu (list / switch / new / rename)
   model/                  # pure data model: cards, comments, change-set ops
   apply/applyChangeSet.ts # applies a change-set as one undoable tldraw step
-  client/persistence.ts   # load/save the canvas via the server
-  client/realtime.ts      # websocket client receiving change-sets
-  client/assets.ts        # upload images, build asset URLs
+  client/persistence.ts   # projects API + load/save a project's canvas
+  client/realtime.ts      # websocket client receiving {projectId, change-set}
+  client/assets.ts        # upload images, build asset URLs (per project)
   shapes/                 # the custom tldraw "card" shape (text, image, comments) + CSS
 server/
-  store.ts                # atomic read/write of canvas.json
+  store.ts                # atomic read/write of a canvas.json
+  projects.ts             # project registry: create / list / rename, slug + path guards
+  migrate.ts              # one-time legacy canvas -> projects/my-first-essay
   assets.ts               # image files on disk (path-traversal-safe)
-  app.ts                  # Express: /canvas, /changeset, /cards, /assets
-  realtime.ts             # websocket broadcast of change-sets
+  app.ts                  # Express: /projects[/:id/{canvas,cards,changeset,assets}]
+  realtime.ts             # websocket broadcast of change-sets (tagged by project)
   index.ts                # server entrypoint (http + ws + express)
-mcp/                      # scoped MCP server — Claude's four tools
+mcp/                      # scoped MCP server — Claude's six tools (project-targeted)
 skill/                    # the Claude skill (how to work the canvas)
 tests/                    # Vitest unit tests
 e2e/                      # Playwright end-to-end tests
-data/                     # canvas.json + assets/ live here (git-ignored)
+data/projects/<id>/       # each project's canvas.json + assets/ (git-ignored)
 ```
 
 ## Data & privacy
 
-Local-first by design. Your canvas is a plain, human-readable JSON file (`data/canvas.json`) and your images are plain files (`data/assets/`), all on your machine and git-ignored. Nothing is sent anywhere.
+Local-first by design. Each project is a plain, human-readable folder (`data/projects/<id>/canvas.json` plus an `assets/` folder of image files), all on your machine and git-ignored. Nothing is sent anywhere.
 
 ## Design principle
 
@@ -177,6 +197,7 @@ Your writing stays yours. The data model separates **source** (reference) cards 
 - **Phase 2b — Claude connected (done):** a scoped MCP server exposing the change-set operations + a Claude skill, so Claude reads the canvas and comments / dedupes / reorders within the boundary.
 - **Phase 3a — images on the canvas (done):** drag-in / **+ Image** source cards, stored as local files.
 - **Phase 3b — transcription (done):** Claude reads a handwritten-notes image and transcribes it into a text source card (your words), via a `create_source_card` tool — still never writing your prose.
+- **Phase 4 — multiple projects (done):** self-contained project folders with an in-app switcher (create / switch / rename) and a required `project` target on every Claude tool (+ `list_projects`), so Claude always knows which piece it's working in.
 - **Later:** assisted Tana import, MDX export, multi-device.
 
 See the design specs and build plans for the full rationale: [`2026-07-01-elves-design.md`](./2026-07-01-elves-design.md) (overall) · [`2026-07-01-elves-mvp-phase1-plan.md`](./2026-07-01-elves-mvp-phase1-plan.md) (Phase 1) · [`2026-07-01-elves-phase2-design.md`](./2026-07-01-elves-phase2-design.md) + [`2026-07-01-elves-phase2a-plan.md`](./2026-07-01-elves-phase2a-plan.md) (Phase 2) · [`2026-07-01-elves-phase3-design.md`](./2026-07-01-elves-phase3-design.md) + [`2026-07-01-elves-phase3a-plan.md`](./2026-07-01-elves-phase3a-plan.md) (Phase 3).
