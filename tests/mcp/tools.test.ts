@@ -12,6 +12,9 @@ import {
   addCommentTool,
   readCanvasTool,
   createSourceCardTool,
+  createSectionTool,
+  moveSectionsTool,
+  editSectionTextTool,
   listProjectsTool,
 } from '../../mcp/tools'
 
@@ -93,16 +96,73 @@ test('createSourceCardTool posts a create_source_card change-set', async () => {
   ws.close()
 })
 
-test('readCanvasTool reads the card digest for the project', async () => {
+test('readCanvasTool reads the cards+sections digest for the project', async () => {
   const { base } = await liveElves()
   await seedCard(base, 'shape:a')
-  const cards = await readCanvasTool(base, 'essay')
-  expect(cards).toEqual([
-    { id: 'shape:a', kind: 'prose', sourceKind: null, origin: null, text: 'hi', x: 1, y: 2, comments: [], mergedInto: null, assetPath: null },
-  ])
+  const digest = await readCanvasTool(base, 'essay')
+  expect(digest).toEqual({
+    cards: [
+      { id: 'shape:a', kind: 'prose', sourceKind: null, origin: null, text: 'hi', x: 1, y: 2, comments: [], mergedInto: null, assetPath: null },
+    ],
+    sections: [],
+  })
 })
 
 test('a tool call for an unknown project rejects with a helpful error', async () => {
   const { base } = await liveElves()
   await expect(readCanvasTool(base, 'ghost')).rejects.toThrow(/unknown project/)
+})
+
+test('createSectionTool posts a create_section change-set', async () => {
+  const { base } = await liveElves()
+  const ws = new WebSocket(base.replace('http', 'ws') + '/ws')
+  const received = new Promise<any>((res) => ws.on('message', (d) => res(JSON.parse(d.toString()))))
+  await new Promise<void>((r) => ws.on('open', () => r()))
+
+  await createSectionTool(base, 'essay', { text: 'Origins', x: 5, y: 6 })
+
+  const { projectId, changeSet } = await received
+  expect(projectId).toBe('essay')
+  expect(changeSet.ops).toEqual([{ kind: 'create_section', text: 'Origins', x: 5, y: 6 }])
+  ws.close()
+})
+
+async function seedSection(base: string, id: string) {
+  const snap = {
+    document: { store: { [id]: { id, typeName: 'shape', type: 'section', x: 1, y: 2, props: { w: 320, h: 72, text: 'Origins', authoredBy: 'user' } } } },
+    session: null,
+  }
+  await fetch(`${base}/projects/essay/canvas`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(snap),
+  })
+}
+
+test('moveSectionsTool posts a move_sections change-set', async () => {
+  const { base } = await liveElves()
+  await seedSection(base, 'shape:s')
+  const ws = new WebSocket(base.replace('http', 'ws') + '/ws')
+  const received = new Promise<any>((res) => ws.on('message', (d) => res(JSON.parse(d.toString()))))
+  await new Promise<void>((r) => ws.on('open', () => r()))
+
+  await moveSectionsTool(base, 'essay', { moves: [{ sectionId: 'shape:s', x: 10, y: 20 }] })
+
+  const { changeSet } = await received
+  expect(changeSet.ops).toEqual([{ kind: 'move_sections', moves: [{ sectionId: 'shape:s', x: 10, y: 20 }] }])
+  ws.close()
+})
+
+test('editSectionTextTool posts an edit_section_text change-set', async () => {
+  const { base } = await liveElves()
+  await seedSection(base, 'shape:s')
+  const ws = new WebSocket(base.replace('http', 'ws') + '/ws')
+  const received = new Promise<any>((res) => ws.on('message', (d) => res(JSON.parse(d.toString()))))
+  await new Promise<void>((r) => ws.on('open', () => r()))
+
+  await editSectionTextTool(base, 'essay', { sectionId: 'shape:s', text: 'The turn' })
+
+  const { changeSet } = await received
+  expect(changeSet.ops).toEqual([{ kind: 'edit_section_text', sectionId: 'shape:s', text: 'The turn' }])
+  ws.close()
 })

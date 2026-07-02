@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { isChangeSet, planMerge, referencedCardIds } from '../../src/model/changeset'
+import { isChangeSet, planMerge, referencedCardIds, referencedSectionIds } from '../../src/model/changeset'
 
 describe('planMerge', () => {
   test('first card is the representative, the rest are hidden', () => {
@@ -32,6 +32,22 @@ describe('isChangeSet', () => {
   test('rejects a malformed create_source_card', () => {
     expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'create_source_card', text: 'hi' }] })).toBe(false) // missing x/y
   })
+  test('accepts the section ops', () => {
+    const cs = {
+      id: 'x', author: 'claude',
+      ops: [
+        { kind: 'create_section', text: 'Origins', x: 0, y: 0 },
+        { kind: 'move_sections', moves: [{ sectionId: 'a', x: 1, y: 2 }] },
+        { kind: 'edit_section_text', sectionId: 'a', text: 'The turn' },
+      ],
+    }
+    expect(isChangeSet(cs)).toBe(true)
+  })
+  test('rejects malformed section ops', () => {
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'create_section', text: 'hi' }] })).toBe(false) // missing x/y
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'move_sections', moves: [{ x: 1, y: 2 }] }] })).toBe(false) // missing sectionId
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'edit_section_text', sectionId: 'a' }] })).toBe(false) // missing text
+  })
 })
 
 describe('referencedCardIds', () => {
@@ -45,5 +61,18 @@ describe('referencedCardIds', () => {
       ],
     }
     expect(referencedCardIds(cs).sort()).toEqual(['shape:a', 'shape:b', 'shape:c', 'shape:d'])
+  })
+})
+
+describe('referencedSectionIds', () => {
+  test('collects existing-section references, ignores create_section', () => {
+    const cs = {
+      id: 'x', author: 'claude' as const, ops: [
+        { kind: 'move_sections' as const, moves: [{ sectionId: 'shape:a', x: 1, y: 2 }] },
+        { kind: 'edit_section_text' as const, sectionId: 'shape:b', text: 'new label' },
+        { kind: 'create_section' as const, text: 't', x: 0, y: 0 },
+      ],
+    }
+    expect(referencedSectionIds(cs).sort()).toEqual(['shape:a', 'shape:b'])
   })
 })

@@ -18,3 +18,15 @@ test('an unknown op kind is treated as unsafe (writes text)', () => {
   const cs = { id: 'x', author: 'claude' as const, ops: [{ kind: 'edit_text', cardId: 'a', text: 'no' }] as any }
   expect(changeSetWritesText(cs)).toBe(true)
 })
+
+test('section ops, including edit_section_text, do not count as writing CARD text', () => {
+  const cs = {
+    id: 'x', author: 'claude' as const,
+    ops: [
+      { kind: 'create_section' as const, text: 'Origins', x: 0, y: 0 },
+      { kind: 'move_sections' as const, moves: [{ sectionId: 'a', x: 1, y: 2 }] },
+      { kind: 'edit_section_text' as const, sectionId: 'a', text: 'The turn' },
+    ],
+  }
+  expect(changeSetWritesText(cs)).toBe(false)
+})

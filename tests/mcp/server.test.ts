@@ -14,10 +14,13 @@ test('the MCP server exposes the scoped tools plus list_projects, and no text-ed
   const names = tools.map((t) => t.name).sort()
   expect(names).toEqual([
     'add_comment',
+    'create_section',
     'create_source_card',
+    'edit_section_text',
     'list_projects',
     'merge_sources',
     'move_cards',
+    'move_sections',
     'read_canvas',
   ])
   expect(names).not.toContain('edit_text')

@@ -1,7 +1,7 @@
 import type { ChangeSet, Op } from '../src/model/changeset'
 import type { CommentType } from '../src/model/types'
-import type { CardDigest } from '../server/digest'
-import { readCards, postChangeSet, listProjects, type ProjectSummary } from './elvesClient'
+import type { CanvasDigest } from '../server/digest'
+import { readCanvasDigest, postChangeSet, listProjects, type ProjectSummary } from './elvesClient'
 
 export function makeChangeSet(ops: Op[]): ChangeSet {
   return { id: crypto.randomUUID(), author: 'claude', ops }
@@ -11,8 +11,8 @@ export function listProjectsTool(baseUrl: string): Promise<ProjectSummary[]> {
   return listProjects(baseUrl)
 }
 
-export function readCanvasTool(baseUrl: string, projectId: string): Promise<CardDigest[]> {
-  return readCards(baseUrl, projectId)
+export function readCanvasTool(baseUrl: string, projectId: string): Promise<CanvasDigest> {
+  return readCanvasDigest(baseUrl, projectId)
 }
 
 export function addCommentTool(
@@ -48,5 +48,33 @@ export function createSourceCardTool(
 ): Promise<void> {
   return postChangeSet(baseUrl, projectId, makeChangeSet([
     { kind: 'create_source_card', text: args.text, x: args.x, y: args.y },
+  ]))
+}
+
+export function createSectionTool(
+  baseUrl: string,
+  projectId: string,
+  args: { text: string; x: number; y: number },
+): Promise<void> {
+  return postChangeSet(baseUrl, projectId, makeChangeSet([
+    { kind: 'create_section', text: args.text, x: args.x, y: args.y },
+  ]))
+}
+
+export function moveSectionsTool(
+  baseUrl: string,
+  projectId: string,
+  args: { moves: { sectionId: string; x: number; y: number }[] },
+): Promise<void> {
+  return postChangeSet(baseUrl, projectId, makeChangeSet([{ kind: 'move_sections', moves: args.moves }]))
+}
+
+export function editSectionTextTool(
+  baseUrl: string,
+  projectId: string,
+  args: { sectionId: string; text: string },
+): Promise<void> {
+  return postChangeSet(baseUrl, projectId, makeChangeSet([
+    { kind: 'edit_section_text', sectionId: args.sectionId, text: args.text },
   ]))
 }

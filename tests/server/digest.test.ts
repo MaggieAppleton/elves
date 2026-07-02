@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { snapshotToCards } from '../../server/digest'
+import { snapshotToCards, snapshotToSections, snapshotToCanvasDigest } from '../../server/digest'
 import { resolveAssetPath } from '../../server/assets'
 
 test('snapshotToCards projects card shapes into a clean digest', () => {
@@ -38,4 +38,51 @@ test('snapshotToCards resolves assetPath for image cards when given an assets di
   const [card] = snapshotToCards(snapshot, '/assets')
   expect(card.assetPath).toBe(resolveAssetPath('/assets', 'pic.png'))
   expect(snapshotToCards(snapshot)[0].assetPath).toBeNull() // no assetsDir → null
+})
+
+test('snapshotToSections projects section shapes into a clean digest, ignoring cards', () => {
+  const snapshot = {
+    document: {
+      store: {
+        'shape:a': {
+          id: 'shape:a', typeName: 'shape', type: 'card', x: 10, y: 20,
+          props: { w: 240, h: 120, kind: 'prose', sourceKind: null, origin: null, text: 'my point', comments: [], mergedInto: null },
+        },
+        'shape:s': {
+          id: 'shape:s', typeName: 'shape', type: 'section', x: 5, y: 6,
+          props: { w: 320, h: 72, text: 'Origins', authoredBy: 'claude' },
+        },
+      },
+    },
+    session: null,
+  }
+  expect(snapshotToSections(snapshot)).toEqual([
+    { id: 'shape:s', text: 'Origins', x: 5, y: 6, authoredBy: 'claude' },
+  ])
+})
+
+test('snapshotToSections returns [] for an empty canvas', () => {
+  expect(snapshotToSections({ document: null, session: null })).toEqual([])
+})
+
+test('snapshotToCanvasDigest combines cards and sections', () => {
+  const snapshot = {
+    document: {
+      store: {
+        'shape:a': {
+          id: 'shape:a', typeName: 'shape', type: 'card', x: 10, y: 20,
+          props: { w: 240, h: 120, kind: 'prose', sourceKind: null, origin: null, text: 'my point', comments: [], mergedInto: null },
+        },
+        'shape:s': {
+          id: 'shape:s', typeName: 'shape', type: 'section', x: 5, y: 6,
+          props: { w: 320, h: 72, text: 'Origins', authoredBy: 'user' },
+        },
+      },
+    },
+    session: null,
+  }
+  expect(snapshotToCanvasDigest(snapshot)).toEqual({
+    cards: snapshotToCards(snapshot),
+    sections: snapshotToSections(snapshot),
+  })
 })

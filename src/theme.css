@@ -37,6 +37,11 @@
   /* White inset top highlight — gives raised controls a touchable, lit edge */
   --elves-highlight: inset 0 1px 0 oklch(1 0 0 / 0.65);
 
+  /* ---- Claude-authorship accent — warm orange, distinct from the muted
+     weak-argument comment tone, so a Claude-written section label reads
+     unambiguously against the cream background. ---- */
+  --elves-claude-accent: oklch(0.62 0.17 45);
+
   /* ---- Primary — desaturated deep green / teal (≈ #348585) ---- */
   --elves-primary:        oklch(0.568 0.062 195);
   --elves-primary-strong: oklch(0.500 0.066 195);

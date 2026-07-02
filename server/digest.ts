@@ -1,5 +1,6 @@
 import type { CanvasSnapshot } from './store'
 import type { CardKind, SourceKind, Origin, Comment } from '../src/model/types'
+import type { SectionAuthor } from '../src/model/sections'
 import { resolveAssetPath } from './assets'
 
 export interface CardDigest {
@@ -15,10 +16,27 @@ export interface CardDigest {
   assetPath: string | null
 }
 
-export function snapshotToCards(snapshot: CanvasSnapshot, assetsDir?: string): CardDigest[] {
+export interface SectionDigest {
+  id: string
+  text: string
+  x: number
+  y: number
+  authoredBy: SectionAuthor
+}
+
+export interface CanvasDigest {
+  cards: CardDigest[]
+  sections: SectionDigest[]
+}
+
+function storeOf(snapshot: CanvasSnapshot): Record<string, any> {
   const doc = (snapshot?.document ?? null) as { store?: Record<string, any>; records?: Record<string, any> } | null
-  if (!doc) return []
-  const store = doc.store ?? doc.records ?? {}
+  if (!doc) return {}
+  return doc.store ?? doc.records ?? {}
+}
+
+export function snapshotToCards(snapshot: CanvasSnapshot, assetsDir?: string): CardDigest[] {
+  const store = storeOf(snapshot)
   return Object.values(store)
     .filter((r: any) => r && r.typeName === 'shape' && r.type === 'card' && r.props)
     .map((r: any) => ({
@@ -36,4 +54,21 @@ export function snapshotToCards(snapshot: CanvasSnapshot, assetsDir?: string): C
           ? resolveAssetPath(assetsDir, r.props.assetId)
           : null,
     }))
+}
+
+export function snapshotToSections(snapshot: CanvasSnapshot): SectionDigest[] {
+  const store = storeOf(snapshot)
+  return Object.values(store)
+    .filter((r: any) => r && r.typeName === 'shape' && r.type === 'section' && r.props)
+    .map((r: any) => ({
+      id: r.id,
+      text: r.props.text ?? '',
+      x: r.x,
+      y: r.y,
+      authoredBy: r.props.authoredBy ?? 'user',
+    }))
+}
+
+export function snapshotToCanvasDigest(snapshot: CanvasSnapshot, assetsDir?: string): CanvasDigest {
+  return { cards: snapshotToCards(snapshot, assetsDir), sections: snapshotToSections(snapshot) }
 }

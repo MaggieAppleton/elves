@@ -6,8 +6,9 @@ import {
   ChangeSet,
   changeSetWritesText,
   referencedCardIds,
+  referencedSectionIds,
 } from '../src/model/changeset'
-import { snapshotToCards } from './digest'
+import { snapshotToCards, snapshotToSections, snapshotToCanvasDigest } from './digest'
 import { extForMime, saveAsset, resolveAssetPath } from './assets'
 import {
   listProjects,
@@ -123,11 +124,11 @@ export function createServer(
   )
 
   app.get(
-    '/projects/:id/cards',
+    '/projects/:id/canvas-digest',
     wrap(async (req, res) => {
       const paths = await requireProject(req.params.id, res)
       if (!paths) return
-      res.json(snapshotToCards(await readCanvas(paths.canvasPath), paths.assetsDir))
+      res.json(snapshotToCanvasDigest(await readCanvas(paths.canvasPath), paths.assetsDir))
     }),
   )
 
@@ -144,10 +145,16 @@ export function createServer(
         res.status(403).json({ error: 'change-set may not write card text' })
         return
       }
-      // Cross-check: every referenced existing card must live in THIS project, so a
-      // mistargeted operation fails loudly instead of silently landing nowhere.
-      const cardIds = new Set(snapshotToCards(await readCanvas(paths.canvasPath)).map((c) => c.id))
-      const missing = referencedCardIds(req.body).filter((cardId) => !cardIds.has(cardId))
+      // Cross-check: every referenced existing card/section must live in THIS
+      // project, so a mistargeted operation fails loudly instead of silently
+      // landing nowhere.
+      const snapshot = await readCanvas(paths.canvasPath)
+      const cardIds = new Set(snapshotToCards(snapshot).map((c) => c.id))
+      const sectionIds = new Set(snapshotToSections(snapshot).map((s) => s.id))
+      const missing = [
+        ...referencedCardIds(req.body).filter((cardId) => !cardIds.has(cardId)),
+        ...referencedSectionIds(req.body).filter((sectionId) => !sectionIds.has(sectionId)),
+      ]
       if (missing.length) {
         res.status(409).json({ error: 'card not in project', missing })
         return

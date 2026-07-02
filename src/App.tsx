@@ -3,7 +3,9 @@ import { Tldraw, Editor, getSnapshot, loadSnapshot, createShapeId } from 'tldraw
 import 'tldraw/tldraw.css'
 import './theme.css'
 import { CardShapeUtil, CardShape } from './shapes/CardShapeUtil'
+import { SectionShapeUtil, SectionShape } from './shapes/SectionShapeUtil'
 import { makeProseCardProps, makeSourceCardProps, makeImageSourceCardProps } from './model/cards'
+import { makeSectionProps } from './model/sections'
 import {
   loadCanvas,
   saveCanvas,
@@ -18,7 +20,7 @@ import { applyChangeSet } from './apply/applyChangeSet'
 import { connectRealtime } from './client/realtime'
 import { ProjectSwitcher } from './components/ProjectSwitcher'
 
-const shapeUtils = [CardShapeUtil]
+const shapeUtils = [CardShapeUtil, SectionShapeUtil]
 const LAST_PROJECT_KEY = 'elves:lastProject'
 
 // Phosphor "Plus" (regular weight), inlined to avoid pulling in the whole icon package.
@@ -148,6 +150,22 @@ export default function App() {
     editor.select(id)
   }
 
+  const addSection = () => {
+    if (!editor) return
+    const center = editor.getViewportPageBounds().center
+    const props = makeSectionProps()
+    const id = createShapeId()
+    editor.createShape<SectionShape>({
+      id,
+      type: 'section',
+      x: center.x - props.w / 2,
+      y: center.y - props.h / 2,
+      props,
+    })
+    editor.select(id)
+    editor.setEditingShape(id)
+  }
+
   const switchProject = async (id: string) => {
     if (id === currentProjectId) return
     // Flush the outgoing project's latest edits before the editor unmounts.
@@ -238,6 +256,7 @@ export default function App() {
         <button data-testid="new-prose" onClick={() => addCard('prose')}><PlusIcon />Prose</button>
         <button data-testid="new-source" onClick={() => addCard('source')}><PlusIcon />Notes</button>
         <button data-testid="new-image" onClick={() => fileInputRef.current?.click()}><PlusIcon />Image</button>
+        <button data-testid="new-section" onClick={addSection}><PlusIcon />Section</button>
         <input
           ref={fileInputRef}
           type="file"

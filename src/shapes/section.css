@@ -1,0 +1,29 @@
+/* =========================================================================
+   Section headers — bare, large headline text with no card chrome. Meant to
+   read as a thematic label above a cluster of cards, legible even zoomed
+   far out. Color is the authorship signal: ink for the user, the Claude
+   accent for Claude-authored (or Claude-renamed) text.
+   ========================================================================= */
+.elves-section {
+  box-sizing: border-box;
+  font-family: var(--elves-card-font);
+  font-weight: 700;
+  font-size: 56px;
+  line-height: 1.15;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--elves-ink);
+}
+.elves-section[data-authored-by="claude"] { color: var(--elves-claude-accent); }
+
+.elves-section__text { width: 100%; height: 100%; }
+.elves-section__editor {
+  width: 100%;
+  height: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+}

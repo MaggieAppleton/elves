@@ -71,7 +71,7 @@ test('two projects keep separate canvases', async () => {
 test('scoped routes on an unknown project → 404', async () => {
   const app = await appWithTmp()
   expect((await request(app).get('/projects/ghost/canvas')).status).toBe(404)
-  expect((await request(app).get('/projects/ghost/cards')).status).toBe(404)
+  expect((await request(app).get('/projects/ghost/canvas-digest')).status).toBe(404)
   expect((await request(app).post('/projects/ghost/canvas').send({ document: null })).status).toBe(404)
 })
 

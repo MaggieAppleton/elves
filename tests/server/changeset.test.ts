@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from 'vitest'
-import { snapshotToCards } from '../../server/digest'
+import { snapshotToCards, snapshotToCanvasDigest } from '../../server/digest'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -52,6 +52,24 @@ function cardSnapshot(id: string) {
   }
 }
 
+function sectionSnapshot(id: string) {
+  return {
+    document: {
+      store: {
+        [id]: {
+          id,
+          typeName: 'shape',
+          type: 'section',
+          x: 0,
+          y: 0,
+          props: { w: 320, h: 72, text: 'Origins', authoredBy: 'user' },
+        },
+      },
+    },
+    session: null,
+  }
+}
+
 test('POST changeset validates and forwards to onChangeSet with the project id', async () => {
   const d = await rootWithProject()
   const onChangeSet = vi.fn()
@@ -93,6 +111,28 @@ test('changeset referencing an existing card is accepted', async () => {
   expect(onChangeSet).toHaveBeenCalledWith('essay', move)
 })
 
+test('changeset referencing a section not in the project → 409', async () => {
+  const d = await rootWithProject()
+  const onChangeSet = vi.fn()
+  const app = createServer(d, onChangeSet)
+  const rename = { id: 'x', author: 'claude', ops: [{ kind: 'edit_section_text', sectionId: 'shape:missing', text: 'nope' }] }
+  const res = await request(app).post('/projects/essay/changeset').send(rename)
+  expect(res.status).toBe(409)
+  expect(res.body.missing).toEqual(['shape:missing'])
+  expect(onChangeSet).not.toHaveBeenCalled()
+})
+
+test('changeset referencing an existing section is accepted', async () => {
+  const d = await rootWithProject()
+  const onChangeSet = vi.fn()
+  const app = createServer(d, onChangeSet)
+  await request(app).post('/projects/essay/canvas').send(sectionSnapshot('shape:s'))
+  const rename = { id: 'x', author: 'claude', ops: [{ kind: 'edit_section_text', sectionId: 'shape:s', text: 'The turn' }] }
+  const res = await request(app).post('/projects/essay/changeset').send(rename)
+  expect(res.status).toBe(200)
+  expect(onChangeSet).toHaveBeenCalledWith('essay', rename)
+})
+
 test('a change-set that would write text is rejected (400 for unknown kind)', async () => {
   const d = await rootWithProject()
   const app = createServer(d)
@@ -117,17 +157,23 @@ test('attachRealtime broadcasts a tagged change-set to websocket clients', async
   await new Promise<void>((r) => server.close(() => r()))
 })
 
-test('GET cards returns the card digest for the project', async () => {
+test('GET canvas-digest returns cards and sections for the project', async () => {
   const d = await rootWithProject()
   const app = createServer(d)
   const snap = {
-    document: { store: { 'shape:a': { id: 'shape:a', typeName: 'shape', type: 'card', x: 5, y: 6, props: { w: 240, h: 120, kind: 'source', sourceKind: 'text', origin: 'typed', text: 'raw', comments: [], mergedInto: null } } } },
+    document: {
+      store: {
+        'shape:a': { id: 'shape:a', typeName: 'shape', type: 'card', x: 5, y: 6, props: { w: 240, h: 120, kind: 'source', sourceKind: 'text', origin: 'typed', text: 'raw', comments: [], mergedInto: null } },
+        'shape:s': { id: 'shape:s', typeName: 'shape', type: 'section', x: 1, y: 2, props: { w: 320, h: 72, text: 'Origins', authoredBy: 'user' } },
+      },
+    },
     session: null,
   }
   await request(app).post('/projects/essay/canvas').send(snap)
-  const res = await request(app).get('/projects/essay/cards')
+  const res = await request(app).get('/projects/essay/canvas-digest')
   expect(res.status).toBe(200)
-  expect(res.body).toEqual(snapshotToCards(snap, assetsDirFor(d, 'essay')!))
+  expect(res.body).toEqual(snapshotToCanvasDigest(snap, assetsDirFor(d, 'essay')!))
+  expect(res.body.cards).toEqual(snapshotToCards(snap, assetsDirFor(d, 'essay')!))
 })
 
 const TINY_PNG = Buffer.from(

@@ -1,8 +1,10 @@
 import { Editor, createShapeId } from 'tldraw'
 import { ChangeSet, Op, planMerge } from '../model/changeset'
 import { CardShape } from '../shapes/CardShapeUtil'
+import { SectionShape } from '../shapes/SectionShapeUtil'
 import { makeComment, addComment } from '../model/comments'
 import { makeSourceCardProps } from '../model/cards'
+import { makeSectionProps } from '../model/sections'
 
 function newId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`
@@ -45,6 +47,32 @@ function applyCreateSourceCard(editor: Editor, op: Extract<Op, { kind: 'create_s
   })
 }
 
+function applyCreateSection(editor: Editor, op: Extract<Op, { kind: 'create_section' }>): void {
+  editor.createShape<SectionShape>({
+    id: createShapeId(),
+    type: 'section',
+    x: op.x,
+    y: op.y,
+    props: makeSectionProps(op.text, 'claude'),
+  })
+}
+
+function applyMoveSections(editor: Editor, op: Extract<Op, { kind: 'move_sections' }>): void {
+  for (const m of op.moves) {
+    const shape = editor.getShape(m.sectionId as SectionShape['id'])
+    if (shape) editor.updateShape({ id: shape.id, type: 'section', x: m.x, y: m.y })
+  }
+}
+
+function applyEditSectionText(editor: Editor, op: Extract<Op, { kind: 'edit_section_text' }>): void {
+  const shape = editor.getShape(op.sectionId as SectionShape['id']) as SectionShape | undefined
+  if (!shape) return
+  editor.updateShape<SectionShape>({
+    id: shape.id, type: 'section',
+    props: { text: op.text, authoredBy: 'claude' },
+  })
+}
+
 function applyOp(editor: Editor, op: Op): void {
   switch (op.kind) {
     case 'add_comment':
@@ -58,6 +86,15 @@ function applyOp(editor: Editor, op: Op): void {
       break
     case 'create_source_card':
       applyCreateSourceCard(editor, op)
+      break
+    case 'create_section':
+      applyCreateSection(editor, op)
+      break
+    case 'move_sections':
+      applyMoveSections(editor, op)
+      break
+    case 'edit_section_text':
+      applyEditSectionText(editor, op)
       break
   }
 }

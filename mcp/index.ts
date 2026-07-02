@@ -7,6 +7,9 @@ import {
   mergeSourcesTool,
   moveCardsTool,
   createSourceCardTool,
+  createSectionTool,
+  moveSectionsTool,
+  editSectionTextTool,
   listProjectsTool,
 } from './tools'
 
@@ -33,7 +36,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'read_canvas',
-    'Read a project\'s canvas as a list of cards: id, kind (prose|source), text, x/y position (x is narrative order: left=earlier, right=later), comments, and mergedInto. Call this (with the project id) to get card ids before commenting, merging, or moving.',
+    'Read a project\'s canvas as { cards, sections }. Cards: id, kind (prose|source), text, x/y position (x is narrative order: left=earlier, right=later), comments, and mergedInto. Sections: id, text (a short thematic label), x/y, and authoredBy (user|claude — who wrote its current wording). Call this (with the project id) to get ids before commenting, merging, moving, or renaming.',
     { project: PROJECT },
     async ({ project }) => ({
       content: [{ type: 'text', text: JSON.stringify(await readCanvasTool(baseUrl, project), null, 2) }],
@@ -77,6 +80,36 @@ export function createMcpServer(baseUrl: string): McpServer {
     async ({ project, text, x, y }) => {
       await createSourceCardTool(baseUrl, project, { text, x, y })
       return { content: [{ type: 'text', text: 'source card created' }] }
+    },
+  )
+
+  server.tool(
+    'create_section',
+    'Create a section header in a project: a big thematic label (a few words) that sits above a cluster of cards so the shape of the piece reads at a glance when zoomed out. x is narrative order like cards — place it above/at the start of the cluster it labels. Unlike card text, you may write this directly; it renders in your accent color so the user can see you authored it.',
+    { project: PROJECT, text: z.string(), x: z.number(), y: z.number() },
+    async ({ project, text, x, y }) => {
+      await createSectionTool(baseUrl, project, { text, x, y })
+      return { content: [{ type: 'text', text: 'section created' }] }
+    },
+  )
+
+  server.tool(
+    'move_sections',
+    'Reposition section headers in a project. Same convention as move_cards — x is narrative order. Move a section along with the cluster of cards it labels so it keeps sitting above the right group.',
+    { project: PROJECT, moves: z.array(z.object({ sectionId: z.string(), x: z.number(), y: z.number() })).min(1) },
+    async ({ project, moves }) => {
+      await moveSectionsTool(baseUrl, project, { moves })
+      return { content: [{ type: 'text', text: 'sections moved' }] }
+    },
+  )
+
+  server.tool(
+    'edit_section_text',
+    'Rename an existing section header — tighten its wording, or rename it after merging two sections into one. Section labels are organizational, not prose, so you may write this text directly. Never use this to write or edit a CARD\'s text — there is no tool for that, and there never will be.',
+    { project: PROJECT, sectionId: z.string(), text: z.string() },
+    async ({ project, sectionId, text }) => {
+      await editSectionTextTool(baseUrl, project, { sectionId, text })
+      return { content: [{ type: 'text', text: 'section renamed' }] }
     },
   )
 
