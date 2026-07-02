@@ -255,11 +255,11 @@ body {
   .elves-toolbar button { transition: none; }
 }
 
-/* ---- Project switcher (top-left) --------------------------------------- */
+/* ---- Project switcher (top-right) -------------------------------------- */
 .elves-switcher {
   position: fixed;
   top: 12px;
-  left: 12px;
+  right: 12px;
   z-index: 400;
 }
 .elves-switcher__button {
@@ -299,7 +299,7 @@ body {
 .elves-switcher__menu {
   position: absolute;
   top: calc(100% + 6px);
-  left: 0;
+  right: 0;
   min-width: 220px;
   max-width: 300px;
   padding: 4px;
@@ -352,14 +352,6 @@ body {
   height: 1px;
   margin: 4px 2px;
   background: var(--elves-border);
-}
-
-/* The project switcher owns the top-left corner. Push tldraw's own top-left
-   controls to the right so they clear the switcher, and down so they sit level
-   with it rather than hugging the very top edge. */
-.tlui-layout__top__left {
-  padding-left: 200px;
-  padding-top: 7px;
 }
 
 /* ---- Empty state (no projects yet) ------------------------------------- */
