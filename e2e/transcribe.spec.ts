@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test'
+import { BASE, resetProject } from './helpers'
 
-const BASE = 'http://localhost:5199'
+let projectId: string
 
 test.beforeEach(async ({ request }) => {
-  await request.post(`${BASE}/canvas`, { data: { document: null, session: null } })
+  projectId = await resetProject(request)
 })
 
 test('create_source_card renders a transcribed source card, undoable', async ({ page, request }) => {
@@ -11,7 +12,7 @@ test('create_source_card renders a transcribed source card, undoable', async ({ 
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
   await page.waitForTimeout(800) // let the realtime socket connect before posting
 
-  await request.post(`${BASE}/changeset`, {
+  await request.post(`${BASE}/projects/${projectId}/changeset`, {
     data: { id: 't1', author: 'claude', ops: [
       { kind: 'create_source_card', text: 'my handwriting, typed', x: 200, y: 200 },
     ] },

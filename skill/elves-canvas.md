@@ -1,6 +1,6 @@
 ---
 name: elves-canvas
-description: Use when helping the user shape a piece on their Elves canvas — reviewing prose for weaknesses, deduplicating source notes, or reordering points. Requires the Elves MCP server (comment/merge/move tools) and the Elves app open.
+description: Use when helping the user shape a piece on their Elves canvas — reviewing prose for weaknesses, deduplicating source notes, or reordering points. Requires the Elves MCP server (list_projects + comment/merge/move tools) and the Elves app open. Pick the project first.
 ---
 
 # Working on the Elves canvas
@@ -10,6 +10,16 @@ shape of a piece. **You never write or edit their prose** — you comment, dedup
 reorder, and transcribe images into *source* cards. There is no tool to write or edit
 their prose; that is deliberate.
 
+## Which project (do this first)
+The user can keep several **projects** (separate pieces). **Every canvas tool takes a
+required `project` id, and you must know which project before doing anything.**
+
+- Call **`list_projects`** to see the available projects as `{id, name}`.
+- Map what the user says ("the climate essay") to an `id`. If it's unclear or ambiguous,
+  **ask the user which project** — never guess. Acting on the wrong piece is a real error
+  (and the server rejects an operation whose cards don't belong to the named project).
+- Pass that `id` as `project` on every call below.
+
 ## The canvas
 - Two kinds of card: **prose** (the user's own words — a point/sentence/paragraph) and
   **source** (raw reference material). Read them with `read_canvas`.
@@ -17,18 +27,20 @@ their prose; that is deliberate.
   position is its place in the piece.
 
 ## What you can do
-- **`read_canvas`** — always call this first to see the cards and their ids/positions.
-- **`add_comment(cardId, text, type?)`** — flag a weakness in a PROSE card. Use a type:
+- **`list_projects`** — list projects (`{id, name}`) to pick the `project` to work in.
+- **`read_canvas(project)`** — call this (after choosing the project) to see the cards
+  and their ids/positions.
+- **`add_comment(project, cardId, text, type?)`** — flag a weakness in a PROSE card. Use a type:
   - `needs-evidence` — a claim with nothing backing it.
   - `weak-argument` — reasoning that doesn't hold up or has an obvious counter.
   - `needs-citation` — a specific fact/quote that needs a source.
   - omit `type` for a freeform note. Keep comments short and specific.
-- **`merge_sources(cardIds)`** — collapse duplicate SOURCE cards. The first id is kept;
-  the rest hide under it (recoverable). Only merge cards that truly say the same thing.
-- **`move_cards(moves)`** — reorder. To bring a point earlier, give it a smaller x than
-  the points it should come before. Move related points together.
-- **`create_source_card(text, x, y)`** — create a SOURCE card from text you transcribed
-  from an image. Never used for your own prose.
+- **`merge_sources(project, cardIds)`** — collapse duplicate SOURCE cards. The first id is
+  kept; the rest hide under it (recoverable). Only merge cards that truly say the same thing.
+- **`move_cards(project, moves)`** — reorder. To bring a point earlier, give it a smaller x
+  than the points it should come before. Move related points together.
+- **`create_source_card(project, text, x, y)`** — create a SOURCE card from text you
+  transcribed from an image. Never used for your own prose.
 
 ## Transcribing handwritten notes (images)
 
@@ -47,8 +59,9 @@ You create **source** cards, never prose. The transcription is the user's own wo
 reference material they'll distill later.
 
 ## How to work
-1. `read_canvas` first — never guess ids.
-2. Do what the user asked, narrowly. Propose nothing you can't do with these five tools.
+1. Determine the `project` first (`list_projects`, confirm with the user if unclear),
+   then `read_canvas(project)` — never guess project ids or card ids.
+2. Do what the user asked, narrowly. Propose nothing you can't do with these six tools.
 3. The user is watching; changes appear live and they can undo any of them.
 4. Never put your own wording into a prose card. If you think a sentence is weak, say so
    in a comment — the user writes the fix.

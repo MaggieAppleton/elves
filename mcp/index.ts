@@ -1,56 +1,81 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
-import { readCanvasTool, addCommentTool, mergeSourcesTool, moveCardsTool, createSourceCardTool } from './tools'
+import {
+  readCanvasTool,
+  addCommentTool,
+  mergeSourcesTool,
+  moveCardsTool,
+  createSourceCardTool,
+  listProjectsTool,
+} from './tools'
 
 const COMMENT_TYPE = z.enum(['needs-evidence', 'weak-argument', 'needs-citation'])
+
+// Every tool that touches a canvas requires this. Claude must know which project
+// it is working in before doing anything; if it doesn't, it calls list_projects
+// and confirms with the user rather than guessing.
+const PROJECT = z
+  .string()
+  .describe(
+    "The project id to operate on (from list_projects). If you don't already know it, call list_projects first and confirm with the user — never guess.",
+  )
 
 export function createMcpServer(baseUrl: string): McpServer {
   const server = new McpServer({ name: 'elves', version: '0.1.0' })
 
   server.tool(
-    'read_canvas',
-    'Read the current canvas as a list of cards: id, kind (prose|source), text, x/y position (x is narrative order: left=earlier, right=later), comments, and mergedInto. Call this first to get card ids before commenting, merging, or moving.',
+    'list_projects',
+    'List the writing projects available in Elves as {id, name}. Call this first to discover project ids; every other tool requires a `project` id. If which project to work in is unclear, show these to the user and ask.',
     {},
-    async () => ({ content: [{ type: 'text', text: JSON.stringify(await readCanvasTool(baseUrl), null, 2) }] }),
+    async () => ({ content: [{ type: 'text', text: JSON.stringify(await listProjectsTool(baseUrl), null, 2) }] }),
+  )
+
+  server.tool(
+    'read_canvas',
+    'Read a project\'s canvas as a list of cards: id, kind (prose|source), text, x/y position (x is narrative order: left=earlier, right=later), comments, and mergedInto. Call this (with the project id) to get card ids before commenting, merging, or moving.',
+    { project: PROJECT },
+    async ({ project }) => ({
+      content: [{ type: 'text', text: JSON.stringify(await readCanvasTool(baseUrl, project), null, 2) }],
+    }),
   )
 
   server.tool(
     'add_comment',
-    "Attach a comment to a card. Use a typed comment to flag a weakness in the user's PROSE (needs-evidence, weak-argument, needs-citation) or omit type for a freeform note. You never write or edit card text — only comments.",
-    { cardId: z.string(), text: z.string(), type: COMMENT_TYPE.nullish() },
-    async ({ cardId, text, type }) => {
-      await addCommentTool(baseUrl, { cardId, text, type: type ?? null })
+    "Attach a comment to a card in a project. Use a typed comment to flag a weakness in the user's PROSE (needs-evidence, weak-argument, needs-citation) or omit type for a freeform note. You never write or edit card text — only comments.",
+    { project: PROJECT, cardId: z.string(), text: z.string(), type: COMMENT_TYPE.nullish() },
+    async ({ project, cardId, text, type }) => {
+      await addCommentTool(baseUrl, project, { cardId, text, type: type ?? null })
       return { content: [{ type: 'text', text: 'comment added' }] }
     },
   )
 
   server.tool(
     'merge_sources',
-    'Collapse duplicate SOURCE cards into one. Pass the card ids to merge; the FIRST id is kept as the representative and the others are hidden (recoverable) under it. Source cards only.',
-    { cardIds: z.array(z.string()).min(2) },
-    async ({ cardIds }) => {
-      await mergeSourcesTool(baseUrl, { cardIds })
+    'Collapse duplicate SOURCE cards in a project into one. Pass the card ids to merge; the FIRST id is kept as the representative and the others are hidden (recoverable) under it. Source cards only.',
+    { project: PROJECT, cardIds: z.array(z.string()).min(2) },
+    async ({ project, cardIds }) => {
+      await mergeSourcesTool(baseUrl, project, { cardIds })
       return { content: [{ type: 'text', text: 'sources merged' }] }
     },
   )
 
   server.tool(
     'move_cards',
-    'Reposition cards. x is narrative order (smaller x = earlier in the piece). To bring a point earlier, move it to a smaller x than the points it should precede. Provide absolute x/y for each card.',
-    { moves: z.array(z.object({ cardId: z.string(), x: z.number(), y: z.number() })).min(1) },
-    async ({ moves }) => {
-      await moveCardsTool(baseUrl, { moves })
+    'Reposition cards in a project. x is narrative order (smaller x = earlier in the piece). To bring a point earlier, move it to a smaller x than the points it should precede. Provide absolute x/y for each card.',
+    { project: PROJECT, moves: z.array(z.object({ cardId: z.string(), x: z.number(), y: z.number() })).min(1) },
+    async ({ project, moves }) => {
+      await moveCardsTool(baseUrl, project, { moves })
       return { content: [{ type: 'text', text: 'cards moved' }] }
     },
   )
 
   server.tool(
     'create_source_card',
-    "Create a SOURCE card containing text you transcribed from an image. First read the image card's file (read_canvas gives each image card an `assetPath`), then transcribe the handwriting FAITHFULLY — these are the user's own words; digitize them, do not summarize. Position (x, y) near the image. Creates a SOURCE card only — never a prose card.",
-    { text: z.string(), x: z.number(), y: z.number() },
-    async ({ text, x, y }) => {
-      await createSourceCardTool(baseUrl, { text, x, y })
+    "Create a SOURCE card in a project containing text you transcribed from an image. First read the image card's file (read_canvas gives each image card an `assetPath`), then transcribe the handwriting FAITHFULLY — these are the user's own words; digitize them, do not summarize. Position (x, y) near the image. Creates a SOURCE card only — never a prose card.",
+    { project: PROJECT, text: z.string(), x: z.number(), y: z.number() },
+    async ({ project, text, x, y }) => {
+      await createSourceCardTool(baseUrl, project, { text, x, y })
       return { content: [{ type: 'text', text: 'source card created' }] }
     },
   )

@@ -8,34 +8,99 @@ import { WebSocket } from 'ws'
 import request from 'supertest'
 import { createServer } from '../../server/app'
 import { attachRealtime } from '../../server/realtime'
-import { assetsDir } from '../../server/assets'
+import { createProject, assetsDirFor } from '../../server/projects'
 
 let dirs: string[] = []
-async function tmpCanvas() {
+async function root() {
   const d = await fs.mkdtemp(join(tmpdir(), 'elves-cs-'))
   dirs.push(d)
-  return join(d, 'canvas.json')
+  return d
+}
+async function rootWithProject() {
+  const d = await root()
+  await createProject(d, 'Essay', '2026-07-02T10:00:00.000Z')
+  return d
 }
 afterEach(async () => {
   await Promise.all(dirs.map((d) => fs.rm(d, { recursive: true, force: true })))
   dirs = []
 })
 
-const validCs = { id: 'x', author: 'claude', ops: [{ kind: 'move_cards', moves: [{ cardId: 'a', x: 1, y: 2 }] }] }
+// create_source_card references no existing card, so it passes the cross-check
+// without seeding a canvas.
+const csCreate = {
+  id: 'x',
+  author: 'claude',
+  ops: [{ kind: 'create_source_card', text: 'hi', x: 1, y: 2 }],
+}
 
-test('POST /changeset validates and forwards to onChangeSet', async () => {
+function cardSnapshot(id: string) {
+  return {
+    document: {
+      store: {
+        [id]: {
+          id,
+          typeName: 'shape',
+          type: 'card',
+          x: 0,
+          y: 0,
+          props: { w: 240, h: 120, kind: 'prose', sourceKind: null, origin: null, text: 'hi', comments: [], mergedInto: null },
+        },
+      },
+    },
+    session: null,
+  }
+}
+
+test('POST changeset validates and forwards to onChangeSet with the project id', async () => {
+  const d = await rootWithProject()
   const onChangeSet = vi.fn()
-  const app = createServer(await tmpCanvas(), onChangeSet)
-  const ok = await request(app).post('/changeset').send(validCs)
+  const app = createServer(d, onChangeSet)
+  const ok = await request(app).post('/projects/essay/changeset').send(csCreate)
   expect(ok.status).toBe(200)
-  expect(onChangeSet).toHaveBeenCalledWith(validCs)
+  expect(onChangeSet).toHaveBeenCalledWith('essay', csCreate)
 
-  const bad = await request(app).post('/changeset').send({ id: 'x', ops: 'nope' })
+  const bad = await request(app).post('/projects/essay/changeset').send({ id: 'x', ops: 'nope' })
   expect(bad.status).toBe(400)
-  expect(onChangeSet).toHaveBeenCalledTimes(1) // called once for the valid POST, never for the invalid one
+  expect(onChangeSet).toHaveBeenCalledTimes(1)
 })
 
-test('attachRealtime broadcasts a change-set to connected websocket clients', async () => {
+test('changeset on an unknown project → 404', async () => {
+  const d = await root()
+  const app = createServer(d)
+  expect((await request(app).post('/projects/ghost/changeset').send(csCreate)).status).toBe(404)
+})
+
+test('changeset referencing a card not in the project → 409', async () => {
+  const d = await rootWithProject()
+  const onChangeSet = vi.fn()
+  const app = createServer(d, onChangeSet)
+  const move = { id: 'x', author: 'claude', ops: [{ kind: 'move_cards', moves: [{ cardId: 'shape:missing', x: 1, y: 2 }] }] }
+  const res = await request(app).post('/projects/essay/changeset').send(move)
+  expect(res.status).toBe(409)
+  expect(res.body.missing).toEqual(['shape:missing'])
+  expect(onChangeSet).not.toHaveBeenCalled()
+})
+
+test('changeset referencing an existing card is accepted', async () => {
+  const d = await rootWithProject()
+  const onChangeSet = vi.fn()
+  const app = createServer(d, onChangeSet)
+  await request(app).post('/projects/essay/canvas').send(cardSnapshot('shape:a'))
+  const move = { id: 'x', author: 'claude', ops: [{ kind: 'move_cards', moves: [{ cardId: 'shape:a', x: 9, y: 9 }] }] }
+  const res = await request(app).post('/projects/essay/changeset').send(move)
+  expect(res.status).toBe(200)
+  expect(onChangeSet).toHaveBeenCalledWith('essay', move)
+})
+
+test('a change-set that would write text is rejected (400 for unknown kind)', async () => {
+  const d = await rootWithProject()
+  const app = createServer(d)
+  const bad = { id: 'x', author: 'claude', ops: [{ kind: 'edit_text', cardId: 'a', text: 'no' }] }
+  expect((await request(app).post('/projects/essay/changeset').send(bad)).status).toBe(400)
+})
+
+test('attachRealtime broadcasts a tagged change-set to websocket clients', async () => {
   const server = http.createServer()
   const { broadcast } = attachRealtime(server)
   await new Promise<void>((r) => server.listen(0, r))
@@ -45,31 +110,24 @@ test('attachRealtime broadcasts a change-set to connected websocket clients', as
   const received = new Promise<any>((resolve) => ws.on('message', (d) => resolve(JSON.parse(d.toString()))))
   await new Promise<void>((r) => ws.on('open', () => r()))
 
-  broadcast(validCs as any)
-  expect(await received).toEqual(validCs)
+  broadcast('essay', csCreate as any)
+  expect(await received).toEqual({ projectId: 'essay', changeSet: csCreate })
 
   ws.close()
   await new Promise<void>((r) => server.close(() => r()))
 })
 
-test('GET /cards returns the card digest', async () => {
-  const canvasPath = await tmpCanvas()
-  const app = createServer(canvasPath)
+test('GET cards returns the card digest for the project', async () => {
+  const d = await rootWithProject()
+  const app = createServer(d)
   const snap = {
     document: { store: { 'shape:a': { id: 'shape:a', typeName: 'shape', type: 'card', x: 5, y: 6, props: { w: 240, h: 120, kind: 'source', sourceKind: 'text', origin: 'typed', text: 'raw', comments: [], mergedInto: null } } } },
     session: null,
   }
-  await request(app).post('/canvas').send(snap)
-  const res = await request(app).get('/cards')
+  await request(app).post('/projects/essay/canvas').send(snap)
+  const res = await request(app).get('/projects/essay/cards')
   expect(res.status).toBe(200)
-  expect(res.body).toEqual(snapshotToCards(snap, assetsDir(canvasPath)))
-})
-
-test('POST /changeset rejects a change-set that would write text (403)', async () => {
-  const app = createServer(await tmpCanvas())
-  const bad = { id: 'x', author: 'claude', ops: [{ kind: 'edit_text', cardId: 'a', text: 'no' }] }
-  const res = await request(app).post('/changeset').send(bad)
-  expect(res.status).toBe(400) // isChangeSet already rejects unknown kinds first
+  expect(res.body).toEqual(snapshotToCards(snap, assetsDirFor(d, 'essay')!))
 })
 
 const TINY_PNG = Buffer.from(
@@ -77,18 +135,19 @@ const TINY_PNG = Buffer.from(
   'base64',
 )
 
-test('POST /assets stores an image and GET /assets/:id serves it', async () => {
-  const app = createServer(await tmpCanvas())
-  const post = await request(app).post('/assets').set('content-type', 'image/png').send(TINY_PNG)
+test('POST assets stores an image and GET serves it, scoped to the project', async () => {
+  const d = await rootWithProject()
+  const app = createServer(d)
+  const post = await request(app).post('/projects/essay/assets').set('content-type', 'image/png').send(TINY_PNG)
   expect(post.status).toBe(200)
   expect(post.body.assetId).toMatch(/\.png$/)
 
-  const get = await request(app).get(`/assets/${post.body.assetId}`)
+  const get = await request(app).get(`/projects/essay/assets/${post.body.assetId}`)
   expect(get.status).toBe(200)
   expect(get.headers['content-type']).toContain('image/png')
 
   const bytes = await request(app)
-    .get(`/assets/${post.body.assetId}`)
+    .get(`/projects/essay/assets/${post.body.assetId}`)
     .buffer(true)
     .parse((res, cb) => {
       const chunks: Buffer[] = []
@@ -98,14 +157,16 @@ test('POST /assets stores an image and GET /assets/:id serves it', async () => {
   expect(bytes.body).toEqual(TINY_PNG)
 })
 
-test('POST /assets rejects a non-image body', async () => {
-  const app = createServer(await tmpCanvas())
-  const res = await request(app).post('/assets').set('content-type', 'text/plain').send('nope')
+test('POST assets rejects a non-image body', async () => {
+  const d = await rootWithProject()
+  const app = createServer(d)
+  const res = await request(app).post('/projects/essay/assets').set('content-type', 'text/plain').send('nope')
   expect(res.status).toBe(400)
 })
 
-test('GET /assets rejects a traversal id', async () => {
-  const app = createServer(await tmpCanvas())
-  const res = await request(app).get('/assets/..%2fpackage.json')
+test('GET assets rejects a traversal id', async () => {
+  const d = await rootWithProject()
+  const app = createServer(d)
+  const res = await request(app).get('/projects/essay/assets/..%2fpackage.json')
   expect([400, 404]).toContain(res.status)
 })
