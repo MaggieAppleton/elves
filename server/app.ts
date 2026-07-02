@@ -8,6 +8,7 @@ import {
   referencedCardIds,
 } from '../src/model/changeset'
 import { snapshotToCards } from './digest'
+import { applyChangeSetToSnapshot } from './applyChangeSet'
 import { extForMime, saveAsset, resolveAssetPath } from './assets'
 import {
   listProjects,
@@ -144,14 +145,23 @@ export function createServer(
         res.status(403).json({ error: 'change-set may not write card text' })
         return
       }
+      const canvas = await readCanvas(paths.canvasPath)
       // Cross-check: every referenced existing card must live in THIS project, so a
       // mistargeted operation fails loudly instead of silently landing nowhere.
-      const cardIds = new Set(snapshotToCards(await readCanvas(paths.canvasPath)).map((c) => c.id))
+      const cardIds = new Set(snapshotToCards(canvas).map((c) => c.id))
       const missing = referencedCardIds(req.body).filter((cardId) => !cardIds.has(cardId))
       if (missing.length) {
         res.status(409).json({ error: 'card not in project', missing })
         return
       }
+      // Apply and persist here, on the server, rather than relying on some
+      // connected browser tab to have this project open and save it back —
+      // that dependency meant a change-set could report success while never
+      // landing on disk. A brand-new project with no canvas yet has no
+      // tldraw schema to write into, so it still falls back to broadcast-only
+      // until a browser bootstraps the document for the first time.
+      const applied = applyChangeSetToSnapshot(canvas, req.body)
+      if (applied) await writeCanvas(paths.canvasPath, applied)
       onChangeSet?.(req.params.id, req.body)
       res.json({ ok: true })
     }),

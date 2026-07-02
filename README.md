@@ -34,7 +34,7 @@ The canvas receives **change-sets** — the mechanism Claude drives in Phase 2b 
 - **Move / reorder**: cards reposition along the left→right narrative axis (left = earlier, right = later).
 - Each change-set applies as **one Ctrl-Z-undoable** step and persists.
 
-A change-set is `POST`ed to the server's `/projects/<id>/changeset` endpoint and broadcast over a websocket (same port, `5199`, tagged with the project id) to the open app. **The boundary:** Claude's operations never write or edit your **prose** — they comment, merge, move, and (as of Phase 3b) create *source* cards from transcribed handwriting. Your prose stays yours, structurally.
+A change-set is `POST`ed to the server's `/projects/<id>/changeset` endpoint, applied to that project's canvas on disk immediately (so it persists whether or not the app happens to be open), and also broadcast over a websocket (same port, `5199`, tagged with the project id) so any open app updates live. **The boundary:** Claude's operations never write or edit your **prose** — they comment, merge, move, and (as of Phase 3b) create *source* cards from transcribed handwriting. Your prose stays yours, structurally.
 
 ## Using Claude (Phase 2b)
 

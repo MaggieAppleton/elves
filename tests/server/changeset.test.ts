@@ -93,6 +93,100 @@ test('changeset referencing an existing card is accepted', async () => {
   expect(onChangeSet).toHaveBeenCalledWith('essay', move)
 })
 
+test('a move_cards change-set persists to disk even with no browser connected', async () => {
+  const d = await rootWithProject()
+  const app = createServer(d) // no onChangeSet listener == no browser connected
+  await request(app).post('/projects/essay/canvas').send(cardSnapshot('shape:a'))
+  const move = { id: 'x', author: 'claude', ops: [{ kind: 'move_cards', moves: [{ cardId: 'shape:a', x: 9, y: 9 }] }] }
+  expect((await request(app).post('/projects/essay/changeset').send(move)).status).toBe(200)
+
+  const cards = await request(app).get('/projects/essay/cards')
+  expect(cards.body[0]).toMatchObject({ x: 9, y: 9 })
+})
+
+test('an add_comment change-set persists to disk even with no browser connected', async () => {
+  const d = await rootWithProject()
+  const app = createServer(d)
+  await request(app).post('/projects/essay/canvas').send(cardSnapshot('shape:a'))
+  const cs = {
+    id: 'x', author: 'claude',
+    ops: [{ kind: 'add_comment', cardId: 'shape:a', comment: { type: null, text: 'needs a source' } }],
+  }
+  expect((await request(app).post('/projects/essay/changeset').send(cs)).status).toBe(200)
+
+  const cards = await request(app).get('/projects/essay/cards')
+  expect(cards.body[0].comments).toEqual([
+    expect.objectContaining({ text: 'needs a source', author: 'claude', resolved: false }),
+  ])
+})
+
+test('a merge_sources change-set persists mergedInto to disk even with no browser connected', async () => {
+  const d = await rootWithProject()
+  const app = createServer(d)
+  const snap = {
+    document: {
+      store: {
+        'shape:a': { id: 'shape:a', typeName: 'shape', type: 'card', x: 0, y: 0, props: { w: 240, h: 120, kind: 'source', sourceKind: 'text', origin: 'typed', text: 'a', comments: [], mergedInto: null } },
+        'shape:b': { id: 'shape:b', typeName: 'shape', type: 'card', x: 0, y: 0, props: { w: 240, h: 120, kind: 'source', sourceKind: 'text', origin: 'typed', text: 'b', comments: [], mergedInto: null } },
+      },
+    },
+    session: null,
+  }
+  await request(app).post('/projects/essay/canvas').send(snap)
+  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'merge_sources', cardIds: ['shape:a', 'shape:b'] }] }
+  expect((await request(app).post('/projects/essay/changeset').send(cs)).status).toBe(200)
+
+  const cards = await request(app).get('/projects/essay/cards')
+  const byId = Object.fromEntries(cards.body.map((c: any) => [c.id, c]))
+  expect(byId['shape:b'].mergedInto).toBe('shape:a')
+  expect(byId['shape:a'].mergedInto).toBeNull()
+})
+
+test('a create_source_card change-set persists a new card when the project already has a canvas', async () => {
+  const d = await rootWithProject()
+  const app = createServer(d)
+  await request(app).post('/projects/essay/canvas').send(cardSnapshot('shape:a'))
+  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'create_source_card', text: 'new note', x: 5, y: 6 }] }
+  expect((await request(app).post('/projects/essay/changeset').send(cs)).status).toBe(200)
+
+  const cards = await request(app).get('/projects/essay/cards')
+  expect(cards.body).toHaveLength(2)
+  expect(cards.body.find((c: any) => c.text === 'new note')).toMatchObject({ x: 5, y: 6, kind: 'source' })
+})
+
+test('create_source_card on a project with no canvas yet falls back to broadcast-only (no crash)', async () => {
+  const d = await rootWithProject()
+  const onChangeSet = vi.fn()
+  const app = createServer(d, onChangeSet)
+  const res = await request(app).post('/projects/essay/changeset').send(csCreate)
+  expect(res.status).toBe(200)
+  expect(onChangeSet).toHaveBeenCalledWith('essay', csCreate)
+  expect((await request(app).get('/projects/essay/cards')).body).toEqual([])
+})
+
+test('two changesets targeting different projects both land on disk with no browser connected', async () => {
+  const d = await root()
+  await createProject(d, 'Essay A', '2026-07-02T10:00:00.000Z')
+  await createProject(d, 'Essay B', '2026-07-02T10:00:01.000Z')
+  const app = createServer(d) // simulates the reported bug: nobody's browser has either project open
+  await request(app).post('/projects/essay-a/canvas').send(cardSnapshot('shape:a'))
+  await request(app).post('/projects/essay-b/canvas').send(cardSnapshot('shape:b'))
+
+  const moveA = { id: 'a', author: 'claude', ops: [{ kind: 'move_cards', moves: [{ cardId: 'shape:a', x: 1, y: 1 }] }] }
+  const commentB = { id: 'b', author: 'claude', ops: [{ kind: 'add_comment', cardId: 'shape:b', comment: { type: null, text: 'hi' } }] }
+  const [resA, resB] = await Promise.all([
+    request(app).post('/projects/essay-a/changeset').send(moveA),
+    request(app).post('/projects/essay-b/changeset').send(commentB),
+  ])
+  expect(resA.status).toBe(200)
+  expect(resB.status).toBe(200)
+
+  const cardsA = await request(app).get('/projects/essay-a/cards')
+  const cardsB = await request(app).get('/projects/essay-b/cards')
+  expect(cardsA.body[0]).toMatchObject({ x: 1, y: 1 })
+  expect(cardsB.body[0].comments).toHaveLength(1)
+})
+
 test('a change-set that would write text is rejected (400 for unknown kind)', async () => {
   const d = await rootWithProject()
   const app = createServer(d)
