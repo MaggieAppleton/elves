@@ -12,8 +12,10 @@ export function attachRealtime(httpServer: Server) {
     ws.on('close', () => clients.delete(ws))
   })
 
-  function broadcast(changeSet: ChangeSet) {
-    const msg = JSON.stringify(changeSet)
+  // Tagged with the project id so a client only applies change-sets for the
+  // project it currently has open (see connectRealtime on the client).
+  function broadcast(projectId: string, changeSet: ChangeSet) {
+    const msg = JSON.stringify({ projectId, changeSet })
     for (const ws of clients) {
       if (ws.readyState === ws.OPEN) ws.send(msg)
     }
