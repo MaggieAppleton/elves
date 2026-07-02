@@ -4,12 +4,18 @@ import type { CanvasSnapshot } from './store'
 import { ChangeSet, planMerge } from '../src/model/changeset'
 import { makeComment, addComment } from '../src/model/comments'
 import { makeSourceCardProps } from '../src/model/cards'
+import { makeSectionProps } from '../src/model/sections'
 
 type StoreRecords = Record<string, any>
 
 function findCardShape(store: StoreRecords, id: string): any | undefined {
   const r = store[id]
   return r && r.typeName === 'shape' && r.type === 'card' ? r : undefined
+}
+
+function findSectionShape(store: StoreRecords, id: string): any | undefined {
+  const r = store[id]
+  return r && r.typeName === 'shape' && r.type === 'section' ? r : undefined
 }
 
 function defaultPageId(store: StoreRecords): string {
@@ -88,6 +94,42 @@ export function applyChangeSetToSnapshot(
           parentId: defaultPageId(store),
           index: getIndexAbove(topIndex(store)),
           props: makeSourceCardProps(op.text, 'transcribed'),
+        }
+        break
+      }
+      case 'create_section': {
+        const id = createShapeId()
+        store[id] = {
+          id,
+          typeName: 'shape',
+          type: 'section',
+          x: op.x,
+          y: op.y,
+          rotation: 0,
+          isLocked: false,
+          opacity: 1,
+          meta: {},
+          parentId: defaultPageId(store),
+          index: getIndexAbove(topIndex(store)),
+          props: makeSectionProps(op.text, 'claude'),
+        }
+        break
+      }
+      case 'move_sections': {
+        for (const m of op.moves) {
+          const shape = findSectionShape(store, m.sectionId)
+          if (shape) {
+            shape.x = m.x
+            shape.y = m.y
+          }
+        }
+        break
+      }
+      case 'edit_section_text': {
+        const shape = findSectionShape(store, op.sectionId)
+        if (shape) {
+          shape.props.text = op.text
+          shape.props.authoredBy = 'claude'
         }
         break
       }
