@@ -1,8 +1,94 @@
 :root {
+  /* ---- Elves palette (OKLCH): warm cream + desaturated deep green ---- */
+
+  /* Warm cream surfaces */
+  --elves-bg:            oklch(0.953 0.007 100);  /* canvas — soft warm greige (≈ #F1F0EB) */
+  --elves-surface:       oklch(0.988 0.010 84);   /* prose card face */
+  --elves-surface-muted: oklch(0.945 0.018 82);   /* source card face */
+  --elves-ink:           oklch(0.30 0.018 70);    /* warm near-black text */
+  --elves-ink-soft:      oklch(0.50 0.020 72);    /* muted text */
+  --elves-line:          oklch(0.90 0.018 82);    /* warm hairline */
+  --elves-line-strong:   oklch(0.85 0.022 82);    /* warm border */
+
+  /* Primary — desaturated deep green / teal (≈ #348585) */
+  --elves-primary:        oklch(0.568 0.062 195);
+  --elves-primary-strong: oklch(0.500 0.066 195);
+  --elves-primary-tint:   oklch(0.955 0.020 195); /* faint green wash */
+  --elves-primary-tint-2: oklch(0.915 0.032 195); /* stronger green wash */
+  --elves-on-primary:     oklch(0.99 0.008 195);  /* text on primary */
+
+  /* Comment accents — warm earth tones + green (no cool blue/purple) */
+  --elves-c-freeform: oklch(0.58 0.050 200);
+  --elves-c-evidence: oklch(0.60 0.100 40);
+  --elves-c-weak:     oklch(0.68 0.095 75);
+  --elves-c-citation: oklch(0.55 0.055 165);
+
   --elves-card-font: 'Inter', system-ui, -apple-system, sans-serif;
+
+  /* tldraw uses var(--font-body) but never defines it (→ serif fallback).
+     Define it at :root so tldraw's portaled menus/popovers inherit our font too. */
+  --font-body: var(--elves-card-font);
 }
+
 html, body, #root { height: 100%; margin: 0; }
-#app-root { position: fixed; inset: 0; }
+#app-root { position: fixed; inset: 0; background: var(--elves-bg); }
+
+/* Warm the tldraw canvas, chrome, and selection to match the palette. */
+.tl-container {
+  font-family: var(--elves-card-font);   /* tldraw UI font — docs-recommended override */
+  --font-body: var(--elves-card-font);
+  --color-background: var(--elves-bg);
+  --color-low: var(--elves-bg);
+  --color-panel: var(--elves-surface);
+  --color-panel-contrast: var(--elves-surface);
+  --color-divider: var(--elves-line);
+  --color-muted-0: oklch(0.30 0.02 70 / 0.04);
+  --color-muted-1: oklch(0.30 0.02 70 / 0.06);
+  --color-muted-2: oklch(0.30 0.02 70 / 0.10);
+  --color-hint: var(--elves-primary-tint-2);
+  --color-text: var(--elves-ink);
+  --color-text-1: var(--elves-ink);
+  --color-text-2: var(--elves-ink-soft);
+  --color-text-3: var(--elves-ink-soft);
+  --color-selected: var(--elves-primary);
+  --color-selected-contrast: var(--elves-on-primary);
+  --color-selection-fill: var(--elves-primary);
+  --color-selection-stroke: var(--elves-primary);
+  --color-focus: var(--elves-primary);
+}
+.tl-background { background-color: var(--elves-bg) !important; }
+
+/* Force the UI font onto tldraw's menus/popovers too (incl. portaled ones). */
+[class*="tlui-"] { font-family: var(--elves-card-font); }
+
+/* Hide ONLY tldraw's color/style panel by default; the ghost paintbrush button
+   (top-right) shows/hides it. The top-left menu and bottom-left zoom stay put. */
+#app-root.elves-hide-style .tlui-style-panel__wrapper { display: none; }
+/* When shown, open the style panel below our toggle button (not under it).
+   Match tldraw's :only-child specificity so this margin actually wins. */
+.tlui-style-panel__wrapper,
+.tlui-style-panel__wrapper:only-child { margin-top: 44px; }
+.elves-style-toggle {
+  position: fixed;
+  top: 8px;
+  right: 12px;
+  z-index: 500;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--elves-ink-soft);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 120ms ease;
+}
+.elves-style-toggle:hover { color: var(--elves-ink); }
+.elves-style-toggle[data-active="true"] { color: var(--elves-primary); }
+.elves-style-toggle svg { width: 15px; height: 15px; display: block; }
+
 .elves-toolbar {
   position: fixed;
   top: 12px;
@@ -17,7 +103,13 @@ html, body, #root { height: 100%; margin: 0; }
   font-size: 13px;
   padding: 6px 12px;
   border-radius: 8px;
-  border: 1px solid #d8d4cf;
-  background: #fff;
+  border: 1px solid var(--elves-line-strong);
+  background: var(--elves-surface);
+  color: var(--elves-ink);
   cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.elves-toolbar button:hover {
+  background: var(--elves-surface-muted);
+  border-color: var(--elves-ink-soft);
 }
