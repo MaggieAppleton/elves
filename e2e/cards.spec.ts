@@ -38,12 +38,12 @@ test('create a prose card, type into it, and it survives reload', async ({ page 
   ).toBeVisible({ timeout: 15000 })
 })
 
-test('source card is muted and shows its origin badge', async ({ page }) => {
+test('note card is muted and shows its Note badge', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
 
   await page.getByTestId('new-source').click()
   const source = page.locator('.elves-card--source').first()
   await expect(source).toBeVisible()
-  await expect(source.getByTestId('card-badge')).toHaveText('typed')
+  await expect(source.getByTestId('card-badge')).toHaveText('Note')
 })

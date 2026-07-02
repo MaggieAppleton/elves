@@ -11,6 +11,15 @@ import { connectRealtime } from './client/realtime'
 
 const shapeUtils = [CardShapeUtil]
 
+// Phosphor "Plus" (regular weight), inlined to avoid pulling in the whole icon package.
+function PlusIcon() {
+  return (
+    <svg className="elves-btn-icon" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
+      <path d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z" />
+    </svg>
+  )
+}
+
 export default function App() {
   const [editor, setEditor] = useState<Editor | null>(null)
   const [showTools, setShowTools] = useState(false)
@@ -96,9 +105,9 @@ export default function App() {
         </svg>
       </button>
       <div className="elves-toolbar">
-        <button data-testid="new-prose" onClick={() => addCard('prose')}>+ Prose</button>
-        <button data-testid="new-source" onClick={() => addCard('source')}>+ Source</button>
-        <button data-testid="new-image" onClick={() => fileInputRef.current?.click()}>+ Image</button>
+        <button data-testid="new-prose" onClick={() => addCard('prose')}><PlusIcon />Prose</button>
+        <button data-testid="new-source" onClick={() => addCard('source')}><PlusIcon />Notes</button>
+        <button data-testid="new-image" onClick={() => fileInputRef.current?.click()}><PlusIcon />Image</button>
         <input
           ref={fileInputRef}
           type="file"

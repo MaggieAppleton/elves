@@ -9,7 +9,7 @@
   /* ---- Neutral layer cake (warm paper) ---- */
   --elves-bg:            oklch(0.9718 0.0066 106.5);  /* canvas — soft warm off-white (≈ #F6F6F1) */
   --elves-surface:       oklch(0.992 0.008 90);   /* primary/elevated card + panel face */
-  --elves-surface-muted: oklch(0.947 0.016 84);   /* secondary surface — source cards */
+  --elves-surface-muted: oklch(0.942 0.008 106.5); /* note cards — bg hue/chroma, a touch darker */
   --elves-tertiary:      oklch(0.922 0.014 84);   /* hover / pressed / selected fill */
 
   /* ---- Text ---- */
@@ -45,11 +45,25 @@
   --elves-on-primary:     oklch(0.99 0.008 195);  /* text on primary */
   --elves-focus-ring:     oklch(0.568 0.062 195 / 0.45);
 
-  /* ---- Comment accents — warm earth tones + green (no cool blue/purple) ---- */
-  --elves-c-freeform: oklch(0.58 0.050 200);
-  --elves-c-evidence: oklch(0.60 0.100 40);
-  --elves-c-weak:     oklch(0.68 0.095 75);
-  --elves-c-citation: oklch(0.55 0.055 165);
+  /* ---- Comment colour ramps — calm, desaturated bands. Each type gets a
+     readable label colour, a very light tinted background, and a subtle tinted
+     border. Freeform = yellow, weak-argument = orange, needs-evidence = red,
+     needs-citation = green. ---- */
+  --elves-cc-freeform-label:  oklch(0.560 0.070 92);
+  --elves-cc-freeform-bg:     oklch(0.968 0.024 92);
+  --elves-cc-freeform-border: oklch(0.895 0.040 92);
+
+  --elves-cc-weak-label:  oklch(0.585 0.095 58);
+  --elves-cc-weak-bg:     oklch(0.966 0.030 58);
+  --elves-cc-weak-border: oklch(0.890 0.048 58);
+
+  --elves-cc-evidence-label:  oklch(0.560 0.100 30);
+  --elves-cc-evidence-bg:     oklch(0.965 0.028 30);
+  --elves-cc-evidence-border: oklch(0.888 0.045 30);
+
+  --elves-cc-citation-label:  oklch(0.520 0.060 152);
+  --elves-cc-citation-bg:     oklch(0.966 0.022 152);
+  --elves-cc-citation-border: oklch(0.892 0.034 152);
 
   /* ---- Typography — one clean, dense sans across the whole app ---- */
   --elves-card-font: 'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif;
@@ -121,22 +135,19 @@ body {
 /* Belt-and-suspenders: force the typeface onto any tlui surface, incl. portaled ones. */
 [class*="tlui-"] { font-family: var(--elves-card-font); }
 
-/* ---- Floating chrome as elevated clusters ------------------------------- */
-/* Top-left menu zone + bottom-left zoom: lift them off the canvas into clean,
-   fine-bordered, soft-shadowed surfaces so the icon controls read as a group. */
+/* ---- Corner chrome kept quiet ------------------------------------------- */
+/* Top-left menu zone + bottom-left zoom blend into the canvas: no surface, no
+   shadow, no border — just the icon controls. Background stays the canvas
+   colour (opaque) so they still occlude any card behind them. */
 .tlui-menu-zone {
-  background-color: var(--elves-surface);
-  border-bottom: 1px solid var(--elves-border);
-  border-right: 1px solid var(--elves-border);
-  border-bottom-right-radius: 11px;
-  box-shadow: var(--elves-shadow-md);
+  background-color: var(--elves-bg);
+  border: none;
+  box-shadow: none;
 }
 .tlui-navigation-panel::before {
-  background-color: var(--elves-surface);
-  border-top: 1px solid var(--elves-border);
-  border-right: 1px solid var(--elves-border);
-  border-top-right-radius: 11px;
-  box-shadow: var(--elves-shadow-md);
+  background-color: var(--elves-bg);
+  border: none;
+  box-shadow: none;
 }
 
 /* Dropdown menus + style panel: elevated popover surface with a hairline ring. */
@@ -207,11 +218,14 @@ body {
   box-shadow: var(--elves-shadow-md), var(--elves-highlight);
 }
 .elves-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-family: var(--elves-card-font);
   font-size: 13px;
   font-weight: 500;
   line-height: 1;
-  padding: 6px 11px;
+  padding: 6px 11px 6px 9px;
   border-radius: 8px;
   border: none;
   background: transparent;
@@ -219,6 +233,13 @@ body {
   cursor: pointer;
   transition: background-color 100ms ease, color 100ms ease;
 }
+.elves-btn-icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  color: var(--elves-ink-faint);
+}
+.elves-toolbar button:hover .elves-btn-icon { color: inherit; }
 .elves-toolbar button:hover {
   background: var(--elves-tertiary);
   color: var(--elves-ink);

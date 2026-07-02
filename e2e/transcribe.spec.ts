@@ -19,7 +19,7 @@ test('create_source_card renders a transcribed source card, undoable', async ({ 
 
   const card = page.locator('.elves-card--source', { hasText: 'my handwriting, typed' })
   await expect(card).toBeVisible()
-  await expect(card.getByTestId('card-badge')).toHaveText('transcribed')
+  await expect(card.getByTestId('card-badge')).toHaveText('Note')
 
   await page.mouse.click(60, 300) // focus the canvas so Ctrl-Z reaches tldraw
   await page.keyboard.press('Control+z')

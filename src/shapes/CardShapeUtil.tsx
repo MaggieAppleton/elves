@@ -93,20 +93,19 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     const mergedCount = this.editor
       .getCurrentPageShapes()
       .filter((s) => s.type === 'card' && (s as CardShape).props.mergedInto === shape.id).length
-    const { kind, origin, text, sourceKind, assetId } = shape.props
+    const { kind, text, sourceKind, assetId } = shape.props
+    const isImage = sourceKind === 'image' && !!assetId
     const isEditing = this.editor.getEditingShapeId() === shape.id
     const comments = visibleComments(shape.props.comments)
     return (
       <HTMLContainer style={{ overflow: 'visible' }}>
         <div className="elves-card-wrap" style={{ position: 'relative', width: '100%', height: '100%' }}>
-          <div className={`elves-card elves-card--${kind}`} style={{ width: '100%', height: '100%' }}>
-            {kind === 'source' && (
-              <span className="elves-badge" data-testid="card-badge">{origin ?? 'source'}</span>
-            )}
-            {mergedCount > 0 && (
-              <span className="elves-merged" data-testid="merged-badge">⊕ {mergedCount} merged</span>
-            )}
+          <div
+            className={`elves-card elves-card--${kind}${isImage ? ' elves-card--image' : ''}`}
+            style={{ width: '100%', height: '100%' }}
+          >
             {sourceKind === 'image' && assetId ? (
+              // Image cards are just the image — edge-to-edge, no label, no chrome.
               <img
                 className="elves-card__image"
                 src={assetUrl(assetId)}
@@ -114,22 +113,32 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                 draggable={false}
                 data-testid="card-image"
               />
-            ) : isEditing ? (
-              <textarea
-                className="elves-card__editor"
-                autoFocus
-                defaultValue={text}
-                onPointerDown={(e) => e.stopPropagation()}
-                onChange={(e) =>
-                  this.editor.updateShape<CardShape>({
-                    id: shape.id,
-                    type: 'card',
-                    props: { text: e.currentTarget.value },
-                  })
-                }
-              />
             ) : (
-              <div className="elves-card__text" data-testid="card-text">{text}</div>
+              <>
+                {kind === 'source' && (
+                  <span className="elves-badge" data-testid="card-badge">Note</span>
+                )}
+                {mergedCount > 0 && (
+                  <span className="elves-merged" data-testid="merged-badge">⊕ {mergedCount} merged</span>
+                )}
+                {isEditing ? (
+                  <textarea
+                    className="elves-card__editor"
+                    autoFocus
+                    defaultValue={text}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onChange={(e) =>
+                      this.editor.updateShape<CardShape>({
+                        id: shape.id,
+                        type: 'card',
+                        props: { text: e.currentTarget.value },
+                      })
+                    }
+                  />
+                ) : (
+                  <div className="elves-card__text" data-testid="card-text">{text}</div>
+                )}
+              </>
             )}
           </div>
           {comments.length > 0 && (

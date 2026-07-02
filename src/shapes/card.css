@@ -21,25 +21,26 @@
   color: var(--elves-ink);
   border-color: var(--elves-border-strong);
 }
-/* Source cards read as secondary reference material: a muted paper fill and a
-   soft hairline (no dashed border — the badge already marks them as sources). */
+/* Note cards read as secondary reference material: a muted paper fill (same hue
+   as the canvas, a touch darker) and a soft hairline. */
 .elves-card--source {
   color: var(--elves-ink-soft);
   background: var(--elves-surface-muted);
   border-color: var(--elves-border);
 }
+/* Image cards are just the image: no padding, no label — edge-to-edge media. */
+.elves-card--image { padding: 0; }
 
-/* Origin tag — a small neutral badge; accent green is reserved for state. */
+/* "NOTE" label — plain small-caps text, no container, tucked toward the
+   top-left corner of the card. */
 .elves-badge {
   align-self: flex-start;
+  margin: -4px 0 0 -2px;
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: var(--elves-tertiary);
-  color: var(--elves-ink-faint);
+  color: var(--elves-ink-soft);
 }
 .elves-card__text { white-space: pre-wrap; flex: 1; overflow-wrap: anywhere; }
 .elves-card__editor {
@@ -52,31 +53,35 @@
   color: inherit;
 }
 
-/* Merged-count chip — a meaningful aggregate state, so a faint green tint. */
+/* Merged-count chip — neutral grey, tucked into the card's top-right corner
+   (absolute, so it doesn't sit under the NOTE label). */
 .elves-merged {
-  align-self: flex-start;
+  position: absolute;
+  top: 10px;
+  right: 12px;
   font-size: 10px;
   font-weight: 600;
   padding: 2px 6px;
   border-radius: 4px;
-  background: var(--elves-primary-tint);
-  color: var(--elves-primary-strong);
+  background: var(--elves-tertiary);
+  color: var(--elves-ink-soft);
 }
 
 .elves-card__image {
   flex: 1;
   min-height: 0;
   width: 100%;
-  object-fit: contain;
+  height: 100%;
+  object-fit: cover;   /* fill the card edge-to-edge (card is created at image aspect) */
   display: block;
-  border-radius: 6px;
+  border-radius: inherit;
 }
 
 /* =========================================================================
    Comments — Claude's margin notes, rendered BELOW the card (outside its
-   clipped box). Neutral elevated notes with one colored accent stripe + label
-   per type, rather than fully-tinted boxes. System sans keeps them visually
-   distinct from the user's own card typeface.
+   clipped box). Each type gets a very lightly tinted background + a subtly
+   tinted border + a coloured label, drawn from calm desaturated colour ramps.
+   System sans keeps them visually distinct from the user's own card typeface.
    ========================================================================= */
 .elves-comments {
   position: absolute;
@@ -99,32 +104,33 @@
   line-height: 1.4;
   padding: 8px 10px;
   border-radius: 8px;
-  background: var(--elves-surface);
   color: var(--elves-ink);
-  border: 1px solid var(--elves-border);
-  border-left: 3px solid var(--elves-c-freeform);
+  /* Freeform (no type) = yellow band */
+  background: var(--elves-cc-freeform-bg);
+  border: 1px solid var(--elves-cc-freeform-border);
   box-shadow: var(--elves-shadow-sm);
   pointer-events: all;
 }
-.elves-comment[data-type="needs-evidence"] { border-left-color: var(--elves-c-evidence); }
-.elves-comment[data-type="weak-argument"]  { border-left-color: var(--elves-c-weak); }
-.elves-comment[data-type="needs-citation"] { border-left-color: var(--elves-c-citation); }
+.elves-comment[data-type="needs-evidence"] { background: var(--elves-cc-evidence-bg); border-color: var(--elves-cc-evidence-border); }
+.elves-comment[data-type="weak-argument"]  { background: var(--elves-cc-weak-bg);     border-color: var(--elves-cc-weak-border); }
+.elves-comment[data-type="needs-citation"] { background: var(--elves-cc-citation-bg); border-color: var(--elves-cc-citation-border); }
 
-.elves-comment__body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.elves-comment__body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .elves-comment__type {
   font-weight: 600;
   text-transform: uppercase;
   font-size: 10px;
   letter-spacing: 0.03em;
-  color: var(--elves-c-freeform);
+  color: var(--elves-cc-freeform-label);
 }
-.elves-comment[data-type="needs-evidence"] .elves-comment__type { color: var(--elves-c-evidence); }
-.elves-comment[data-type="weak-argument"]  .elves-comment__type { color: var(--elves-c-weak); }
-.elves-comment[data-type="needs-citation"] .elves-comment__type { color: var(--elves-c-citation); }
+.elves-comment[data-type="needs-evidence"] .elves-comment__type { color: var(--elves-cc-evidence-label); }
+.elves-comment[data-type="weak-argument"]  .elves-comment__type { color: var(--elves-cc-weak-label); }
+.elves-comment[data-type="needs-citation"] .elves-comment__type { color: var(--elves-cc-citation-label); }
 
 .elves-comment__text { overflow-wrap: anywhere; white-space: pre-wrap; color: var(--elves-ink); }
 .elves-comment__resolve {
   flex-shrink: 0;
+  margin: -3px -4px 0 0;   /* tuck the × up into the top-right corner */
   border: none;
   background: transparent;
   cursor: pointer;
@@ -139,7 +145,12 @@
   justify-content: center;
   transition: background-color 100ms ease, color 100ms ease;
 }
-.elves-comment__resolve:hover { color: var(--elves-ink); background: var(--elves-tertiary); }
+/* Hover fill takes the comment's own type colour (its border tint), so it reads
+   as the same colour pressed — never a clashing grey. */
+.elves-comment__resolve:hover { color: var(--elves-ink); background: var(--elves-cc-freeform-border); }
+.elves-comment[data-type="needs-evidence"] .elves-comment__resolve:hover { background: var(--elves-cc-evidence-border); }
+.elves-comment[data-type="weak-argument"]  .elves-comment__resolve:hover { background: var(--elves-cc-weak-border); }
+.elves-comment[data-type="needs-citation"] .elves-comment__resolve:hover { background: var(--elves-cc-citation-border); }
 
 @media (prefers-reduced-motion: reduce) {
   .elves-comment__resolve { transition: none; }
