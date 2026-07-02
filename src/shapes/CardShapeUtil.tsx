@@ -1,12 +1,14 @@
 import {
   ShapeUtil, TLBaseShape, HTMLContainer, Rectangle2d, T, RecordProps,
   createShapePropsMigrationSequence, createShapePropsMigrationIds, resizeBox,
-  type Geometry2d, type TLResizeInfo,
+  type Editor, type Geometry2d, type TLResizeInfo,
 } from 'tldraw'
+import { useLayoutEffect, type ReactNode } from 'react'
 import type { CardKind, SourceKind, Origin, Comment } from '../model/types'
 import { makeProseCardProps } from '../model/cards'
 import { visibleComments, resolveComment } from '../model/comments'
 import { assetUrl } from '../client/assets'
+import { measuredCardHeight } from './autosize'
 import './card.css'
 
 export type CardShape = TLBaseShape<'card', {
@@ -53,6 +55,35 @@ export const cardMigrations = createShapePropsMigrationSequence({
   ],
 })
 
+/**
+ * Grows a card's height to fit its text (measured at the card's current width),
+ * so a card never clips its own content. Runs after layout — and again once web
+ * fonts are ready, since the first measure can happen before Inter has loaded —
+ * and only writes back when the height actually changed, so it settles in one
+ * pass instead of looping. Width stays user-controlled; height follows the text.
+ */
+function AutosizeCard({
+  editor, shape, children,
+}: { editor: Editor; shape: CardShape; children: ReactNode }) {
+  const { text, w, h, kind, sourceKind } = shape.props
+  useLayoutEffect(() => {
+    let cancelled = false
+    const fit = () => {
+      if (cancelled) return
+      const cur = editor.getShape<CardShape>(shape.id)
+      if (!cur || cur.props.mergedInto || cur.props.sourceKind === 'image') return
+      const want = measuredCardHeight(editor, cur.props.text, cur.props.w, cur.props.kind === 'source')
+      if (Math.abs(want - cur.props.h) > 1) {
+        editor.updateShape<CardShape>({ id: cur.id, type: 'card', props: { h: want } })
+      }
+    }
+    fit()
+    document.fonts?.ready?.then(fit)
+    return () => { cancelled = true }
+  }, [editor, shape.id, text, w, h, kind, sourceKind])
+  return <>{children}</>
+}
+
 export class CardShapeUtil extends ShapeUtil<CardShape> {
   static override type = 'card' as const
   static override migrations = cardMigrations
@@ -98,6 +129,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     const isEditing = this.editor.getEditingShapeId() === shape.id
     const comments = visibleComments(shape.props.comments)
     return (
+      <AutosizeCard editor={this.editor} shape={shape}>
       <HTMLContainer style={{ overflow: 'visible' }}>
         <div className="elves-card-wrap" style={{ position: 'relative', width: '100%', height: '100%' }}>
           <div
@@ -172,6 +204,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
           )}
         </div>
       </HTMLContainer>
+      </AutosizeCard>
     )
   }
 
@@ -182,6 +215,12 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
   override canResize() { return true }
   override canEdit() { return true }
   override onResize(shape: CardShape, info: TLResizeInfo<CardShape>) {
-    return resizeBox(shape, info)
+    // Let the user set the width by dragging; height always fits the text at
+    // that width, so a resize can't clip content or leave dead space.
+    const next = resizeBox(shape, info)
+    if (shape.props.sourceKind === 'image') return next
+    const w = next.props?.w ?? shape.props.w
+    const h = measuredCardHeight(this.editor, shape.props.text, w, shape.props.kind === 'source')
+    return { ...next, props: { ...next.props, h } }
   }
 }
