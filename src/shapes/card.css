@@ -23,7 +23,7 @@
 }
 /* Note cards read as secondary reference material: a muted paper fill (same hue
    as the canvas, a touch darker) and a soft hairline. */
-.elves-card--source {
+.elves-card--note {
   color: var(--elves-ink-soft);
   background: var(--elves-surface-muted);
   border-color: var(--elves-border);
@@ -155,7 +155,7 @@
 }
 
 /* =========================================================================
-   Reference cards — a source card whose face adapts to what it points at
+   Reference cards — a note card whose face adapts to what it points at
    (paper / article / social / book / software / wiki / video / link). The face
    manages its own padding, so the card padding is zeroed; overflow is visible
    so the hover metadata panel can escape below the card (like comments).

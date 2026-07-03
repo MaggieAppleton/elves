@@ -1,4 +1,4 @@
-import type { SourceKind } from '../model/types'
+import type { NoteKind } from '../model/types'
 
 /**
  * At or below this zoom level a card is small enough that its full text is hard
@@ -16,10 +16,10 @@ export const GIST_ZOOM = 0.7
  */
 export function shouldShowGist(
   zoom: number,
-  card: { sourceKind: SourceKind | null; summary: string | null },
+  card: { noteKind: NoteKind | null; summary: string | null },
 ): boolean {
   if (zoom >= GIST_ZOOM) return false
-  if (card.sourceKind === 'image' || card.sourceKind === 'reference') return false
+  if (card.noteKind === 'image' || card.noteKind === 'reference') return false
   return !!card.summary
 }
 

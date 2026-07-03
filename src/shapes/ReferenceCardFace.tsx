@@ -10,7 +10,7 @@ function openRef(url: string) {
 }
 
 /**
- * The type-adaptive face of a reference source card. Presentational only — it
+ * The type-adaptive face of a reference note card. Presentational only — it
  * reads the structured `reference` and renders a paper / article / social /
  * book / software / … layout, with an explicit ↗ open control (so a single
  * click still selects the shape for tldraw) and a hover panel exposing the full

@@ -294,7 +294,7 @@ export function createServer(
       const applied = applyChangeSetToSnapshot(canvas, req.body)
       if (applied) await writeCanvas(paths.canvasPath, applied)
       onChangeSet?.(req.params.id, req.body)
-      // A new source card (e.g. a long transcribed note) may need summarizing;
+      // A new note card (e.g. a long transcribed note) may need summarizing;
       // set_summary change-sets themselves settle to a no-op on the next pass.
       scheduleSummaries(req.params.id)
       res.json({ ok: true })

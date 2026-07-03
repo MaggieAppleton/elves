@@ -32,7 +32,7 @@ describe('measuredCardHeight', () => {
     expect(calls[0].fontSize).toBe(15)
   })
 
-  it('adds badge chrome for source cards but not prose cards', () => {
+  it('adds badge chrome for note cards but not prose cards', () => {
     const { editor } = fakeEditor()
     // 'hello' (5 chars) fits one line at width 250 => textH = 15 * 1.45 = 21.75
     const source = measuredCardHeight(editor, 'hello', 250, true)

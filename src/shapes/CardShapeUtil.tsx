@@ -5,7 +5,7 @@ import {
   type Editor, type Geometry2d, type TLResizeInfo,
 } from 'tldraw'
 import { useLayoutEffect, type CSSProperties, type ReactNode } from 'react'
-import type { CardKind, SourceKind, Origin, Comment, Reference } from '../model/types'
+import type { CardKind, NoteKind, Origin, Comment, Reference } from '../model/types'
 import { makeProseCardProps } from '../model/cards'
 import { cardGist } from '../model/summary'
 import { visibleComments, resolveComment } from '../model/comments'
@@ -20,7 +20,7 @@ export type CardShape = TLBaseShape<'card', {
   w: number
   h: number
   kind: CardKind
-  sourceKind: SourceKind | null
+  noteKind: NoteKind | null
   origin: Origin | null
   text: string
   comments: Comment[]
@@ -33,7 +33,7 @@ export type CardShape = TLBaseShape<'card', {
   summaryAt: string | null
 }>
 
-// Validator for the structured reference metadata (sourceKind === 'reference').
+// Validator for the structured reference metadata (noteKind === 'reference').
 const referenceValidator = T.object({
   url: T.string,
   refType: T.literalEnum('paper', 'article', 'book', 'software', 'social', 'video', 'wiki', 'link'),
@@ -71,8 +71,29 @@ export function addSummaryUp(props: Record<string, unknown>): void {
   props.summaryAt = null
 }
 
+// Card kind 'source' was renamed to 'note', and its sub-kind prop `sourceKind`
+// to `noteKind`, when "note" became the canonical word for these cards. Idempotent
+// on purpose: the server pre-converts canvas.json on disk before serving, so this
+// may run on props that are already in the new shape — guarding on the old names
+// means a double pass is a no-op rather than clobbering good data.
+export function renameSourceToNoteUp(props: Record<string, unknown>): void {
+  if (props.kind === 'source') props.kind = 'note'
+  if ('sourceKind' in props) {
+    props.noteKind = props.sourceKind
+    delete props.sourceKind
+  }
+}
+
+export function renameSourceToNoteDown(props: Record<string, unknown>): void {
+  if (props.kind === 'note') props.kind = 'source'
+  if ('noteKind' in props) {
+    props.sourceKind = props.noteKind
+    delete props.noteKind
+  }
+}
+
 const cardVersions = createShapePropsMigrationIds('card', {
-  AddComments: 1, AddAssetId: 2, AddReference: 3, AddSummary: 4,
+  AddComments: 1, AddAssetId: 2, AddReference: 3, AddSummary: 4, RenameSourceToNote: 5,
 })
 
 export const cardMigrations = createShapePropsMigrationSequence({
@@ -111,6 +132,11 @@ export const cardMigrations = createShapePropsMigrationSequence({
         delete p.summaryAt
       },
     },
+    {
+      id: cardVersions.RenameSourceToNote,
+      up: (props) => renameSourceToNoteUp(props as Record<string, unknown>),
+      down: (props) => renameSourceToNoteDown(props as Record<string, unknown>),
+    },
   ],
 })
 
@@ -124,16 +150,16 @@ export const cardMigrations = createShapePropsMigrationSequence({
 function AutosizeCard({
   editor, shape, children,
 }: { editor: Editor; shape: CardShape; children: ReactNode }) {
-  const { text, w, h, kind, sourceKind, reference } = shape.props
+  const { text, w, h, kind, noteKind, reference } = shape.props
   useLayoutEffect(() => {
     let cancelled = false
     const fit = () => {
       if (cancelled) return
       const cur = editor.getShape<CardShape>(shape.id)
-      if (!cur || cur.props.mergedInto || cur.props.sourceKind === 'image') return
-      const want = cur.props.sourceKind === 'reference' && cur.props.reference
+      if (!cur || cur.props.mergedInto || cur.props.noteKind === 'image') return
+      const want = cur.props.noteKind === 'reference' && cur.props.reference
         ? measuredReferenceHeight(editor, cur.props.reference, cur.props.w)
-        : measuredCardHeight(editor, cur.props.text, cur.props.w, cur.props.kind === 'source')
+        : measuredCardHeight(editor, cur.props.text, cur.props.w, cur.props.kind === 'note')
       if (Math.abs(want - cur.props.h) > 1) {
         editor.updateShape<CardShape>({ id: cur.id, type: 'card', props: { h: want } })
       }
@@ -141,7 +167,7 @@ function AutosizeCard({
     fit()
     document.fonts?.ready?.then(fit)
     return () => { cancelled = true }
-  }, [editor, shape.id, text, w, h, kind, sourceKind, reference])
+  }, [editor, shape.id, text, w, h, kind, noteKind, reference])
   return <>{children}</>
 }
 
@@ -151,8 +177,8 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
   static override props: RecordProps<CardShape> = {
     w: T.number,
     h: T.number,
-    kind: T.literalEnum('source', 'prose'),
-    sourceKind: T.nullable(T.literalEnum('text', 'image', 'reference')),
+    kind: T.literalEnum('note', 'prose'),
+    noteKind: T.nullable(T.literalEnum('text', 'image', 'reference')),
     origin: T.nullable(T.literalEnum('tana', 'image', 'typed', 'transcribed', 'reference')),
     text: T.string,
     comments: T.arrayOf(
@@ -190,9 +216,9 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     const members = mergedMembers(this.editor.getCurrentPageShapes(), shape.id)
     const mergedCount = members.length
     const expanded = mergedCount > 0 && isExpanded(shape.id)
-    const { kind, text, sourceKind, assetId, reference } = shape.props
-    const isImage = sourceKind === 'image' && !!assetId
-    const isReference = sourceKind === 'reference' && !!reference
+    const { kind, text, noteKind, assetId, reference } = shape.props
+    const isImage = noteKind === 'image' && !!assetId
+    const isReference = noteKind === 'reference' && !!reference
     const isEditing = this.editor.getEditingShapeId() === shape.id
     // Zoomed far out, a summarized card shows its gist so the piece reads at a
     // glance. getZoomLevel is reactive, so this re-renders as the user zooms;
@@ -270,7 +296,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
               <>
                 {/* Zoomed out, hide the Note/merged chrome so the gist owns the
                     whole card and reads at a glance. */}
-                {!showGist && kind === 'source' && (
+                {!showGist && kind === 'note' && (
                   <span className="elves-badge" data-testid="card-badge">Note</span>
                 )}
                 {!showGist && mergedBadge}
@@ -364,11 +390,11 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     // Let the user set the width by dragging; height always fits the text at
     // that width, so a resize can't clip content or leave dead space.
     const next = resizeBox(shape, info)
-    if (shape.props.sourceKind === 'image') return next
+    if (shape.props.noteKind === 'image') return next
     const w = next.props?.w ?? shape.props.w
-    const h = shape.props.sourceKind === 'reference' && shape.props.reference
+    const h = shape.props.noteKind === 'reference' && shape.props.reference
       ? measuredReferenceHeight(this.editor, shape.props.reference, w)
-      : measuredCardHeight(this.editor, shape.props.text, w, shape.props.kind === 'source')
+      : measuredCardHeight(this.editor, shape.props.text, w, shape.props.kind === 'note')
     return { ...next, props: { ...next.props, h } }
   }
 }

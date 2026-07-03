@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { createServer } from './app'
 import { attachRealtime } from './realtime'
 import { migrateLegacyCanvas } from './migrate'
+import { migrateSourceCardsToNotes } from './migrateNotes'
 import { listProjects, canvasPathFor } from './projects'
 import { summarizerFromEnv, reconcileCanvasFile } from './summarize'
 
@@ -14,6 +15,9 @@ const port = Number(process.env.PORT ?? 5199)
 async function main() {
   // Bring a single-canvas install up to the multi-project layout before serving.
   await migrateLegacyCanvas(dataRoot, new Date().toISOString())
+  // Then rename any stored 'source' cards to 'note' so the server reads the same
+  // shape the client writes (see migrateSourceCardsToNotes for why this is needed).
+  await migrateSourceCardsToNotes(dataRoot)
 
   const httpServer = http.createServer()
   const { broadcast } = attachRealtime(httpServer)

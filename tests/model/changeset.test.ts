@@ -26,9 +26,9 @@ describe('isChangeSet', () => {
       id: 'x', author: 'claude',
       ops: [
         { kind: 'add_comment', cardId: 'card1', comment: { type: 'needs-evidence', text: 'hi' } },
-        { kind: 'merge_sources', cardIds: ['a', 'b'] },
+        { kind: 'merge_notes', cardIds: ['a', 'b'] },
         { kind: 'move_cards', moves: [{ cardId: 'a', x: 10, y: 20 }] },
-        { kind: 'create_source_card', text: 'transcribed words', x: 10, y: 20 },
+        { kind: 'create_note_card', text: 'transcribed words', x: 10, y: 20 },
       ],
     }
     expect(isChangeSet(cs)).toBe(true)
@@ -39,8 +39,8 @@ describe('isChangeSet', () => {
     expect(isChangeSet(null)).toBe(false)
     expect(isChangeSet({ id: 'x', ops: [] })).toBe(false) // missing author
   })
-  test('rejects a malformed create_source_card', () => {
-    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'create_source_card', text: 'hi' }] })).toBe(false) // missing x/y
+  test('rejects a malformed create_note_card', () => {
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'create_note_card', text: 'hi' }] })).toBe(false) // missing x/y
   })
   test('accepts the section ops', () => {
     const cs = {
@@ -85,13 +85,13 @@ describe('create_reference in a change-set', () => {
 })
 
 describe('referencedCardIds', () => {
-  test('collects existing-card references, ignores create_source_card and create_reference', () => {
+  test('collects existing-card references, ignores create_note_card and create_reference', () => {
     const cs = {
       id: 'x', author: 'claude' as const, ops: [
         { kind: 'add_comment' as const, cardId: 'shape:a', comment: { type: null, text: 'hi' } },
-        { kind: 'merge_sources' as const, cardIds: ['shape:b', 'shape:c'] },
+        { kind: 'merge_notes' as const, cardIds: ['shape:b', 'shape:c'] },
         { kind: 'move_cards' as const, moves: [{ cardId: 'shape:d', x: 1, y: 2 }] },
-        { kind: 'create_source_card' as const, text: 't', x: 0, y: 0 },
+        { kind: 'create_note_card' as const, text: 't', x: 0, y: 0 },
         { kind: 'create_reference' as const, reference: VALID_REF, x: 0, y: 0 },
       ],
     }

@@ -1,5 +1,5 @@
 import type { CanvasSnapshot } from './store'
-import type { CardKind, SourceKind, Origin, Comment, Reference, RefType } from '../src/model/types'
+import type { CardKind, NoteKind, Origin, Comment, Reference, RefType } from '../src/model/types'
 import type { SectionAuthor } from '../src/model/sections'
 import { SummarizableCard, cardGist } from '../src/model/summary'
 import { resolveAssetPath } from './assets'
@@ -7,7 +7,7 @@ import { resolveAssetPath } from './assets'
 export interface CardDigest {
   id: string
   kind: CardKind
-  sourceKind: SourceKind | null
+  noteKind: NoteKind | null
   origin: Origin | null
   text: string
   x: number
@@ -15,7 +15,7 @@ export interface CardDigest {
   comments: Comment[]
   mergedInto: string | null
   assetPath: string | null
-  /** Structured metadata when this is a reference source card; null otherwise. */
+  /** Structured metadata when this is a reference note card; null otherwise. */
   reference: Reference | null
   /** Model-authored gist of a long card; null when short or not yet generated. */
   summary: string | null
@@ -56,7 +56,7 @@ export interface CanvasDigest {
 export interface CardMapEntry {
   id: string
   kind: CardKind
-  sourceKind: SourceKind | null
+  noteKind: NoteKind | null
   x: number
   y: number
   gist: string
@@ -126,14 +126,14 @@ export function snapshotToCards(snapshot: CanvasSnapshot, assetsDir?: string): C
   return cardShapes(snapshot).map((r: any) => ({
     id: r.id,
     kind: r.props.kind,
-    sourceKind: r.props.sourceKind ?? null,
+    noteKind: r.props.noteKind ?? null,
     origin: r.props.origin ?? null,
     text: r.props.text ?? '',
     ...resolvePageXY(store, r),
     comments: r.props.comments ?? [],
     mergedInto: r.props.mergedInto ?? null,
     assetPath:
-      assetsDir && r.props.sourceKind === 'image' && r.props.assetId
+      assetsDir && r.props.noteKind === 'image' && r.props.assetId
         ? resolveAssetPath(assetsDir, r.props.assetId)
         : null,
     reference: r.props.reference ?? null,
@@ -148,7 +148,7 @@ export function snapshotToSummarizableCards(
   return cardShapes(snapshot).map((r: any) => ({
     id: r.id,
     kind: r.props.kind,
-    sourceKind: r.props.sourceKind ?? null,
+    noteKind: r.props.noteKind ?? null,
     text: r.props.text ?? '',
     summary: r.props.summary ?? null,
     summaryOfHash: r.props.summaryOfHash ?? null,
@@ -163,12 +163,12 @@ export function snapshotToCardMap(snapshot: CanvasSnapshot): CardMap {
     const entry: CardMapEntry = {
       id: r.id,
       kind: r.props.kind,
-      sourceKind: r.props.sourceKind ?? null,
+      noteKind: r.props.noteKind ?? null,
       x,
       y,
       gist: cardGist({
         kind: r.props.kind,
-        sourceKind: r.props.sourceKind ?? null,
+        noteKind: r.props.noteKind ?? null,
         text: r.props.text ?? '',
         summary: r.props.summary ?? null,
         summaryOfHash: r.props.summaryOfHash ?? null,

@@ -26,12 +26,12 @@ afterEach(async () => {
   dirs = []
 })
 
-// create_source_card references no existing card, so it passes the cross-check
+// create_note_card references no existing card, so it passes the cross-check
 // without seeding a canvas.
 const csCreate = {
   id: 'x',
   author: 'claude',
-  ops: [{ kind: 'create_source_card', text: 'hi', x: 1, y: 2 }],
+  ops: [{ kind: 'create_note_card', text: 'hi', x: 1, y: 2 }],
 }
 
 function cardSnapshot(id: string) {
@@ -44,7 +44,7 @@ function cardSnapshot(id: string) {
           type: 'card',
           x: 0,
           y: 0,
-          props: { w: 240, h: 120, kind: 'prose', sourceKind: null, origin: null, text: 'hi', comments: [], mergedInto: null },
+          props: { w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text: 'hi', comments: [], mergedInto: null },
         },
       },
     },
@@ -172,20 +172,20 @@ test('an add_comment change-set persists to disk even with no browser connected'
   ])
 })
 
-test('a merge_sources change-set persists mergedInto to disk even with no browser connected', async () => {
+test('a merge_notes change-set persists mergedInto to disk even with no browser connected', async () => {
   const d = await rootWithProject()
   const app = createServer(d)
   const snap = {
     document: {
       store: {
-        'shape:a': { id: 'shape:a', typeName: 'shape', type: 'card', x: 0, y: 0, props: { w: 240, h: 120, kind: 'source', sourceKind: 'text', origin: 'typed', text: 'a', comments: [], mergedInto: null } },
-        'shape:b': { id: 'shape:b', typeName: 'shape', type: 'card', x: 0, y: 0, props: { w: 240, h: 120, kind: 'source', sourceKind: 'text', origin: 'typed', text: 'b', comments: [], mergedInto: null } },
+        'shape:a': { id: 'shape:a', typeName: 'shape', type: 'card', x: 0, y: 0, props: { w: 240, h: 120, kind: 'note', noteKind: 'text', origin: 'typed', text: 'a', comments: [], mergedInto: null } },
+        'shape:b': { id: 'shape:b', typeName: 'shape', type: 'card', x: 0, y: 0, props: { w: 240, h: 120, kind: 'note', noteKind: 'text', origin: 'typed', text: 'b', comments: [], mergedInto: null } },
       },
     },
     session: null,
   }
   await request(app).post('/projects/essay/canvas').send(snap)
-  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'merge_sources', cardIds: ['shape:a', 'shape:b'] }] }
+  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'merge_notes', cardIds: ['shape:a', 'shape:b'] }] }
   expect((await request(app).post('/projects/essay/changeset').send(cs)).status).toBe(200)
 
   const digest = await fullDigest(app, 'essay')
@@ -194,16 +194,16 @@ test('a merge_sources change-set persists mergedInto to disk even with no browse
   expect(byId['shape:a'].mergedInto).toBeNull()
 })
 
-test('a create_source_card change-set persists a new card when the project already has a canvas', async () => {
+test('a create_note_card change-set persists a new card when the project already has a canvas', async () => {
   const d = await rootWithProject()
   const app = createServer(d)
   await request(app).post('/projects/essay/canvas').send(cardSnapshot('shape:a'))
-  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'create_source_card', text: 'new note', x: 5, y: 6 }] }
+  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'create_note_card', text: 'new note', x: 5, y: 6 }] }
   expect((await request(app).post('/projects/essay/changeset').send(cs)).status).toBe(200)
 
   const digest = await fullDigest(app, 'essay')
   expect(digest.body.cards).toHaveLength(2)
-  expect(digest.body.cards.find((c: any) => c.text === 'new note')).toMatchObject({ x: 5, y: 6, kind: 'source' })
+  expect(digest.body.cards.find((c: any) => c.text === 'new note')).toMatchObject({ x: 5, y: 6, kind: 'note' })
 })
 
 // A two-card canvas used to prove grouping survives the full HTTP → persist →
@@ -212,8 +212,8 @@ function twoCardCanvas() {
   return {
     document: {
       store: {
-        'shape:a': { id: 'shape:a', typeName: 'shape', type: 'card', x: 100, y: 50, parentId: 'page:page', props: { w: 240, h: 120, kind: 'prose', sourceKind: null, origin: null, text: 'note', comments: [], mergedInto: null } },
-        'shape:b': { id: 'shape:b', typeName: 'shape', type: 'card', x: 130, y: 60, parentId: 'page:page', props: { w: 240, h: 120, kind: 'source', sourceKind: 'reference', origin: 'reference', text: '', comments: [], mergedInto: null } },
+        'shape:a': { id: 'shape:a', typeName: 'shape', type: 'card', x: 100, y: 50, parentId: 'page:page', props: { w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text: 'note', comments: [], mergedInto: null } },
+        'shape:b': { id: 'shape:b', typeName: 'shape', type: 'card', x: 130, y: 60, parentId: 'page:page', props: { w: 240, h: 120, kind: 'note', noteKind: 'reference', origin: 'reference', text: '', comments: [], mergedInto: null } },
         'page:page': { id: 'page:page', typeName: 'page' },
       },
     },
@@ -246,7 +246,7 @@ test('a group_cards change-set persists to disk and the map shows the binding wi
   expect(after.body.cards.find((c: any) => c.id === 'shape:a')).not.toHaveProperty('groupId')
 })
 
-test('create_source_card on a project with no canvas yet falls back to broadcast-only (no crash)', async () => {
+test('create_note_card on a project with no canvas yet falls back to broadcast-only (no crash)', async () => {
   const d = await rootWithProject()
   const onChangeSet = vi.fn()
   const app = createServer(d, onChangeSet)
@@ -343,7 +343,7 @@ test('GET /map returns the cheap map and POST /cards returns full digests', asyn
   const snap = {
     document: {
       store: {
-        'shape:a': { id: 'shape:a', typeName: 'shape', type: 'card', x: 5, y: 6, props: { w: 240, h: 120, kind: 'source', sourceKind: 'text', origin: 'typed', text: 'raw', comments: [], mergedInto: null } },
+        'shape:a': { id: 'shape:a', typeName: 'shape', type: 'card', x: 5, y: 6, props: { w: 240, h: 120, kind: 'note', noteKind: 'text', origin: 'typed', text: 'raw', comments: [], mergedInto: null } },
         'shape:s': { id: 'shape:s', typeName: 'shape', type: 'section', x: 1, y: 2, props: { w: 320, h: 72, text: 'Origins', authoredBy: 'user' } },
       },
     },
@@ -355,7 +355,7 @@ test('GET /map returns the cheap map and POST /cards returns full digests', asyn
   const map = await request(app).get('/projects/essay/map')
   expect(map.status).toBe(200)
   expect(map.body.cards).toEqual([
-    { id: 'shape:a', kind: 'source', sourceKind: 'text', x: 5, y: 6, gist: 'raw', textLen: 3 },
+    { id: 'shape:a', kind: 'note', noteKind: 'text', x: 5, y: 6, gist: 'raw', textLen: 3 },
   ])
   expect(map.body.sections).toEqual([{ id: 'shape:s', text: 'Origins', x: 1, y: 2, authoredBy: 'user' }])
 

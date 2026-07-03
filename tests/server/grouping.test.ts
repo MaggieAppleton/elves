@@ -11,11 +11,11 @@ function twoCardSnapshot() {
         'page:p': { id: 'page:p', typeName: 'page' },
         'shape:a': {
           id: 'shape:a', typeName: 'shape', type: 'card', x: 100, y: 50, parentId: 'page:p',
-          rotation: 0, index: 'a1', props: { w: 240, h: 120, kind: 'prose', sourceKind: null, origin: null, text: 'note', comments: [], mergedInto: null, assetId: null, reference: null, summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null },
+          rotation: 0, index: 'a1', props: { w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text: 'note', comments: [], mergedInto: null, assetId: null, reference: null, summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null },
         },
         'shape:b': {
           id: 'shape:b', typeName: 'shape', type: 'card', x: 130, y: 60, parentId: 'page:p',
-          rotation: 0, index: 'a2', props: { w: 240, h: 120, kind: 'source', sourceKind: 'reference', origin: 'reference', text: '', comments: [], mergedInto: null, assetId: null, reference: null, summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null },
+          rotation: 0, index: 'a2', props: { w: 240, h: 120, kind: 'note', noteKind: 'reference', origin: 'reference', text: '', comments: [], mergedInto: null, assetId: null, reference: null, summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null },
         },
       },
     },
