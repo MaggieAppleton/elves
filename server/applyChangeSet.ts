@@ -140,7 +140,8 @@ export function applyChangeSetToSnapshot(
       }
       case 'create_note_card': {
         const id = createShapeId()
-        const props = makeNoteCardProps(op.text, 'transcribed')
+        // Stamp the change-set's author so the persisted card keeps its mark.
+        const props = makeNoteCardProps(op.text, 'transcribed', cs.author)
         const at = placeClearOf(store, op.x, op.y, props.w, props.h)
         store[id] = {
           id,

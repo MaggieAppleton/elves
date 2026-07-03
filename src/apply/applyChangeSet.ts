@@ -76,8 +76,13 @@ function placeClearOf(editor: Editor, x: number, y: number, w: number, h: number
   return { x: cand.x, y: cand.y }
 }
 
-function applyCreateNoteCard(editor: Editor, op: Extract<Op, { kind: 'create_note_card' }>): void {
-  const props = makeNoteCardProps(op.text, 'transcribed')
+function applyCreateNoteCard(
+  editor: Editor,
+  op: Extract<Op, { kind: 'create_note_card' }>,
+  author: string,
+): void {
+  // Stamp the change-set's author onto the card so its authorship mark shows.
+  const props = makeNoteCardProps(op.text, 'transcribed', author)
   const at = placeClearOf(editor, op.x, op.y, props.w, props.h)
   editor.createShape<CardShape>({ id: createShapeId(), type: 'card', x: at.x, y: at.y, props })
 }
@@ -140,7 +145,7 @@ function applySetSummary(editor: Editor, op: Extract<Op, { kind: 'set_summary' }
   })
 }
 
-function applyOp(editor: Editor, op: Op): void {
+function applyOp(editor: Editor, op: Op, author: string): void {
   switch (op.kind) {
     case 'add_comment':
       applyAddComment(editor, op)
@@ -152,7 +157,7 @@ function applyOp(editor: Editor, op: Op): void {
       applyMove(editor, op)
       break
     case 'create_note_card':
-      applyCreateNoteCard(editor, op)
+      applyCreateNoteCard(editor, op, author)
       break
     case 'create_reference':
       applyCreateReference(editor, op)
@@ -180,6 +185,6 @@ function applyOp(editor: Editor, op: Op): void {
 
 export function applyChangeSet(editor: Editor, cs: ChangeSet): void {
   const markId = editor.markHistoryStoppingPoint(`claude:${cs.id}`)
-  for (const op of cs.ops) applyOp(editor, op)
+  for (const op of cs.ops) applyOp(editor, op, cs.author)
   editor.squashToMark(markId)
 }

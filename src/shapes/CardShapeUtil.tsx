@@ -14,6 +14,7 @@ import { measuredCardHeight, measuredReferenceHeight } from './autosize'
 import { shouldShowGist, gistFontSize } from './summaryView'
 import { mergedMembers, isExpanded, toggleExpanded } from './mergeView'
 import { ReferenceCardFace } from './ReferenceCardFace'
+import { agentInfo } from './agents'
 import './card.css'
 
 export type CardShape = TLBaseShape<'card', {
@@ -23,6 +24,7 @@ export type CardShape = TLBaseShape<'card', {
   noteKind: NoteKind | null
   origin: Origin | null
   text: string
+  authoredBy: string | null
   comments: Comment[]
   mergedInto: string | null
   assetId: string | null
@@ -71,6 +73,13 @@ export function addSummaryUp(props: Record<string, unknown>): void {
   props.summaryAt = null
 }
 
+// Records which agent authored a note card (an agent id like 'claude'), or null
+// for a human author. Existing cards predate the field, so default them to null:
+// we can't retroactively know which past cards an agent made.
+export function addAuthoredByUp(props: Record<string, unknown>): void {
+  props.authoredBy = null
+}
+
 // Card kind 'source' was renamed to 'note', and its sub-kind prop `sourceKind`
 // to `noteKind`, when "note" became the canonical word for these cards. Idempotent
 // on purpose: the server pre-converts canvas.json on disk before serving, so this
@@ -94,6 +103,7 @@ export function renameSourceToNoteDown(props: Record<string, unknown>): void {
 
 const cardVersions = createShapePropsMigrationIds('card', {
   AddComments: 1, AddAssetId: 2, AddReference: 3, AddSummary: 4, RenameSourceToNote: 5,
+  AddAuthoredBy: 6,
 })
 
 export const cardMigrations = createShapePropsMigrationSequence({
@@ -136,6 +146,13 @@ export const cardMigrations = createShapePropsMigrationSequence({
       id: cardVersions.RenameSourceToNote,
       up: (props) => renameSourceToNoteUp(props as Record<string, unknown>),
       down: (props) => renameSourceToNoteDown(props as Record<string, unknown>),
+    },
+    {
+      id: cardVersions.AddAuthoredBy,
+      up: (props) => addAuthoredByUp(props as Record<string, unknown>),
+      down: (props) => {
+        delete (props as Record<string, unknown>).authoredBy
+      },
     },
   ],
 })
@@ -181,6 +198,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     noteKind: T.nullable(T.literalEnum('text', 'image', 'reference')),
     origin: T.nullable(T.literalEnum('tana', 'image', 'typed', 'transcribed', 'reference')),
     text: T.string,
+    authoredBy: T.nullable(T.string),
     comments: T.arrayOf(
       T.object({
         id: T.string,
@@ -226,6 +244,9 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     const zoom = this.editor.getZoomLevel()
     const showGist = !isEditing && shouldShowGist(zoom, shape.props)
     const comments = visibleComments(shape.props.comments)
+    // The agent (if any) that authored this note via the MCP — drives the small
+    // logo mark beside the NOTE label. null for human-authored or unknown ids.
+    const agent = agentInfo(shape.props.authoredBy)
     // The "N merged" chip is a button: it toggles the ephemeral peek that fans
     // the merged cards out to the right. stopEventPropagation keeps the click
     // from starting a canvas drag / selecting the card.
@@ -297,7 +318,22 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                 {/* Zoomed out, hide the Note/merged chrome so the gist owns the
                     whole card and reads at a glance. */}
                 {!showGist && kind === 'note' && (
-                  <span className="elves-badge" data-testid="card-badge">Note</span>
+                  <div className="elves-badge-row">
+                    <span className="elves-badge" data-testid="card-badge">Note</span>
+                    {/* Agent authorship: a small logo, tinted the agent's accent,
+                        tucked right of the label so it reads "written by <agent>". */}
+                    {agent && (
+                      <span
+                        className="elves-agent-mark"
+                        data-testid="card-agent-mark"
+                        data-agent={agent.id}
+                        title={`Written by ${agent.name}`}
+                        style={{ color: agent.accent }}
+                      >
+                        <agent.Logo aria-hidden="true" focusable="false" />
+                      </span>
+                    )}
+                  </div>
                 )}
                 {!showGist && mergedBadge}
                 {isEditing ? (

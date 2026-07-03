@@ -59,6 +59,13 @@ export interface CardProps {
   origin: Origin | null
   /** Human-authored. For note cards this is reference text, never prose. */
   text: string
+  /**
+   * The agent that authored this card via the MCP, as an agent id (e.g.
+   * 'claude'); null = human-authored. Deliberately an open string, not an enum,
+   * so a new agent needs no schema change — the agent registry (src/shapes/agents)
+   * maps a known id to its display metadata, and an unknown id renders no mark.
+   */
+  authoredBy: string | null
   /** Claude-authored comments attached to this card. */
   comments: Comment[]
   /** If set, this note card was merged into the referenced representative card (hidden, recoverable). */

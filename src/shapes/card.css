@@ -34,13 +34,36 @@
 /* "NOTE" label — plain small-caps text, no container, tucked toward the
    top-left corner of the card. */
 .elves-badge {
-  align-self: flex-start;
-  margin: -4px 0 0 -2px;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--elves-ink-soft);
+}
+
+/* The top-left chrome row: the NOTE label + (when an agent authored the note)
+   its logo mark. The row owns the tuck into the corner that the bare label used
+   to have, so label and mark sit on one baseline. */
+.elves-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  align-self: flex-start;
+  margin: -4px 0 0 -2px;
+}
+
+/* Agent authorship mark — a small single-colour logomark, tinted the agent's
+   accent (set inline via `color`, the SVG uses currentColor). Sized a touch
+   taller than the 10px NOTE cap-height so it reads without shouting. */
+.elves-agent-mark {
+  display: inline-flex;
+  align-items: center;
+  color: var(--elves-claude-accent);
+}
+.elves-agent-mark svg {
+  width: 13px;
+  height: 13px;
+  display: block;
 }
 .elves-card__text { white-space: pre-wrap; flex: 1; overflow-wrap: anywhere; }
 /* The zoomed-out gist: a model-authored summary. Although it's model-written,

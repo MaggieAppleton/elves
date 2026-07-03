@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest'
 import {
   addCommentsUp, addAssetIdUp, addReferenceUp, addSummaryUp,
-  renameSourceToNoteUp, renameSourceToNoteDown,
+  renameSourceToNoteUp, renameSourceToNoteDown, addAuthoredByUp,
 } from '../../src/shapes/CardShapeUtil'
 
 test('migration adds comments[] and mergedInto to a pre-Phase-2 card', () => {
@@ -72,4 +72,16 @@ test('RenameSourceToNote down() restores the pre-rename shape', () => {
   expect(props.kind).toBe('source')
   expect(props.sourceKind).toBe('image')
   expect('noteKind' in props).toBe(false)
+})
+
+test('AddAuthoredBy migration defaults an existing card to no agent author', () => {
+  // Cards predate the field; we cannot know which past cards an agent made, so
+  // they default to null (human-authored) and show no mark.
+  const props: Record<string, unknown> = {
+    w: 240, h: 120, kind: 'note', noteKind: 'text', origin: 'typed', text: 'x',
+    comments: [], mergedInto: null, assetId: null, reference: null,
+    summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+  }
+  addAuthoredByUp(props)
+  expect(props.authoredBy).toBeNull()
 })

@@ -53,7 +53,13 @@ export function isReference(v: unknown): v is Reference {
 
 export interface ChangeSet {
   id: string
-  author: 'claude'
+  /**
+   * The agent that authored this change-set, as an agent id (e.g. 'claude').
+   * Open string, not a literal, so a new agent's MCP server can stamp its own id
+   * (see ELVES_AGENT). A create_note_card stamps this onto the new card's
+   * `authoredBy`, which drives its authorship mark.
+   */
+  author: string
   ops: Op[]
 }
 
@@ -107,7 +113,7 @@ function isOp(v: unknown): v is Op {
 export function isChangeSet(value: unknown): value is ChangeSet {
   if (typeof value !== 'object' || value === null) return false
   const cs = value as Record<string, unknown>
-  return typeof cs.id === 'string' && cs.author === 'claude' &&
+  return typeof cs.id === 'string' && typeof cs.author === 'string' && cs.author.length > 0 &&
     Array.isArray(cs.ops) && cs.ops.every(isOp)
 }
 

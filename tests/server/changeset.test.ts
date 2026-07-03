@@ -1,5 +1,6 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import { snapshotToCards } from '../../server/digest'
+import { applyChangeSetToSnapshot } from '../../server/applyChangeSet'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -192,6 +193,22 @@ test('a merge_notes change-set persists mergedInto to disk even with no browser 
   const byId = Object.fromEntries(digest.body.cards.map((c: any) => [c.id, c]))
   expect(byId['shape:b'].mergedInto).toBe('shape:a')
   expect(byId['shape:a'].mergedInto).toBeNull()
+})
+
+test('applyChangeSetToSnapshot stamps the change-set author onto the created note card', () => {
+  // The persisted card must remember which agent authored it, so a reload still
+  // shows the authorship mark. Use a non-Claude author to prove it is the
+  // change-set's author that lands, not a hardcoded value.
+  const snap = {
+    document: { store: { 'page:page': { id: 'page:page', typeName: 'page' } } },
+    session: null,
+  } as any
+  const cs = { id: 'x', author: 'openai', ops: [{ kind: 'create_note_card' as const, text: 'hi', x: 1, y: 2 }] }
+  const next = applyChangeSetToSnapshot(snap, cs) as any
+  const created = Object.values(next.document.store).find(
+    (r: any) => r?.typeName === 'shape' && r.type === 'card',
+  ) as any
+  expect(created.props.authoredBy).toBe('openai')
 })
 
 test('a create_note_card change-set persists a new card when the project already has a canvas', async () => {

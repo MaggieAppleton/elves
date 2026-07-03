@@ -39,6 +39,13 @@ describe('isChangeSet', () => {
     expect(isChangeSet(null)).toBe(false)
     expect(isChangeSet({ id: 'x', ops: [] })).toBe(false) // missing author
   })
+  test('author is any non-empty agent id, so future agents validate too', () => {
+    const ops = [{ kind: 'create_note_card', text: 'hi', x: 0, y: 0 }]
+    expect(isChangeSet({ id: 'x', author: 'claude', ops })).toBe(true)
+    expect(isChangeSet({ id: 'x', author: 'openai', ops })).toBe(true) // a future agent
+    expect(isChangeSet({ id: 'x', author: '', ops })).toBe(false) // empty id
+    expect(isChangeSet({ id: 'x', author: 42, ops })).toBe(false) // non-string
+  })
   test('rejects a malformed create_note_card', () => {
     expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'create_note_card', text: 'hi' }] })).toBe(false) // missing x/y
   })

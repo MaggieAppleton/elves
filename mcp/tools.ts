@@ -18,8 +18,22 @@ export interface ReferenceFields {
   doi?: string
 }
 
-export function makeChangeSet(ops: Op[]): ChangeSet {
-  return { id: crypto.randomUUID(), author: 'claude', ops }
+// The agent id stamped on every change-set this process posts, and thus onto
+// note cards it creates (their authorship mark). A single MCP process speaks for
+// exactly one agent, so process-wide config models reality faithfully: set it
+// once at startup from ELVES_AGENT (see mcp/index.ts). Defaults to 'claude'.
+let agentId = 'claude'
+
+export function setAgentId(id: string): void {
+  if (id) agentId = id
+}
+
+export function getAgentId(): string {
+  return agentId
+}
+
+export function makeChangeSet(ops: Op[], author: string = agentId): ChangeSet {
+  return { id: crypto.randomUUID(), author, ops }
 }
 
 export function listProjectsTool(baseUrl: string): Promise<ProjectSummary[]> {
