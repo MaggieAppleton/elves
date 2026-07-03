@@ -410,3 +410,65 @@
 @media (prefers-reduced-motion: reduce) {
   .elves-comment__resolve { transition: none; }
 }
+
+/* =========================================================================
+   Agent presence glow — a soft orange halo showing where the agent is looking
+   (read_cards) or has just worked (a change-set landed). Ephemeral, driven by
+   src/client/presence.ts; never part of the document. The overlay is always in
+   the DOM so appearing/fading is a smooth opacity change rather than a mount.
+   It sits inside .elves-card-wrap (overflow: visible), so the bloom spills past
+   the card edge and is not clipped — and it works for every card kind.
+   ========================================================================= */
+.elves-presence {
+  position: absolute;
+  inset: -3px;
+  border-radius: 13px;
+  pointer-events: none;
+  opacity: 0;
+  /* Two-layer box-shadow: a crisp inner ring + a soft outer bloom. */
+  box-shadow:
+    0 0 0 2px var(--elves-presence-ring),
+    0 0 18px 5px var(--elves-presence-glow);
+  /* Fade-out (idle / expiry) is gentle; fade-in for "looking" is quick. */
+  transition: opacity 600ms ease;
+}
+
+/* Looking — a calm, steady halo held while the agent's attention lingers. */
+.elves-card-wrap[data-presence="looking"] .elves-presence {
+  opacity: 1;
+  transition: opacity 220ms ease;
+}
+
+/* Doing — a brighter pulse at the moment of action that settles, then fades to
+   nothing over ~10s (matching DOING_TTL_MS), drawing the eye to what just changed
+   (a new card, a comment, a move) and then quietly releasing it. */
+.elves-card-wrap[data-presence="doing"] .elves-presence {
+  animation: elves-presence-doing 10s ease-out forwards;
+}
+
+@keyframes elves-presence-doing {
+  0%   { opacity: 0; }
+  4%   {
+    opacity: 1;
+    box-shadow:
+      0 0 0 3px var(--elves-presence-ring),
+      0 0 26px 9px var(--elves-presence-glow);
+  }
+  16%  {
+    opacity: 0.9;
+    box-shadow:
+      0 0 0 2px var(--elves-presence-ring),
+      0 0 18px 5px var(--elves-presence-glow);
+  }
+  70%  { opacity: 0.75; }
+  100% { opacity: 0; }
+}
+
+/* Respect reduced-motion: no pulse animation. Still show the halo (via a steady
+   opacity) so the awareness signal survives; it fades on expiry like looking. */
+@media (prefers-reduced-motion: reduce) {
+  .elves-card-wrap[data-presence="doing"] .elves-presence {
+    animation: none;
+    opacity: 1;
+  }
+}

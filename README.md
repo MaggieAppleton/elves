@@ -14,6 +14,8 @@ A local-first, canvas-based writing studio for taking a piece from scattered not
 
 **Anything Claude writes is orange.** Claude's own wording renders in a warm orange accent so you can always tell it from yours — this covers **comments**, **section headers** it writes or renames, and **summaries**. Your prose, and any notes/sections you wrote, stay in your ink.
 
+**Agent presence — see where Claude is working.** As Claude works the canvas through the MCP, the cards it touches glow a soft orange so you always know where its attention is. **Looking** (when it reads specific cards) is a calm, steady halo that lingers while it's active and fades once it goes idle; **doing** (a comment, merge, move, or a freshly-created card) is a brighter pulse that fades over ~10 seconds, drawing your eye to what just changed. Reading the whole-board map shows nothing (it's a scan, not a focus), and the glow is purely ephemeral — never saved, never in undo.
+
 **Section headers.** Big thematic labels that float above a cluster of cards so the shape of the piece reads at a glance when you zoom out. You or Claude can write and rename them (Claude's show orange).
 
 **Comments.** Claude flags weak spots in your prose — `needs-evidence`, `weak-argument`, `needs-citation`, or a freeform note — each individually resolvable. Always Claude-authored; it comments on your prose, never rewrites it.

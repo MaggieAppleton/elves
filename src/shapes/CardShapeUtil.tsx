@@ -15,6 +15,7 @@ import { shouldShowGist, gistFontSize } from './summaryView'
 import { mergedMembers, isExpanded, toggleExpanded } from './mergeView'
 import { ReferenceCardFace } from './ReferenceCardFace'
 import { agentInfo } from './agents'
+import { presenceMode } from '../client/presence'
 import './card.css'
 
 export type CardShape = TLBaseShape<'card', {
@@ -244,6 +245,12 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     const zoom = this.editor.getZoomLevel()
     const showGist = !isEditing && shouldShowGist(zoom, shape.props)
     const comments = visibleComments(shape.props.comments)
+    // Ephemeral agent presence: a soft orange glow when the agent is looking at
+    // (read_cards) or has just acted on this card. Reading the atom here is
+    // reactive (this component is tldraw-`track`ed, same as the zoom read above),
+    // so the glow appears and fades on its own. Lives entirely outside the
+    // document — never persisted, never in undo history.
+    const presence = presenceMode(shape.id)
     // The agent (if any) that authored this note via the MCP — drives the small
     // logo mark beside the NOTE label. null for human-authored or unknown ids.
     const agent = agentInfo(shape.props.authoredBy)
@@ -270,7 +277,15 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     return (
       <AutosizeCard editor={this.editor} shape={shape}>
       <HTMLContainer style={{ overflow: 'visible' }}>
-        <div className="elves-card-wrap" style={{ position: 'relative', width: '100%', height: '100%' }}>
+        <div
+          className="elves-card-wrap"
+          style={{ position: 'relative', width: '100%', height: '100%' }}
+          data-presence={presence ?? undefined}
+        >
+          {/* The agent-presence glow. Always rendered (so fade-out is a smooth
+              opacity transition, not a hard cut); the halo itself is driven by
+              the wrap's data-presence attribute. aria-hidden — it's ambient. */}
+          <div className="elves-presence" aria-hidden="true" data-testid="presence-glow" />
           {/* A short paper stack peeking out behind the representative signals
               "there's more collapsed here". Fixed 1–2 edges, quiet until the
               badge is engaged; hidden while fanned out or zoomed to gist. */}

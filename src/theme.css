@@ -42,6 +42,12 @@
      unambiguously against the cream background. ---- */
   --elves-claude-accent: oklch(0.62 0.17 45);
 
+  /* ---- Agent-presence glow — the same warm orange, at two alphas. `ring` is
+     the crisp inner edge that says "here"; `glow` is the soft outer bloom. Used
+     by .elves-presence (card.css) to show where the agent is looking / working. ---- */
+  --elves-presence-ring: oklch(0.62 0.17 45 / 0.55);
+  --elves-presence-glow: oklch(0.62 0.17 45 / 0.32);
+
   /* ---- Primary — desaturated deep green / teal (≈ #348585) ---- */
   --elves-primary:        oklch(0.568 0.062 195);
   --elves-primary-strong: oklch(0.500 0.066 195);
