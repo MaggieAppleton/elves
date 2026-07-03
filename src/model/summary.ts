@@ -9,12 +9,6 @@ import type { CardKind, SourceKind } from './types'
  * server/summarize/.
  */
 
-/**
- * Below this length a card IS its own summary — showing its (short) text on the
- * map or when zoomed out is already legible, so we don't spend a model call.
- */
-export const SUMMARY_MIN_CHARS = 180
-
 /** The minimal card shape this module reasons about. */
 export interface SummarizableCard {
   kind: CardKind
@@ -35,10 +29,16 @@ export function summaryHash(text: string): string {
   return (h >>> 0).toString(36)
 }
 
-/** Text-bearing (prose, or a text source card) and long enough to be worth summarizing. */
+/**
+ * Text-bearing (prose, or a text source card) with any content at all. Every
+ * note and prose card gets a summary regardless of length — at the zoom-out map
+ * level even a short card's own text is too small to read, so we give them all a
+ * consistent, legible gist. (Image and reference cards are excluded: images have
+ * no text, references already carry a description.)
+ */
 export function isSummarizable(card: SummarizableCard): boolean {
   const textBearing = card.kind === 'prose' || (card.kind === 'source' && card.sourceKind === 'text')
-  return textBearing && card.text.trim().length > SUMMARY_MIN_CHARS
+  return textBearing && card.text.trim().length > 0
 }
 
 export type SummaryState = 'generate' | 'clear' | 'ok'

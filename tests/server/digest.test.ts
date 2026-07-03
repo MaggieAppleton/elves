@@ -91,7 +91,7 @@ test('snapshotToSections returns [] for an empty canvas', () => {
   expect(snapshotToSections({ document: null, session: null })).toEqual([])
 })
 
-const LONG = 'A '.repeat(150) + 'end' // > SUMMARY_MIN_CHARS
+const LONG = 'A '.repeat(150) + 'end' // a long card body
 
 function mapSnapshot() {
   return {

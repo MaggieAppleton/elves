@@ -203,8 +203,16 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
       <HTMLContainer style={{ overflow: 'visible' }}>
         <div className="elves-card-wrap" style={{ position: 'relative', width: '100%', height: '100%' }}>
           <div
-            className={`elves-card elves-card--${kind}${isImage ? ' elves-card--image' : ''}${isReference ? ' elves-card--reference' : ''}`}
-            style={{ width: '100%', height: '100%' }}
+            className={`elves-card elves-card--${kind}${isImage ? ' elves-card--image' : ''}${isReference ? ' elves-card--reference' : ''}${showGist ? ' elves-card--gist' : ''}`}
+            // In gist mode a short card's box (sized to its full text at 15px) may
+            // be shorter than the gist at the uniform gist size, so let the card
+            // grow to fit rather than clip. Long cards keep min-height 100% and
+            // are unchanged (their tall box already holds the short gist).
+            style={
+              showGist
+                ? { width: '100%', height: 'auto', minHeight: '100%', overflow: 'visible' }
+                : { width: '100%', height: '100%' }
+            }
           >
             {isImage ? (
               // Image cards are just the image — edge-to-edge, no label, no chrome.
@@ -262,7 +270,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
               </>
             )}
           </div>
-          {comments.length > 0 && (
+          {!showGist && comments.length > 0 && (
             <div className="elves-comments" onPointerDown={(e) => e.stopPropagation()}>
               {comments.map((c) => (
                 <div

@@ -35,10 +35,10 @@ test('reconcile generates a set_summary for a long card with no summary', async 
   ])
 })
 
-test('reconcile clears a stale summary when the card was shortened below the threshold', async () => {
+test('reconcile clears a stale summary when the card was emptied', async () => {
   const fake = new FakeSummarizer()
   const cs = await reconcileSummaries(
-    [card({ text: 'now short', summary: 'stale', summaryOfHash: summaryHash(LONG) })],
+    [card({ text: '   ', summary: 'stale', summaryOfHash: summaryHash(LONG) })],
     fake, () => 'T',
   )
   expect(fake.calls).toEqual([]) // no model call needed to clear
@@ -47,16 +47,19 @@ test('reconcile clears a stale summary when the card was shortened below the thr
   ])
 })
 
-test('reconcile is a no-op for short cards and up-to-date summaries', async () => {
+test('reconcile generates for a short card too, and is a no-op for up-to-date ones', async () => {
   const fake = new FakeSummarizer()
   const cs = await reconcileSummaries(
     [
-      card({ id: 'short', text: 'tiny' }),
+      card({ id: 'short', text: 'a short note' }), // now summarized as well
       card({ id: 'current', summary: 'g', summaryOfHash: summaryHash(LONG) }),
     ],
     fake, () => 'T',
   )
-  expect(cs).toBeNull()
+  expect(fake.calls).toEqual(['a short note'])
+  expect(cs?.ops).toEqual([
+    { kind: 'set_summary', cardId: 'short', summary: 'a gist', summaryOfHash: summaryHash('a short note'), summaryBy: 'fake/test', summaryAt: 'T' },
+  ])
 })
 
 test('reconcile yields null when the summarizer returns nothing (e.g. Ollama down)', async () => {
