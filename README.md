@@ -20,6 +20,8 @@ A local-first, canvas-based writing studio for taking a piece from scattered not
 
 **Merge duplicates.** Near-identical note/source cards collapse under one representative (the rest hidden but recoverable) with an "N merged" badge.
 
+**Grouping.** Bind cards that belong together so they **travel as one** when you rearrange the piece — a note and the reference cards that annotate it, or a tight narrative cluster. Uses tldraw's native grouping (select cards → `Cmd+G` / right-click **Group**; `Cmd+Shift+G` to ungroup). Claude can group and ungroup cards too, and `read_map` shows a `groups` list (with each group's members and bounds) plus a `groupId` on every grouped card, so it can see what's bound before it moves anything.
+
 **Images.** Drop in a photo of paper notes or a sketch as an **image card**; ask Claude to **transcribe** it into a note card in your words.
 
 **References.** Papers, articles, books, software, tweets, videos, links — paste a url and the server **unfurls** it into a rich, clickable **reference card** with a type-adaptive face (favicon + hero cached locally so it stays offline). Or ask Claude to enrich a plain-text mention or research a topic onto the canvas. A reference is a *source* card: Claude writes its bibliographic *facts*, never your annotation.
@@ -28,7 +30,7 @@ A local-first, canvas-based writing studio for taking a piece from scattered not
 
 **Projects.** Keep several pieces at once, each a self-contained, portable folder; create / switch / rename from the toolbar.
 
-**Claude via MCP.** With the app running, Claude works the canvas through a scoped [MCP](https://modelcontextprotocol.io) server: `list_projects`, `read_map` (a cheap, token-light map with a one-line gist per card) / `read_cards` (full text on demand), `add_comment`, `merge_sources`, `move_cards`, `create_source_card` (transcribe), `create_reference`, and the section tools. Every tool targets a specific project, and **none can write your prose**.
+**Claude via MCP.** With the app running, Claude works the canvas through a scoped [MCP](https://modelcontextprotocol.io) server: `list_projects`, `read_map` (a cheap, token-light map with a one-line gist per card, plus the section and group lists) / `read_cards` (full text on demand), `add_comment`, `merge_sources`, `move_cards`, `create_source_card` (transcribe), `create_reference`, the section tools, and `group_cards` / `ungroup_cards`. Every tool targets a specific project, and **none can write your prose**.
 
 ## What it does (Phase 1)
 
@@ -73,8 +75,9 @@ changes appear live and are undoable.
 Claude's tools include `list_projects`, `read_map` (a cheap, token-light canvas map
 with a one-line gist per card) and `read_cards` (full text for specific cards), `add_comment`,
 `merge_sources`, `move_cards`, `create_source_card` (transcribe an image, Phase 3b),
-`create_reference` (turn a mention or url into a rich reference card, Phase 5), and the
-section tools. Every canvas tool takes a **required `project` id**: Claude calls
+`create_reference` (turn a mention or url into a rich reference card, Phase 5), the
+section tools, and `group_cards` / `ungroup_cards` (bind cards to travel together). Every
+canvas tool takes a **required `project` id**: Claude calls
 `list_projects` to discover them and confirms which one you mean before acting — it never
 guesses, and the server rejects an operation that targets a card outside the named
 project. There is deliberately no tool to write or edit your **prose**: Claude comments,

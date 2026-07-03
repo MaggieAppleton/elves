@@ -12,6 +12,8 @@ import {
   createSectionTool,
   moveSectionsTool,
   editSectionTextTool,
+  groupCardsTool,
+  ungroupCardsTool,
   listProjectsTool,
 } from './tools'
 
@@ -39,7 +41,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'read_map',
-    "Read a project's canvas MAP — the cheap, token-light first pass. Returns { cards, sections }. Each card is a small entry: id, kind (prose|source), sourceKind (text|image|reference), x/y position (x is narrative order: left=earlier, right=later), `gist` (a one-line summary of the card — a model-authored summary for long cards, else the card's own short text), `textLen` (character count of the full text), and — when set — `mergedInto` and `refType`. It does NOT include full card text, comment bodies, or reference metadata. Sections: id, text (a short thematic label), x/y, authoredBy (user|claude). Call this FIRST (with the project id) to see the shape of the piece and get ids; then call read_cards for the few cards you actually need in full before commenting, merging, moving, renaming, or enriching.",
+    "Read a project's canvas MAP — the cheap, token-light first pass. Returns { cards, sections }. Each card is a small entry: id, kind (prose|source), sourceKind (text|image|reference), x/y position (x is narrative order: left=earlier, right=later), `gist` (a one-line summary of the card — a model-authored summary for long cards, else the card's own short text), `textLen` (character count of the full text), and — when set — `mergedInto` and `refType`. It does NOT include full card text, comment bodies, or reference metadata. Sections: id, text (a short thematic label), x/y, authoredBy (user|claude). Groups: id, cardIds, memberCount, bounds — a set of cards bound to travel together (see group_cards); each grouped card also carries a `groupId`. Call this FIRST (with the project id) to see the shape of the piece and get ids; then call read_cards for the few cards you actually need in full before commenting, merging, moving, renaming, or enriching.",
     { project: PROJECT },
     async ({ project }) => ({
       content: [{ type: 'text', text: JSON.stringify(await readMapTool(baseUrl, project)) }],
@@ -148,6 +150,26 @@ export function createMcpServer(baseUrl: string): McpServer {
     async ({ project, sectionId, text }) => {
       await editSectionTextTool(baseUrl, project, { sectionId, text })
       return { content: [{ type: 'text', text: 'section renamed' }] }
+    },
+  )
+
+  server.tool(
+    'group_cards',
+    "Group cards so they TRAVEL TOGETHER on the canvas — a mechanical binding (a tldraw group), like selecting cards and choosing Group. Once grouped, moving any of them moves the whole set, so their spatial relationship is preserved when the piece is rearranged. Use it for cards that must stay adjacent: a note and the reference cards that annotate it (so the sources ride along with the note), or a tight narrative cluster. read_map already shows a `groups[]` list (each with its member cardIds and bounds) plus a `groupId` on each grouped card, so you can see what is already bound before adding more. Pass 2 or more card ids. The group carries no label or meaning — it is purely 'these move together'.",
+    { project: PROJECT, cardIds: z.array(z.string()).min(2) },
+    async ({ project, cardIds }) => {
+      await groupCardsTool(baseUrl, project, { cardIds })
+      return { content: [{ type: 'text', text: 'cards grouped' }] }
+    },
+  )
+
+  server.tool(
+    'ungroup_cards',
+    'Dissolve a group so its cards move independently again. Pass the group id (from the `groups[]` list in read_map, or the `groupId` on a card). The cards keep their current positions; only the travel-together binding is removed.',
+    { project: PROJECT, groupId: z.string() },
+    async ({ project, groupId }) => {
+      await ungroupCardsTool(baseUrl, project, { groupId })
+      return { content: [{ type: 'text', text: 'cards ungrouped' }] }
     },
   )
 
