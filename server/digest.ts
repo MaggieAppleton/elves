@@ -59,6 +59,10 @@ export interface CardMapEntry {
   noteKind: NoteKind | null
   x: number
   y: number
+  /** Card size on the page. Height is measured to fit the text, so it's the
+   * real footprint — use x/y/w/h to place new cards in clear space, not on top. */
+  w: number
+  h: number
   gist: string
   textLen: number
   mergedInto?: string
@@ -166,6 +170,8 @@ export function snapshotToCardMap(snapshot: CanvasSnapshot): CardMap {
       noteKind: r.props.noteKind ?? null,
       x,
       y,
+      w: r.props.w ?? 0,
+      h: r.props.h ?? 0,
       gist: cardGist({
         kind: r.props.kind,
         noteKind: r.props.noteKind ?? null,

@@ -198,12 +198,32 @@ test('a create_note_card change-set persists a new card when the project already
   const d = await rootWithProject()
   const app = createServer(d)
   await request(app).post('/projects/essay/canvas').send(cardSnapshot('shape:a'))
+  // (5,6) sits on top of shape:a (0,0, 240x120), so the placement guard slides
+  // the new card straight down clear of it — same x, y past shape:a's bottom.
   const cs = { id: 'x', author: 'claude', ops: [{ kind: 'create_note_card', text: 'new note', x: 5, y: 6 }] }
   expect((await request(app).post('/projects/essay/changeset').send(cs)).status).toBe(200)
 
   const digest = await fullDigest(app, 'essay')
   expect(digest.body.cards).toHaveLength(2)
-  expect(digest.body.cards.find((c: any) => c.text === 'new note')).toMatchObject({ x: 5, y: 6, kind: 'note' })
+  expect(digest.body.cards.find((c: any) => c.text === 'new note')).toMatchObject({ x: 5, y: 144, kind: 'note' })
+})
+
+test('the placement guard leaves a clear position untouched and slides an overlapping one down', async () => {
+  const d = await rootWithProject()
+  const app = createServer(d)
+  await request(app).post('/projects/essay/canvas').send(cardSnapshot('shape:a')) // (0,0), 240x120
+
+  // A spot well to the right of shape:a is clear → placed exactly as asked.
+  const clear = { id: 'c', author: 'claude', ops: [{ kind: 'create_note_card', text: 'clear', x: 400, y: 0 }] }
+  expect((await request(app).post('/projects/essay/changeset').send(clear)).status).toBe(200)
+  // A spot on top of shape:a → slid down past its bottom (120) + gap (24) = 144.
+  const onTop = { id: 'o', author: 'claude', ops: [{ kind: 'create_note_card', text: 'on top', x: 10, y: 10 }] }
+  expect((await request(app).post('/projects/essay/changeset').send(onTop)).status).toBe(200)
+
+  const digest = await fullDigest(app, 'essay')
+  const byText = Object.fromEntries(digest.body.cards.map((c: any) => [c.text, c]))
+  expect(byText['clear']).toMatchObject({ x: 400, y: 0 })
+  expect(byText['on top']).toMatchObject({ x: 10, y: 144 })
 })
 
 // A two-card canvas used to prove grouping survives the full HTTP → persist →
@@ -355,7 +375,7 @@ test('GET /map returns the cheap map and POST /cards returns full digests', asyn
   const map = await request(app).get('/projects/essay/map')
   expect(map.status).toBe(200)
   expect(map.body.cards).toEqual([
-    { id: 'shape:a', kind: 'note', noteKind: 'text', x: 5, y: 6, gist: 'raw', textLen: 3 },
+    { id: 'shape:a', kind: 'note', noteKind: 'text', x: 5, y: 6, w: 240, h: 120, gist: 'raw', textLen: 3 },
   ])
   expect(map.body.sections).toEqual([{ id: 'shape:s', text: 'Origins', x: 1, y: 2, authoredBy: 'user' }])
 
