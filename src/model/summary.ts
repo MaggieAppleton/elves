@@ -5,7 +5,7 @@ import type { CardKind, NoteKind } from './types'
  * module is the pure decision logic around it — what counts as long enough to
  * summarize, whether an existing summary is stale, and how to derive a readable
  * gist when no model summary exists. It calls no network and touches no shape,
- * so it is trivially unit-testable; the impure Ollama/OpenAI call lives in
+ * so it is trivially unit-testable; the impure Ollama call lives in
  * server/summarize/.
  */
 

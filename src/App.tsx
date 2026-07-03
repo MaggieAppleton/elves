@@ -3,6 +3,7 @@ import { Tldraw, Editor, getSnapshot, loadSnapshot, createShapeId } from 'tldraw
 import 'tldraw/tldraw.css'
 import './theme.css'
 import { CardShapeUtil, CardShape } from './shapes/CardShapeUtil'
+import { cardIsHidden, collapseAll } from './shapes/mergeView'
 import { SectionShapeUtil, SectionShape } from './shapes/SectionShapeUtil'
 import {
   makeProseCardProps, makeNoteCardProps, makeImageNoteCardProps, makeReferenceCardProps,
@@ -24,6 +25,13 @@ import { connectRealtime } from './client/realtime'
 import { ProjectSwitcher } from './components/ProjectSwitcher'
 
 const shapeUtils = [CardShapeUtil, SectionShapeUtil]
+
+// Cards merged away into a representative are kept for recovery but must not
+// render as their own shape — hidden here from BOTH rendering and hit-testing so
+// they can't become invisible-yet-selectable "ghosts". The representative shows
+// them (a stack + an on-demand fan-out).
+const getShapeVisibility = (shape: Parameters<typeof cardIsHidden>[0]) =>
+  cardIsHidden(shape) ? ('hidden' as const) : ('inherit' as const)
 const LAST_PROJECT_KEY = 'elves:lastProject'
 
 // Phosphor "Plus" (regular weight), inlined to avoid pulling in the whole icon package.
@@ -123,6 +131,10 @@ export default function App() {
   const handleMount = (ed: Editor) => {
     editorRef.current = ed
     setEditor(ed)
+    // A click on empty canvas dismisses any open merged-card peek, like a popover.
+    ed.on('event', (info) => {
+      if (info.name === 'pointer_down' && info.target === 'canvas') collapseAll()
+    })
     const pid = projectIdRef.current
     if (!pid) return
     loadCanvas(pid)
@@ -300,7 +312,12 @@ export default function App() {
           }}
         />
       </div>
-      <Tldraw key={currentProjectId ?? 'none'} shapeUtils={shapeUtils} onMount={handleMount} />
+      <Tldraw
+        key={currentProjectId ?? 'none'}
+        shapeUtils={shapeUtils}
+        getShapeVisibility={getShapeVisibility}
+        onMount={handleMount}
+      />
     </div>
   )
 }

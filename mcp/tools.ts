@@ -140,3 +140,19 @@ export function editSectionTextTool(
     { kind: 'edit_section_text', sectionId: args.sectionId, text: args.text },
   ]))
 }
+
+export function groupCardsTool(
+  baseUrl: string,
+  projectId: string,
+  args: { cardIds: string[] },
+): Promise<void> {
+  return postChangeSet(baseUrl, projectId, makeChangeSet([{ kind: 'group_cards', cardIds: args.cardIds }]))
+}
+
+export function ungroupCardsTool(
+  baseUrl: string,
+  projectId: string,
+  args: { groupId: string },
+): Promise<void> {
+  return postChangeSet(baseUrl, projectId, makeChangeSet([{ kind: 'ungroup_cards', groupId: args.groupId }]))
+}

@@ -18,12 +18,14 @@ test('the MCP server exposes the scoped tools plus list_projects, and no text-ed
     'create_reference',
     'create_section',
     'edit_section_text',
+    'group_cards',
     'list_projects',
     'merge_notes',
     'move_cards',
     'move_sections',
     'read_cards',
     'read_map',
+    'ungroup_cards',
   ])
   expect(names).not.toContain('edit_text')
   expect(names).not.toContain('read_canvas')

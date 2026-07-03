@@ -6,6 +6,8 @@ import {
   snapshotToCardMap,
   snapshotToCardsById,
   snapshotToSummarizableCards,
+  snapshotToGroups,
+  resolvePageXY,
 } from '../../server/digest'
 import { resolveAssetPath } from '../../server/assets'
 
@@ -170,6 +172,83 @@ test('snapshotToSummarizableCards exposes just the summary decision fields', () 
     { id: 'shape:short', kind: 'prose', noteKind: null, text: 'a short point', summary: null, summaryOfHash: null },
     { id: 'shape:long', kind: 'prose', noteKind: null, text: LONG, summary: 'a model gist', summaryOfHash: 'abc' },
   ])
+})
+
+// A canvas with two grouped cards (A, B) and one ungrouped card (C).
+// The group's origin is the top-left of the members' page bounds; each member's
+// stored x/y is group-LOCAL, so page coords must be resolved through the group.
+function groupedSnapshot() {
+  return {
+    document: {
+      store: {
+        'page:p': { id: 'page:p', typeName: 'page' },
+        'shape:g': {
+          id: 'shape:g', typeName: 'shape', type: 'group', x: 100, y: 50,
+          parentId: 'page:p', props: {},
+        },
+        'shape:a': {
+          id: 'shape:a', typeName: 'shape', type: 'card', x: 0, y: 0, parentId: 'shape:g',
+          props: { w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text: 'note', comments: [], mergedInto: null, assetId: null, reference: null, summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null },
+        },
+        'shape:b': {
+          id: 'shape:b', typeName: 'shape', type: 'card', x: 30, y: 10, parentId: 'shape:g',
+          props: { w: 240, h: 120, kind: 'note', noteKind: 'reference', origin: 'reference', text: '', comments: [], mergedInto: null, assetId: null, reference: null, summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null },
+        },
+        'shape:c': {
+          id: 'shape:c', typeName: 'shape', type: 'card', x: 500, y: 500, parentId: 'page:p',
+          props: { w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text: 'alone', comments: [], mergedInto: null, assetId: null, reference: null, summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null },
+        },
+      },
+    },
+    session: null,
+  }
+}
+
+test('resolvePageXY returns page coords for top-level, grouped, and nested shapes', () => {
+  const snap = groupedSnapshot()
+  const store = snap.document.store as Record<string, any>
+  expect(resolvePageXY(store, store['shape:c'])).toEqual({ x: 500, y: 500 }) // top-level
+  expect(resolvePageXY(store, store['shape:a'])).toEqual({ x: 100, y: 50 })  // group origin
+  expect(resolvePageXY(store, store['shape:b'])).toEqual({ x: 130, y: 60 })  // origin + local
+  // nested: a group inside a group
+  const nested = {
+    'page:p': { id: 'page:p', typeName: 'page' },
+    'shape:outer': { id: 'shape:outer', typeName: 'shape', type: 'group', x: 10, y: 10, parentId: 'page:p', props: {} },
+    'shape:inner': { id: 'shape:inner', typeName: 'shape', type: 'group', x: 5, y: 5, parentId: 'shape:outer', props: {} },
+    'shape:deep': { id: 'shape:deep', typeName: 'shape', type: 'card', x: 2, y: 3, parentId: 'shape:inner', props: { w: 240, h: 120 } },
+  } as Record<string, any>
+  expect(resolvePageXY(nested, nested['shape:deep'])).toEqual({ x: 17, y: 18 })
+})
+
+test('snapshotToCards resolves grouped cards to PAGE coords', () => {
+  const cards = snapshotToCards(groupedSnapshot())
+  expect(cards.find((c) => c.id === 'shape:a')).toMatchObject({ x: 100, y: 50 })
+  expect(cards.find((c) => c.id === 'shape:b')).toMatchObject({ x: 130, y: 60 })
+  expect(cards.find((c) => c.id === 'shape:c')).toMatchObject({ x: 500, y: 500 })
+})
+
+test('snapshotToCardMap tags grouped cards with groupId and leaves loose cards untagged', () => {
+  const map = snapshotToCardMap(groupedSnapshot())
+  expect(map.cards.find((c) => c.id === 'shape:a')!.groupId).toBe('shape:g')
+  expect(map.cards.find((c) => c.id === 'shape:b')!.groupId).toBe('shape:g')
+  expect(map.cards.find((c) => c.id === 'shape:c')!).not.toHaveProperty('groupId')
+})
+
+test('snapshotToGroups reports members and the union of their page bounds', () => {
+  expect(snapshotToGroups(groupedSnapshot())).toEqual([
+    { id: 'shape:g', cardIds: ['shape:a', 'shape:b'], memberCount: 2, bounds: { x: 100, y: 50, w: 270, h: 130 } },
+  ])
+})
+
+test('snapshotToCardMap has an empty groups[] when nothing is grouped', () => {
+  expect(snapshotToCardMap(mapSnapshot()).groups).toEqual([])
+})
+
+test('snapshotToGroups drops a group with no card members', () => {
+  const snap = groupedSnapshot() as any
+  snap.document.store['shape:a'].parentId = 'page:p'
+  snap.document.store['shape:b'].parentId = 'page:p'
+  expect(snapshotToGroups(snap)).toEqual([])
 })
 
 test('snapshotToCanvasDigest combines cards and sections', () => {

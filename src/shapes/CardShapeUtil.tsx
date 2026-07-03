@@ -1,9 +1,10 @@
 import {
   ShapeUtil, TLBaseShape, HTMLContainer, Rectangle2d, T, RecordProps,
   createShapePropsMigrationSequence, createShapePropsMigrationIds, resizeBox,
+  stopEventPropagation,
   type Editor, type Geometry2d, type TLResizeInfo,
 } from 'tldraw'
-import { useLayoutEffect, type ReactNode } from 'react'
+import { useLayoutEffect, type CSSProperties, type ReactNode } from 'react'
 import type { CardKind, NoteKind, Origin, Comment, Reference } from '../model/types'
 import { makeProseCardProps } from '../model/cards'
 import { cardGist } from '../model/summary'
@@ -11,6 +12,7 @@ import { visibleComments, resolveComment } from '../model/comments'
 import { assetUrl } from '../client/assets'
 import { measuredCardHeight, measuredReferenceHeight } from './autosize'
 import { shouldShowGist, gistFontSize } from './summaryView'
+import { mergedMembers, isExpanded, toggleExpanded } from './mergeView'
 import { ReferenceCardFace } from './ReferenceCardFace'
 import './card.css'
 
@@ -207,13 +209,13 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
   }
 
   component(shape: CardShape) {
-    if (shape.props.mergedInto) {
-      // Merged into a representative — hidden but recoverable.
-      return <HTMLContainer />
-    }
-    const mergedCount = this.editor
-      .getCurrentPageShapes()
-      .filter((s) => s.type === 'card' && (s as CardShape).props.mergedInto === shape.id).length
+    // Cards merged away into a representative are hidden from the canvas by
+    // App's getShapeVisibility (rendering AND hit-testing), so this component
+    // never runs for them — no invisible "ghost" shape. The representative shows
+    // them instead: a stack underneath, and a fan-out on demand.
+    const members = mergedMembers(this.editor.getCurrentPageShapes(), shape.id)
+    const mergedCount = members.length
+    const expanded = mergedCount > 0 && isExpanded(shape.id)
     const { kind, text, noteKind, assetId, reference } = shape.props
     const isImage = noteKind === 'image' && !!assetId
     const isReference = noteKind === 'reference' && !!reference
@@ -224,10 +226,44 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     const zoom = this.editor.getZoomLevel()
     const showGist = !isEditing && shouldShowGist(zoom, shape.props)
     const comments = visibleComments(shape.props.comments)
+    // The "N merged" chip is a button: it toggles the ephemeral peek that fans
+    // the merged cards out to the right. stopEventPropagation keeps the click
+    // from starting a canvas drag / selecting the card.
+    const mergedBadge =
+      mergedCount > 0 ? (
+        <button
+          type="button"
+          className="elves-merged"
+          data-testid="merged-badge"
+          aria-expanded={expanded}
+          title={expanded ? 'Hide merged cards' : 'Show merged cards'}
+          onPointerDown={stopEventPropagation}
+          onClick={(e) => {
+            stopEventPropagation(e)
+            toggleExpanded(shape.id)
+          }}
+        >
+          ⊕ {mergedCount} merged
+        </button>
+      ) : null
     return (
       <AutosizeCard editor={this.editor} shape={shape}>
       <HTMLContainer style={{ overflow: 'visible' }}>
         <div className="elves-card-wrap" style={{ position: 'relative', width: '100%', height: '100%' }}>
+          {/* A short paper stack peeking out behind the representative signals
+              "there's more collapsed here". Fixed 1–2 edges, quiet until the
+              badge is engaged; hidden while fanned out or zoomed to gist. */}
+          {mergedCount > 0 && !expanded && !showGist && (
+            <div className="elves-merge-stack" aria-hidden="true" data-testid="merge-stack">
+              {Array.from({ length: Math.min(mergedCount, 2) }).map((_, i) => (
+                <div
+                  key={i}
+                  className="elves-merge-stack__edge"
+                  style={{ '--edge': i + 1 } as CSSProperties}
+                />
+              ))}
+            </div>
+          )}
           <div
             className={`elves-card elves-card--${kind}${isImage ? ' elves-card--image' : ''}${isReference ? ' elves-card--reference' : ''}${showGist ? ' elves-card--gist' : ''}`}
             // In gist mode a short card's box (sized to its full text at 15px) may
@@ -253,9 +289,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
               // Reference cards render a type-adaptive face; the annotation text
               // (shape.props.text) stays the user's own words, edited elsewhere.
               <>
-                {mergedCount > 0 && (
-                  <span className="elves-merged" data-testid="merged-badge">⊕ {mergedCount} merged</span>
-                )}
+                {mergedBadge}
                 <ReferenceCardFace reference={reference} />
               </>
             ) : (
@@ -265,9 +299,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                 {!showGist && kind === 'note' && (
                   <span className="elves-badge" data-testid="card-badge">Note</span>
                 )}
-                {!showGist && mergedCount > 0 && (
-                  <span className="elves-merged" data-testid="merged-badge">⊕ {mergedCount} merged</span>
-                )}
+                {!showGist && mergedBadge}
                 {isEditing ? (
                   <textarea
                     className="elves-card__editor"
@@ -321,6 +353,23 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                   >
                     ×
                   </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {/* The peek: the merged cards fanned out to the right, read-only, each
+              showing its full text so you can see exactly what was collapsed.
+              stopPropagation lets you click/select the text without the canvas
+              treating it as a drag. */}
+          {expanded && (
+            <div
+              className="elves-merge-fan"
+              data-testid="merge-fan"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              {members.map((m) => (
+                <div key={m.id} className="elves-merge-fan__card" data-testid="merge-fan-card">
+                  {m.props.text}
                 </div>
               ))}
             </div>

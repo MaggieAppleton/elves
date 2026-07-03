@@ -206,6 +206,46 @@ test('a create_note_card change-set persists a new card when the project already
   expect(digest.body.cards.find((c: any) => c.text === 'new note')).toMatchObject({ x: 5, y: 6, kind: 'note' })
 })
 
+// A two-card canvas used to prove grouping survives the full HTTP → persist →
+// reload → map path with no browser connected.
+function twoCardCanvas() {
+  return {
+    document: {
+      store: {
+        'shape:a': { id: 'shape:a', typeName: 'shape', type: 'card', x: 100, y: 50, parentId: 'page:page', props: { w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text: 'note', comments: [], mergedInto: null } },
+        'shape:b': { id: 'shape:b', typeName: 'shape', type: 'card', x: 130, y: 60, parentId: 'page:page', props: { w: 240, h: 120, kind: 'note', noteKind: 'reference', origin: 'reference', text: '', comments: [], mergedInto: null } },
+        'page:page': { id: 'page:page', typeName: 'page' },
+      },
+    },
+    session: null,
+  }
+}
+
+test('a group_cards change-set persists to disk and the map shows the binding with page coords', async () => {
+  const d = await rootWithProject()
+  const app = createServer(d)
+  await request(app).post('/projects/essay/canvas').send(twoCardCanvas())
+  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'group_cards', cardIds: ['shape:a', 'shape:b'] }] }
+  expect((await request(app).post('/projects/essay/changeset').send(cs)).status).toBe(200)
+
+  const map = await request(app).get('/projects/essay/map')
+  expect(map.body.groups).toEqual([
+    { id: expect.any(String), cardIds: ['shape:a', 'shape:b'], memberCount: 2, bounds: { x: 100, y: 50, w: 270, h: 130 } },
+  ])
+  const groupId = map.body.groups[0].id
+  // grouped cards report their PAGE coords + the groupId, despite being stored group-local
+  expect(map.body.cards.find((c: any) => c.id === 'shape:a')).toMatchObject({ x: 100, y: 50, groupId })
+  expect(map.body.cards.find((c: any) => c.id === 'shape:b')).toMatchObject({ x: 130, y: 60, groupId })
+
+  // ungroup dissolves the binding, cards keep their page positions
+  const ungroup = { id: 'y', author: 'claude', ops: [{ kind: 'ungroup_cards', groupId }] }
+  expect((await request(app).post('/projects/essay/changeset').send(ungroup)).status).toBe(200)
+  const after = await request(app).get('/projects/essay/map')
+  expect(after.body.groups).toEqual([])
+  expect(after.body.cards.find((c: any) => c.id === 'shape:a')).toMatchObject({ x: 100, y: 50 })
+  expect(after.body.cards.find((c: any) => c.id === 'shape:a')).not.toHaveProperty('groupId')
+})
+
 test('create_note_card on a project with no canvas yet falls back to broadcast-only (no crash)', async () => {
   const d = await rootWithProject()
   const onChangeSet = vi.fn()

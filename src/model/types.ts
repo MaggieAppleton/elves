@@ -77,7 +77,7 @@ export interface CardProps {
   summary: string | null
   /** Hash of the `text` this summary was built from, for staleness detection. */
   summaryOfHash: string | null
-  /** Provenance of the summary, e.g. 'ollama/llama3.2' or 'openai/gpt-4o-mini'. */
+  /** Provenance of the summary, e.g. 'ollama/llama3.2'. */
   summaryBy: string | null
   /** ISO timestamp of when the summary was generated. */
   summaryAt: string | null

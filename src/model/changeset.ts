@@ -9,6 +9,8 @@ export type Op =
   | { kind: 'create_section'; text: string; x: number; y: number }
   | { kind: 'move_sections'; moves: { sectionId: string; x: number; y: number }[] }
   | { kind: 'edit_section_text'; sectionId: string; text: string }
+  | { kind: 'group_cards'; cardIds: string[] }
+  | { kind: 'ungroup_cards'; groupId: string }
   | {
       kind: 'set_summary'
       cardId: string
@@ -88,6 +90,11 @@ function isOp(v: unknown): v is Op {
       })
     case 'edit_section_text':
       return typeof op.sectionId === 'string' && typeof op.text === 'string'
+    case 'group_cards':
+      return Array.isArray(op.cardIds) && op.cardIds.length >= 2 &&
+        op.cardIds.every((id) => typeof id === 'string')
+    case 'ungroup_cards':
+      return typeof op.groupId === 'string'
     case 'set_summary':
       return typeof op.cardId === 'string' &&
         isStringOrNull(op.summary) && isStringOrNull(op.summaryOfHash) &&
@@ -125,6 +132,10 @@ export function isChangeSet(value: unknown): value is ChangeSet {
  * GIST *about* a card into the card's separate `summary` field. Like a comment
  * or a section label, it is a machine annotation, never the user's prose or the
  * card's own `text` — which it does not touch. Scoped to this one op.
+ *
+ * group_cards / ungroup_cards are purely structural — they bind cards to travel
+ * together (a tldraw group) and never touch any card's `text`. Same safety class
+ * as move_cards.
  */
 export function changeSetWritesText(cs: ChangeSet): boolean {
   return cs.ops.some((op) => {
@@ -137,6 +148,8 @@ export function changeSetWritesText(cs: ChangeSet): boolean {
       case 'create_section':
       case 'move_sections':
       case 'edit_section_text':
+      case 'group_cards':
+      case 'ungroup_cards':
       case 'set_summary':
         return false
       default:
@@ -168,6 +181,7 @@ export function referencedCardIds(cs: ChangeSet): string[] {
     if (op.kind === 'add_comment') ids.push(op.cardId)
     else if (op.kind === 'merge_notes') ids.push(...op.cardIds)
     else if (op.kind === 'move_cards') ids.push(...op.moves.map((m) => m.cardId))
+    else if (op.kind === 'group_cards') ids.push(...op.cardIds)
     else if (op.kind === 'set_summary') ids.push(op.cardId)
   }
   return ids

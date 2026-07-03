@@ -141,3 +141,42 @@ describe('set_summary op', () => {
     expect(referencedCardIds({ id: 'x', author: 'claude', ops: [summ()] })).toEqual(['shape:a'])
   })
 })
+
+describe('group ops', () => {
+  test('isChangeSet accepts well-formed group_cards / ungroup_cards', () => {
+    expect(isChangeSet({
+      id: 'x', author: 'claude',
+      ops: [
+        { kind: 'group_cards', cardIds: ['shape:a', 'shape:b'] },
+        { kind: 'ungroup_cards', groupId: 'shape:g' },
+      ],
+    })).toBe(true)
+  })
+
+  test('rejects malformed group ops', () => {
+    // group_cards needs at least two card ids
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'group_cards', cardIds: ['shape:a'] }] })).toBe(false)
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'group_cards', cardIds: 'nope' }] })).toBe(false)
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'group_cards', cardIds: [1, 2] }] })).toBe(false)
+    // ungroup_cards needs a string groupId
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'ungroup_cards' }] })).toBe(false)
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'ungroup_cards', groupId: 5 }] })).toBe(false)
+  })
+
+  test('group ops are structural — they never count as writing card text', () => {
+    expect(changeSetWritesText({
+      id: 'x', author: 'claude',
+      ops: [{ kind: 'group_cards', cardIds: ['shape:a', 'shape:b'] }, { kind: 'ungroup_cards', groupId: 'shape:g' }],
+    })).toBe(false)
+  })
+
+  test('referencedCardIds includes group_cards members but not the ungroup target', () => {
+    const cs = {
+      id: 'x', author: 'claude' as const, ops: [
+        { kind: 'group_cards' as const, cardIds: ['shape:a', 'shape:b'] },
+        { kind: 'ungroup_cards' as const, groupId: 'shape:g' },
+      ],
+    }
+    expect(referencedCardIds(cs).sort()).toEqual(['shape:a', 'shape:b'])
+  })
+})
