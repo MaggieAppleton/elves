@@ -5,12 +5,24 @@ import { ChangeSet, planMerge } from '../src/model/changeset'
 import { makeComment, addComment } from '../src/model/comments'
 import { makeSourceCardProps, makeReferenceCardProps } from '../src/model/cards'
 import { makeSectionProps } from '../src/model/sections'
+import { resolvePageXY } from './digest'
 
 type StoreRecords = Record<string, any>
 
 function findCardShape(store: StoreRecords, id: string): any | undefined {
   const r = store[id]
   return r && r.typeName === 'shape' && r.type === 'card' ? r : undefined
+}
+
+function findGroupShape(store: StoreRecords, id: string): any | undefined {
+  const r = store[id]
+  return r && r.typeName === 'shape' && r.type === 'group' ? r : undefined
+}
+
+/** Page coords of a shape's parent — the origin to subtract/add when (un)grouping. */
+function parentOrigin(store: StoreRecords, shape: any): { x: number; y: number } {
+  const parent = shape.parentId ? store[shape.parentId] : undefined
+  return parent && parent.typeName === 'shape' ? resolvePageXY(store, parent) : { x: 0, y: 0 }
 }
 
 function findSectionShape(store: StoreRecords, id: string): any | undefined {
@@ -73,8 +85,11 @@ export function applyChangeSetToSnapshot(
         for (const m of op.moves) {
           const shape = findCardShape(store, m.cardId)
           if (shape) {
-            shape.x = m.x
-            shape.y = m.y
+            // Claude passes absolute page coords; a grouped card stores parent-local
+            // coords, so subtract its parent's page origin (a no-op for top-level cards).
+            const origin = parentOrigin(store, shape)
+            shape.x = m.x - origin.x
+            shape.y = m.y - origin.y
           }
         }
         break
@@ -149,6 +164,51 @@ export function applyChangeSetToSnapshot(
           shape.props.text = op.text
           shape.props.authoredBy = 'claude'
         }
+        break
+      }
+      case 'group_cards': {
+        // Replicate editor.groupShapes: group origin = top-left of members' page
+        // bounds; each member reparented to page-local-minus-origin coords.
+        const members = op.cardIds
+          .map((id) => findCardShape(store, id))
+          .filter((s): s is any => !!s)
+        if (members.length < 2) break
+        const pages = members.map((s) => resolvePageXY(store, s))
+        const originX = Math.min(...pages.map((p) => p.x))
+        const originY = Math.min(...pages.map((p) => p.y))
+        const groupId = createShapeId()
+        store[groupId] = {
+          id: groupId,
+          typeName: 'shape',
+          type: 'group',
+          x: originX,
+          y: originY,
+          rotation: 0,
+          isLocked: false,
+          opacity: 1,
+          meta: {},
+          parentId: defaultPageId(store),
+          index: getIndexAbove(topIndex(store)),
+          props: {},
+        }
+        members.forEach((s, i) => {
+          s.parentId = groupId
+          s.x = pages[i].x - originX
+          s.y = pages[i].y - originY
+        })
+        break
+      }
+      case 'ungroup_cards': {
+        const group = findGroupShape(store, op.groupId)
+        if (!group) break
+        for (const r of Object.values(store) as any[]) {
+          if (r?.typeName === 'shape' && r.parentId === group.id) {
+            r.parentId = group.parentId
+            r.x = (r.x ?? 0) + (group.x ?? 0)
+            r.y = (r.y ?? 0) + (group.y ?? 0)
+          }
+        }
+        delete store[group.id]
         break
       }
       case 'set_summary': {
