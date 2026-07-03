@@ -10,17 +10,23 @@ function newId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`
 }
 
-function applyAddComment(editor: Editor, op: Extract<Op, { kind: 'add_comment' }>): void {
+// Each applyX returns the shape ids it TOUCHED — "what the user should see the
+// agent just did here" — so applyChangeSet can drive the ephemeral presence glow
+// (see src/client/presence.ts). Ids of cards created in the change-set are minted
+// locally below, so this return value is the only place they surface.
+
+function applyAddComment(editor: Editor, op: Extract<Op, { kind: 'add_comment' }>): TLShapeId[] {
   const shape = editor.getShape(op.cardId as CardShape['id']) as CardShape | undefined
-  if (!shape) return
+  if (!shape) return []
   const comment = makeComment(newId('cmt'), op.comment.text, op.comment.type)
   editor.updateShape<CardShape>({
     id: shape.id, type: 'card',
     props: { comments: addComment(shape.props.comments, comment) },
   })
+  return [shape.id]
 }
 
-function applyMerge(editor: Editor, op: Extract<Op, { kind: 'merge_notes' }>): void {
+function applyMerge(editor: Editor, op: Extract<Op, { kind: 'merge_notes' }>): TLShapeId[] {
   const { representativeId, hiddenIds } = planMerge(op.cardIds)
   for (const id of hiddenIds) {
     const shape = editor.getShape(id as CardShape['id']) as CardShape | undefined
@@ -28,9 +34,12 @@ function applyMerge(editor: Editor, op: Extract<Op, { kind: 'merge_notes' }>): v
       editor.updateShape<CardShape>({ id: shape.id, type: 'card', props: { mergedInto: representativeId } })
     }
   }
+  // Glow the visible survivor — the hidden members are removed from render.
+  return editor.getShape(representativeId as CardShape['id']) ? [representativeId as TLShapeId] : []
 }
 
-function applyMove(editor: Editor, op: Extract<Op, { kind: 'move_cards' }>): void {
+function applyMove(editor: Editor, op: Extract<Op, { kind: 'move_cards' }>): TLShapeId[] {
+  const moved: TLShapeId[] = []
   for (const m of op.moves) {
     const shape = editor.getShape(m.cardId as CardShape['id'])
     if (!shape) continue
@@ -38,7 +47,9 @@ function applyMove(editor: Editor, op: Extract<Op, { kind: 'move_cards' }>): voi
     // getPointInParentSpace is identity for top-level cards, and converts for grouped ones.
     const local = editor.getPointInParentSpace(shape.id, { x: m.x, y: m.y })
     editor.updateShape({ id: shape.id, type: 'card', x: local.x, y: local.y })
+    moved.push(shape.id)
   }
+  return moved
 }
 
 interface Rect { x: number; y: number; w: number; h: number }
@@ -80,60 +91,79 @@ function applyCreateNoteCard(
   editor: Editor,
   op: Extract<Op, { kind: 'create_note_card' }>,
   author: string,
-): void {
+): TLShapeId[] {
   // Stamp the change-set's author onto the card so its authorship mark shows.
   const props = makeNoteCardProps(op.text, 'transcribed', author)
   const at = placeClearOf(editor, op.x, op.y, props.w, props.h)
-  editor.createShape<CardShape>({ id: createShapeId(), type: 'card', x: at.x, y: at.y, props })
+  const id = createShapeId()
+  editor.createShape<CardShape>({ id, type: 'card', x: at.x, y: at.y, props })
+  return [id]
 }
 
-function applyCreateReference(editor: Editor, op: Extract<Op, { kind: 'create_reference' }>): void {
+function applyCreateReference(editor: Editor, op: Extract<Op, { kind: 'create_reference' }>): TLShapeId[] {
   const props = makeReferenceCardProps(op.reference)
   const at = placeClearOf(editor, op.x, op.y, props.w, props.h)
-  editor.createShape<CardShape>({ id: createShapeId(), type: 'card', x: at.x, y: at.y, props })
+  const id = createShapeId()
+  editor.createShape<CardShape>({ id, type: 'card', x: at.x, y: at.y, props })
+  return [id]
 }
 
-function applyCreateSection(editor: Editor, op: Extract<Op, { kind: 'create_section' }>): void {
+function applyCreateSection(editor: Editor, op: Extract<Op, { kind: 'create_section' }>): TLShapeId[] {
+  const id = createShapeId()
   editor.createShape<SectionShape>({
-    id: createShapeId(),
+    id,
     type: 'section',
     x: op.x,
     y: op.y,
     props: makeSectionProps(op.text, 'claude'),
   })
+  return [id]
 }
 
-function applyMoveSections(editor: Editor, op: Extract<Op, { kind: 'move_sections' }>): void {
+function applyMoveSections(editor: Editor, op: Extract<Op, { kind: 'move_sections' }>): TLShapeId[] {
+  const moved: TLShapeId[] = []
   for (const m of op.moves) {
     const shape = editor.getShape(m.sectionId as SectionShape['id'])
-    if (shape) editor.updateShape({ id: shape.id, type: 'section', x: m.x, y: m.y })
+    if (shape) {
+      editor.updateShape({ id: shape.id, type: 'section', x: m.x, y: m.y })
+      moved.push(shape.id)
+    }
   }
+  return moved
 }
 
-function applyEditSectionText(editor: Editor, op: Extract<Op, { kind: 'edit_section_text' }>): void {
+function applyEditSectionText(editor: Editor, op: Extract<Op, { kind: 'edit_section_text' }>): TLShapeId[] {
   const shape = editor.getShape(op.sectionId as SectionShape['id']) as SectionShape | undefined
-  if (!shape) return
+  if (!shape) return []
   editor.updateShape<SectionShape>({
     id: shape.id, type: 'section',
     props: { text: op.text, authoredBy: 'claude' },
   })
+  return [shape.id]
 }
 
-function applyGroupCards(editor: Editor, op: Extract<Op, { kind: 'group_cards' }>): void {
+function applyGroupCards(editor: Editor, op: Extract<Op, { kind: 'group_cards' }>): TLShapeId[] {
   const ids = op.cardIds
     .map((id) => editor.getShape(id as CardShape['id'])?.id)
     .filter((id): id is CardShape['id'] => !!id)
   if (ids.length >= 2) editor.groupShapes(ids)
+  // Glow the members the agent bound together (the group wrapper itself is chrome).
+  return ids
 }
 
-function applyUngroupCards(editor: Editor, op: Extract<Op, { kind: 'ungroup_cards' }>): void {
+function applyUngroupCards(editor: Editor, op: Extract<Op, { kind: 'ungroup_cards' }>): TLShapeId[] {
   const group = editor.getShape(op.groupId as TLShapeId)
-  if (group) editor.ungroupShapes([group.id])
+  if (!group) return []
+  // Capture the children BEFORE ungrouping — the group wrapper is gone after, so
+  // the freed cards are what the user should see light up.
+  const children = editor.getSortedChildIdsForParent(group.id)
+  editor.ungroupShapes([group.id])
+  return [...children]
 }
 
-function applySetSummary(editor: Editor, op: Extract<Op, { kind: 'set_summary' }>): void {
+function applySetSummary(editor: Editor, op: Extract<Op, { kind: 'set_summary' }>): TLShapeId[] {
   const shape = editor.getShape(op.cardId as CardShape['id']) as CardShape | undefined
-  if (!shape) return
+  if (!shape) return []
   editor.updateShape<CardShape>({
     id: shape.id, type: 'card',
     props: {
@@ -143,48 +173,48 @@ function applySetSummary(editor: Editor, op: Extract<Op, { kind: 'set_summary' }
       summaryAt: op.summaryAt,
     },
   })
+  return [shape.id]
 }
 
-function applyOp(editor: Editor, op: Op, author: string): void {
+function applyOp(editor: Editor, op: Op, author: string): TLShapeId[] {
   switch (op.kind) {
     case 'add_comment':
-      applyAddComment(editor, op)
-      break
+      return applyAddComment(editor, op)
     case 'merge_notes':
-      applyMerge(editor, op)
-      break
+      return applyMerge(editor, op)
     case 'move_cards':
-      applyMove(editor, op)
-      break
+      return applyMove(editor, op)
     case 'create_note_card':
-      applyCreateNoteCard(editor, op, author)
-      break
+      return applyCreateNoteCard(editor, op, author)
     case 'create_reference':
-      applyCreateReference(editor, op)
-      break
+      return applyCreateReference(editor, op)
     case 'create_section':
-      applyCreateSection(editor, op)
-      break
+      return applyCreateSection(editor, op)
     case 'move_sections':
-      applyMoveSections(editor, op)
-      break
+      return applyMoveSections(editor, op)
     case 'edit_section_text':
-      applyEditSectionText(editor, op)
-      break
+      return applyEditSectionText(editor, op)
     case 'group_cards':
-      applyGroupCards(editor, op)
-      break
+      return applyGroupCards(editor, op)
     case 'ungroup_cards':
-      applyUngroupCards(editor, op)
-      break
+      return applyUngroupCards(editor, op)
     case 'set_summary':
-      applySetSummary(editor, op)
-      break
+      return applySetSummary(editor, op)
   }
 }
 
-export function applyChangeSet(editor: Editor, cs: ChangeSet): void {
+/**
+ * Apply a change-set to the editor and return the shape ids it touched (deduped),
+ * so the caller can glow them as agent presence. The whole change-set is one undo
+ * step (mark + squash); the returned ids feed a store OUTSIDE tldraw's document,
+ * so presence never enters history.
+ */
+export function applyChangeSet(editor: Editor, cs: ChangeSet): TLShapeId[] {
   const markId = editor.markHistoryStoppingPoint(`claude:${cs.id}`)
-  for (const op of cs.ops) applyOp(editor, op, cs.author)
+  const affected = new Set<TLShapeId>()
+  for (const op of cs.ops) {
+    for (const id of applyOp(editor, op, cs.author)) affected.add(id)
+  }
   editor.squashToMark(markId)
+  return [...affected]
 }

@@ -20,10 +20,10 @@ async function main() {
   await migrateSourceCardsToNotes(dataRoot)
 
   const httpServer = http.createServer()
-  const { broadcast } = attachRealtime(httpServer)
+  const { broadcast, broadcastPresence } = attachRealtime(httpServer)
   const summarizer = summarizerFromEnv()
   const now = () => new Date().toISOString()
-  const app = createServer(dataRoot, broadcast, { summarizer, now })
+  const app = createServer(dataRoot, broadcast, { summarizer, now }, broadcastPresence)
   httpServer.on('request', app)
 
   httpServer.listen(port, () => {

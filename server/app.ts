@@ -8,6 +8,7 @@ import {
   referencedCardIds,
   referencedSectionIds,
 } from '../src/model/changeset'
+import type { PresenceMessage } from '../src/model/presence'
 import { snapshotToCards, snapshotToSections, snapshotToCardMap, snapshotToCardsById } from './digest'
 import { applyChangeSetToSnapshot } from './applyChangeSet'
 import { reconcileCanvasFile, type Summarizer } from './summarize'
@@ -98,6 +99,7 @@ export function createServer(
   dataRoot: string,
   onChangeSet?: (projectId: string, cs: ChangeSet) => void,
   summarize?: SummarizeConfig,
+  onPresence?: (projectId: string, presence: PresenceMessage) => void,
 ) {
   const app = express()
   app.use(cors())
@@ -254,6 +256,11 @@ export function createServer(
         res.status(400).json({ error: 'ids must be a string array' })
         return
       }
+      // Reading specific cards is the agent "looking" here — surface it as
+      // ephemeral presence so open tabs can glow those cards. A pure read: it
+      // touches no document state, and read_map (the whole-board scan) stays
+      // silent by design.
+      if (ids.length) onPresence?.(req.params.id, { cardIds: ids, mode: 'looking' })
       res.json({ cards: snapshotToCardsById(await readCanvas(paths.canvasPath), ids, paths.assetsDir) })
     }),
   )

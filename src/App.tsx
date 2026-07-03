@@ -22,6 +22,7 @@ import {
 import { uploadAsset, setAssetProject } from './client/assets'
 import { applyChangeSet } from './apply/applyChangeSet'
 import { connectRealtime } from './client/realtime'
+import { markDoing, markLooking, clearPresence } from './client/presence'
 import { ProjectSwitcher } from './components/ProjectSwitcher'
 
 const shapeUtils = [CardShapeUtil, SectionShapeUtil]
@@ -81,21 +82,43 @@ export default function App() {
   // it targets the project currently open (refs stay current across switches).
   useEffect(
     () =>
-      connectRealtime((projectId, cs) => {
-        if (projectId !== projectIdRef.current) return
-        const ed = editorRef.current
-        if (!ed) return
-        // Applying a change-set onto — and then saving — a store that hasn't
-        // loaded yet would clobber the real document on disk. The server already
-        // persisted this change-set itself, so skipping here loses nothing.
-        if (!canvasLoadedRef.current) return
-        applyChangeSet(ed, cs)
-        saveCanvas(projectId, getSnapshot(ed.store)).catch((err) =>
-          console.error('Elves: canvas save failed', err),
-        )
-      }),
+      connectRealtime(
+        (projectId, cs) => {
+          if (projectId !== projectIdRef.current) return
+          const ed = editorRef.current
+          if (!ed) return
+          // Applying a change-set onto — and then saving — a store that hasn't
+          // loaded yet would clobber the real document on disk. The server already
+          // persisted this change-set itself, so skipping here loses nothing.
+          if (!canvasLoadedRef.current) return
+          const affected = applyChangeSet(ed, cs)
+          // Glow the cards the agent just acted on ("doing"). Summary reconciles
+          // are background machine work, not the agent working — skip them so the
+          // board doesn't flicker orange every time a gist settles.
+          if (cs.ops.some((op) => op.kind !== 'set_summary')) markDoing(affected)
+          saveCanvas(projectId, getSnapshot(ed.store)).catch((err) =>
+            console.error('Elves: canvas save failed', err),
+          )
+        },
+        (projectId, presence) => {
+          // The agent is "looking" at these cards (read_cards). Ephemeral: no
+          // document change, no save — just a glow on cards that actually exist
+          // in the open project.
+          if (projectId !== projectIdRef.current) return
+          const ed = editorRef.current
+          if (!ed) return
+          const present = presence.cardIds.filter((id) => ed.getShape(id as CardShape['id']))
+          markLooking(present as CardShape['id'][])
+        },
+      ),
     [],
   )
+
+  // Presence is keyed by shape id; dropping it on project switch is cheap
+  // insurance against a stale glow lingering as a new project's cards mount.
+  useEffect(() => {
+    clearPresence()
+  }, [currentProjectId])
 
   const addImageCard = async (ed: Editor, file: File, point?: { x: number; y: number }) => {
     const pid = projectIdRef.current
