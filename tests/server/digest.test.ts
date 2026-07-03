@@ -125,10 +125,11 @@ test('snapshotToCards carries a card\'s stored summary through to the digest', (
 test('snapshotToCardMap gives a gist per card and no full text', () => {
   const map = snapshotToCardMap(mapSnapshot())
   expect(map.cards).toEqual([
-    // short card: its own (short) text is the gist
-    { id: 'shape:short', kind: 'prose', noteKind: null, x: 0, y: 0, gist: 'a short point', textLen: 13 },
+    // short card: its own (short) text is the gist. w/h are the real footprint,
+    // so Claude can place new cards clear of it.
+    { id: 'shape:short', kind: 'prose', noteKind: null, x: 0, y: 0, w: 240, h: 120, gist: 'a short point', textLen: 13 },
     // long card: the model summary is the gist; comments/text are NOT included
-    { id: 'shape:long', kind: 'prose', noteKind: null, x: 30, y: 0, gist: 'a model gist', textLen: LONG.length },
+    { id: 'shape:long', kind: 'prose', noteKind: null, x: 30, y: 0, w: 240, h: 120, gist: 'a model gist', textLen: LONG.length },
   ])
   expect(map.sections).toEqual([{ id: 'shape:s', text: 'Origins', x: 5, y: 6, authoredBy: 'user' }])
   // No entry leaks the full text or comment bodies.

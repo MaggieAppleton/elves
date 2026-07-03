@@ -36,6 +36,14 @@ required `project` id, and you must know which project before doing anything.**
   pull every card's text when the map already tells you the shape of the piece.
 - **x = narrative order: left is earlier, right is later.** A card's horizontal
   position is its place in the piece.
+- **Placement: use the map's `w`/`h`.** Each map entry carries the card's real
+  size (`w`, `h`) as well as its top-left (`x`, `y`) — a text note is often much
+  taller than it looks, so `(x, y)`..`(x + w, y + h)` is the box it occupies. Aim
+  a new card into clear space using those boxes. As a backstop the server will
+  never let a new card land on top of an existing one: if your `x, y` covers a
+  card, it slides the new card straight *down* (keeping x, so narrative order
+  holds) until the slot is clear. Place deliberately anyway — the guard prevents
+  overlap, it doesn't design the layout for you.
 - **Sections** are a third kind of thing, but not a card: a big thematic label (a
   couple of words) that floats above a cluster of cards so the shape of the piece
   reads at a glance when the user zooms out. Sections have no comments, no origin —
@@ -120,8 +128,10 @@ Two workflows:
   reads in the same part of the narrative.
 
 Positioning: reference cards are ~260px wide. To sit a cluster to the right of a note at
-`(x, y)`, start around `(x + 300, y)` and increment y by ~130 per card. Don't overlap the
-user's existing cards; nudge into nearby empty space.
+`(x, y)`, start around `(x + 300, y)` and step y down for each — use the note's real
+height from the map (`h`), not a guess, since notes are often taller than they look. Aim
+for nearby empty space; the server's guard will slide any card down off an overlap, but
+it's cruder than placing it well yourself.
 
 If a card already has a `reference`, it's already enriched — don't duplicate it. You can
 still `move_cards` or `merge_notes` references like any note card.
