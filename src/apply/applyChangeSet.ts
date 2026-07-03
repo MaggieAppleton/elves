@@ -41,29 +41,56 @@ function applyMove(editor: Editor, op: Extract<Op, { kind: 'move_cards' }>): voi
   }
 }
 
+interface Rect { x: number; y: number; w: number; h: number }
+
+/** Gap left below a card we had to slide a new one past. Mirrors the server. */
+const PLACEMENT_GAP = 24
+
+function overlaps(a: Rect, b: Rect): boolean {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
+}
+
+/**
+ * The placement guard, mirroring server/applyChangeSet.ts: a new card never
+ * lands on top of an existing one. Claude picks x (its narrative order) and a y;
+ * if that rectangle covers any card we slide it straight DOWN — past the lowest
+ * card it hits, plus a gap — keeping x so the card holds its place in the story.
+ * In the tab the editor knows each card's REAL measured height, so clearance is
+ * exact (the server only sees the understated stored height). Cards created
+ * earlier in the same change-set already exist here, so a burst of references
+ * stacks cleanly instead of piling on one spot.
+ */
+function placeClearOf(editor: Editor, x: number, y: number, w: number, h: number): { x: number; y: number } {
+  const rects = editor
+    .getCurrentPageShapes()
+    .filter((s) => s.type === 'card')
+    .map((s) => editor.getShapePageBounds(s.id))
+    .filter((b): b is NonNullable<typeof b> => !!b)
+    .map((b): Rect => ({ x: b.x, y: b.y, w: b.w, h: b.h }))
+  const cand: Rect = { x, y, w, h }
+  for (let i = 0; i <= rects.length; i++) {
+    const hit = rects.filter((r) => overlaps(cand, r))
+    if (hit.length === 0) break
+    cand.y = Math.max(...hit.map((r) => r.y + r.h)) + PLACEMENT_GAP
+  }
+  return { x: cand.x, y: cand.y }
+}
+
 function applyCreateNoteCard(
   editor: Editor,
   op: Extract<Op, { kind: 'create_note_card' }>,
   author: string,
 ): void {
-  editor.createShape<CardShape>({
-    id: createShapeId(),
-    type: 'card',
-    x: op.x,
-    y: op.y,
-    // Stamp the change-set's author onto the card so its authorship mark shows.
-    props: makeNoteCardProps(op.text, 'transcribed', author),
-  })
+  // Stamp the change-set's author onto the card so its authorship mark shows.
+  const props = makeNoteCardProps(op.text, 'transcribed', author)
+  const at = placeClearOf(editor, op.x, op.y, props.w, props.h)
+  editor.createShape<CardShape>({ id: createShapeId(), type: 'card', x: at.x, y: at.y, props })
 }
 
 function applyCreateReference(editor: Editor, op: Extract<Op, { kind: 'create_reference' }>): void {
-  editor.createShape<CardShape>({
-    id: createShapeId(),
-    type: 'card',
-    x: op.x,
-    y: op.y,
-    props: makeReferenceCardProps(op.reference),
-  })
+  const props = makeReferenceCardProps(op.reference)
+  const at = placeClearOf(editor, op.x, op.y, props.w, props.h)
+  editor.createShape<CardShape>({ id: createShapeId(), type: 'card', x: at.x, y: at.y, props })
 }
 
 function applyCreateSection(editor: Editor, op: Extract<Op, { kind: 'create_section' }>): void {

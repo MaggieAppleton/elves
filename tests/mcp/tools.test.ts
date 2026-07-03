@@ -118,7 +118,7 @@ test('readMapTool reads the cheap map (gist, no full text) for the project', asy
   await seedCard(base, 'shape:a')
   const map = await readMapTool(base, 'essay')
   expect(map).toEqual({
-    cards: [{ id: 'shape:a', kind: 'prose', noteKind: null, x: 1, y: 2, gist: 'hi', textLen: 2 }],
+    cards: [{ id: 'shape:a', kind: 'prose', noteKind: null, x: 1, y: 2, w: 240, h: 120, gist: 'hi', textLen: 2 }],
     sections: [],
     groups: [],
   })

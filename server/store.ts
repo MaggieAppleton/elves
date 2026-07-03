@@ -47,7 +47,50 @@ export function writeCanvas(path: string, data: CanvasSnapshot): Promise<void> {
 
 async function doWrite(path: string, data: CanvasSnapshot): Promise<void> {
   await fs.mkdir(dirname(path), { recursive: true })
+  // Preserve the current on-disk document before we overwrite it, so a
+  // bad-but-valid write (an empty store saved during a load race, a buggy
+  // change-set) is recoverable from `<path>.bak` instead of being permanent.
+  // Runs inside the serialized write chain, so no other write interleaves.
+  await backupExisting(path)
   const tmp = `${path}.${process.pid}.${tmpSeq++}.tmp`
   await fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf8')
   await fs.rename(tmp, path)
+}
+
+/**
+ * Whether a canvas file's current contents are worth keeping as a backup.
+ *
+ * This predicate is the crux of the never-lose-data guarantee: we only ever let
+ * a file that actually carries a document overwrite the rolling `.bak`. A
+ * degenerate state — the EMPTY_CANVAS sentinel ({document: null}), an empty/torn
+ * file, or corrupt JSON — is rejected, so a bad write can never clobber the last
+ * known-good backup with junk (a second empty write finds an empty main file and
+ * simply leaves the good `.bak` intact).
+ */
+export function worthBackingUp(raw: string): boolean {
+  if (raw.trim() === '') return false
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return false
+  }
+  return !!parsed && typeof parsed === 'object' && (parsed as { document?: unknown }).document != null
+}
+
+async function backupExisting(path: string): Promise<void> {
+  let raw: string
+  try {
+    raw = await fs.readFile(path, 'utf8')
+  } catch {
+    // No file yet (first write) or unreadable for any reason: nothing to back
+    // up. A backup is best-effort and must never block the primary write.
+    return
+  }
+  if (!worthBackingUp(raw)) return
+  try {
+    await fs.copyFile(path, `${path}.bak`)
+  } catch {
+    // A failed backup must never stop the write that follows it.
+  }
 }

@@ -3,7 +3,7 @@ import { getIndexAbove, IndexKey } from '@tldraw/utils'
 import type { CanvasSnapshot } from './store'
 import { ChangeSet, planMerge } from '../src/model/changeset'
 import { makeComment, addComment } from '../src/model/comments'
-import { makeNoteCardProps, makeReferenceCardProps } from '../src/model/cards'
+import { makeNoteCardProps, makeReferenceCardProps, CARD_DEFAULT_W, CARD_DEFAULT_H } from '../src/model/cards'
 import { makeSectionProps } from '../src/model/sections'
 import { resolvePageXY } from './digest'
 
@@ -12,6 +12,50 @@ type StoreRecords = Record<string, any>
 function findCardShape(store: StoreRecords, id: string): any | undefined {
   const r = store[id]
   return r && r.typeName === 'shape' && r.type === 'card' ? r : undefined
+}
+
+/** Gap left below a card we had to slide a new one past. */
+const PLACEMENT_GAP = 24
+/** A card's stored height is understated until the browser measures it to fit
+ * the text, so reserve at least this much when testing existing cards for
+ * overlap — otherwise a freshly-created, never-rendered neighbour reads as tiny. */
+const MIN_CARD_H = CARD_DEFAULT_H
+
+interface Rect { x: number; y: number; w: number; h: number }
+
+function overlaps(a: Rect, b: Rect): boolean {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
+}
+
+function existingCardRects(store: StoreRecords): Rect[] {
+  const rects: Rect[] = []
+  for (const r of Object.values(store) as any[]) {
+    if (r?.typeName === 'shape' && r.type === 'card' && r.props) {
+      const { x, y } = resolvePageXY(store, r)
+      rects.push({ x, y, w: r.props.w ?? CARD_DEFAULT_W, h: Math.max(r.props.h ?? 0, MIN_CARD_H) })
+    }
+  }
+  return rects
+}
+
+/**
+ * The one placement invariant Claude can't guarantee on its own: a new card
+ * never lands on top of an existing one. Claude picks x (its place in the
+ * left→right narrative) and a y; if that rectangle covers any card, we slide it
+ * straight DOWN — past the lowest card it collides with, plus a gap — until the
+ * slot is clear. Only y moves, never x, so the card keeps its narrative order.
+ */
+function placeClearOf(store: StoreRecords, x: number, y: number, w: number, h: number): { x: number; y: number } {
+  const rects = existingCardRects(store)
+  const cand: Rect = { x, y, w, h }
+  // Each pass clears the cards we currently hit; sliding down can reveal a lower
+  // card, so re-test. Bounded by the card count — worst case we pass them all.
+  for (let i = 0; i <= rects.length; i++) {
+    const hit = rects.filter((r) => overlaps(cand, r))
+    if (hit.length === 0) break
+    cand.y = Math.max(...hit.map((r) => r.y + r.h)) + PLACEMENT_GAP
+  }
+  return { x: cand.x, y: cand.y }
 }
 
 function findGroupShape(store: StoreRecords, id: string): any | undefined {
@@ -96,38 +140,42 @@ export function applyChangeSetToSnapshot(
       }
       case 'create_note_card': {
         const id = createShapeId()
+        // Stamp the change-set's author so the persisted card keeps its mark.
+        const props = makeNoteCardProps(op.text, 'transcribed', cs.author)
+        const at = placeClearOf(store, op.x, op.y, props.w, props.h)
         store[id] = {
           id,
           typeName: 'shape',
           type: 'card',
-          x: op.x,
-          y: op.y,
+          x: at.x,
+          y: at.y,
           rotation: 0,
           isLocked: false,
           opacity: 1,
           meta: {},
           parentId: defaultPageId(store),
           index: getIndexAbove(topIndex(store)),
-          // Stamp the change-set's author so the persisted card keeps its mark.
-          props: makeNoteCardProps(op.text, 'transcribed', cs.author),
+          props,
         }
         break
       }
       case 'create_reference': {
         const id = createShapeId()
+        const props = makeReferenceCardProps(op.reference)
+        const at = placeClearOf(store, op.x, op.y, props.w, props.h)
         store[id] = {
           id,
           typeName: 'shape',
           type: 'card',
-          x: op.x,
-          y: op.y,
+          x: at.x,
+          y: at.y,
           rotation: 0,
           isLocked: false,
           opacity: 1,
           meta: {},
           parentId: defaultPageId(store),
           index: getIndexAbove(topIndex(store)),
-          props: makeReferenceCardProps(op.reference),
+          props,
         }
         break
       }
