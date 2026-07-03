@@ -173,10 +173,9 @@ Set via environment variables:
 | `ELVES_DATA` | `data/` (relative to `server/`) | Data root holding `projects/<id>/…` — **all your projects**. |
 | `PORT` | `5199` | Port for the canvas server. |
 | `VITE_SERVER_URL` | `http://localhost:5199` | Where the web app looks for the server. |
-| `ELVES_SUMMARIZER` | `ollama` | Summary backend: `ollama` (local, default), `openai` (cloud mini model), or `off`. |
-| `OLLAMA_HOST` | `http://localhost:11434` | Ollama endpoint used when `ELVES_SUMMARIZER=ollama`. |
+| `ELVES_SUMMARIZER` | `ollama` | Summary backend: `ollama` (local, default) or `off` to disable. |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama endpoint used for summaries. |
 | `OLLAMA_MODEL` | `llama3.2` | Local model for summaries. |
-| `OPENAI_API_KEY` / `OPENAI_MODEL` | — / `gpt-4o-mini` | Used when `ELVES_SUMMARIZER=openai`. |
 
 Example — keep a separate set of projects (e.g. for testing):
 
@@ -191,13 +190,13 @@ Every note and prose card gets a one-line, model-authored **summary** — shown 
 shape of a big piece reads at a glance. Summaries render in Claude's orange accent at one
 uniform size, and a card grows to fit its summary so nothing is clipped.
 
-Summaries are generated **server-side, locally, by default** via
+Summaries are generated **server-side and locally** via
 [Ollama](https://ollama.com): install it and `ollama pull llama3.2`, and the server
 summarizes cards as you edit (and backfills existing ones on startup). No Ollama? No
 problem — summaries stay empty and the map/zoom fall back to a mechanical first-line
 truncation; nothing breaks. Summaries never touch your card text — like section headers
-and comments, they're a Claude-authored label *about* a card. Set `ELVES_SUMMARIZER=openai`
-(with `OPENAI_API_KEY`) to use a cheap cloud model instead, or `off` to disable generation.
+and comments, they're a Claude-authored label *about* a card. Set `ELVES_SUMMARIZER=off`
+to disable generation entirely.
 
 ## Scripts
 
