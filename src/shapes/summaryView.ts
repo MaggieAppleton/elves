@@ -1,11 +1,12 @@
 import type { SourceKind } from '../model/types'
 
 /**
- * Below this zoom level a card is too small to read in full, so a summarized
- * card shows its gist instead — the shape of the whole piece (section labels +
- * one-line gists) becomes legible at a glance. tldraw zoom is 1 = 100%.
+ * At or below this zoom level a card is small enough that its full text is hard
+ * to read, so a summarized card shows its gist instead — the shape of the whole
+ * piece (section labels + one-line gists) becomes legible at a glance. tldraw
+ * zoom is 1 = 100%, so 0.7 means the gist appears once you zoom out past 70%.
  */
-export const GIST_ZOOM = 0.5
+export const GIST_ZOOM = 0.7
 
 /**
  * Whether a card should render its gist rather than its full text right now.
@@ -31,14 +32,16 @@ export function shouldShowGist(
  * the same size at a given zoom — the summaries read as one consistent set, not
  * a jumble of per-card sizes.
  */
-export const GIST_ON_SCREEN_PX = 15
+// The on-screen target is set high enough that across the whole gist zoom range
+// the counter-scale always wants more than the cap — so every gist lands on
+// exactly GIST_FONT_MAX. That gives one uniform size everywhere in gist mode.
+export const GIST_ON_SCREEN_PX = 18
 export const GIST_FONT_MIN = 20
-// Capped at the largest size that fits a summarized card's box without clipping
-// (a card's box is measured to hold the FULL, longer text at 15px, so a short
-// gist fits comfortably up to ~24px). Below the gist zoom the counter-scale
-// always wants more than this, so every gist lands on exactly this size — one
-// uniform, uncut size across the whole canvas.
-export const GIST_FONT_MAX = 24
+// Capped at the largest size that fits a summarized card's box without clipping.
+// A card's box is measured to hold the FULL, longer text at 15px, so a short
+// gist fits comfortably — measured against the real canvas, 25px clips 0 of 48
+// summarized cards while 26px starts cutting a few off.
+export const GIST_FONT_MAX = 25
 export function gistFontSize(zoom: number): number {
   const compensated = GIST_ON_SCREEN_PX / Math.max(zoom, 0.01)
   return Math.round(Math.min(Math.max(compensated, GIST_FONT_MIN), GIST_FONT_MAX))
