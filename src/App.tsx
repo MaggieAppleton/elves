@@ -51,6 +51,10 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const editorRef = useRef<Editor | null>(null)
   const projectIdRef = useRef<string | null>(null)
+  // False until the open project's canvas has loaded from disk. Every save path
+  // checks this so a failed (or not-yet-finished) load can't serialize an empty
+  // store over real on-disk data.
+  const canvasLoadedRef = useRef(false)
 
   // Keep the refs + the asset base in sync during render so they are correct the
   // instant tldraw's onMount fires and whenever a card image renders.
@@ -81,6 +85,10 @@ export default function App() {
         if (projectId !== projectIdRef.current) return
         const ed = editorRef.current
         if (!ed) return
+        // Applying a change-set onto — and then saving — a store that hasn't
+        // loaded yet would clobber the real document on disk. The server already
+        // persisted this change-set itself, so skipping here loses nothing.
+        if (!canvasLoadedRef.current) return
         applyChangeSet(ed, cs)
         saveCanvas(projectId, getSnapshot(ed.store)).catch((err) =>
           console.error('Elves: canvas save failed', err),
@@ -131,6 +139,8 @@ export default function App() {
   const handleMount = (ed: Editor) => {
     editorRef.current = ed
     setEditor(ed)
+    // A fresh mount hasn't loaded its canvas yet — hold off every save path.
+    canvasLoadedRef.current = false
     // A click on empty canvas dismisses any open merged-card peek, like a popover.
     ed.on('event', (info) => {
       if (info.name === 'pointer_down' && info.target === 'canvas') collapseAll()
@@ -140,9 +150,11 @@ export default function App() {
     loadCanvas(pid)
       .then((snapshot) => {
         if (snapshot?.document) loadSnapshot(ed.store, snapshot)
-      })
-      .catch((err) => console.error('Elves: canvas load failed, starting empty', err))
-      .finally(() => {
+        // Load succeeded — an empty-but-new project counts, since its file is
+        // legitimately empty. Only now is it safe to persist: wiring the save
+        // paths here (not in a .finally that also runs on failure) means a
+        // failed load leaves the canvas read-through and never overwrites disk.
+        canvasLoadedRef.current = true
         let saving = false
         const doSave = () => {
           if (saving) return
@@ -166,6 +178,12 @@ export default function App() {
           await addReferenceFromUrl(ed, url, point)
         })
       })
+      .catch((err) =>
+        console.error(
+          'Elves: canvas load failed — persistence disabled to protect on-disk data',
+          err,
+        ),
+      )
   }
 
   const addCard = (kind: 'prose' | 'note') => {
@@ -209,15 +227,19 @@ export default function App() {
 
   const switchProject = async (id: string) => {
     if (id === currentProjectId) return
-    // Flush the outgoing project's latest edits before the editor unmounts.
+    // Flush the outgoing project's latest edits before the editor unmounts —
+    // but only if it actually loaded, else we'd flush an empty store over it.
     const ed = editorRef.current
-    if (ed && currentProjectId) {
+    if (ed && currentProjectId && canvasLoadedRef.current) {
       try {
         await saveCanvas(currentProjectId, getSnapshot(ed.store))
       } catch (err) {
         console.error('Elves: canvas save failed', err)
       }
     }
+    // Close the window between changing project and the new canvas mounting:
+    // no save path should fire against the old store under the new project id.
+    canvasLoadedRef.current = false
     localStorage.setItem(LAST_PROJECT_KEY, id)
     setCurrentProjectId(id)
   }
