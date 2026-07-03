@@ -1,4 +1,4 @@
-import { Editor, createShapeId } from 'tldraw'
+import { Editor, createShapeId, TLShapeId } from 'tldraw'
 import { ChangeSet, Op, planMerge } from '../model/changeset'
 import { CardShape } from '../shapes/CardShapeUtil'
 import { SectionShape } from '../shapes/SectionShapeUtil'
@@ -33,7 +33,11 @@ function applyMerge(editor: Editor, op: Extract<Op, { kind: 'merge_sources' }>):
 function applyMove(editor: Editor, op: Extract<Op, { kind: 'move_cards' }>): void {
   for (const m of op.moves) {
     const shape = editor.getShape(m.cardId as CardShape['id'])
-    if (shape) editor.updateShape({ id: shape.id, type: 'card', x: m.x, y: m.y })
+    if (!shape) continue
+    // Claude passes absolute page coords; updateShape expects parent-local coords.
+    // getPointInParentSpace is identity for top-level cards, and converts for grouped ones.
+    const local = editor.getPointInParentSpace(shape.id, { x: m.x, y: m.y })
+    editor.updateShape({ id: shape.id, type: 'card', x: local.x, y: local.y })
   }
 }
 
@@ -83,6 +87,18 @@ function applyEditSectionText(editor: Editor, op: Extract<Op, { kind: 'edit_sect
   })
 }
 
+function applyGroupCards(editor: Editor, op: Extract<Op, { kind: 'group_cards' }>): void {
+  const ids = op.cardIds
+    .map((id) => editor.getShape(id as CardShape['id'])?.id)
+    .filter((id): id is CardShape['id'] => !!id)
+  if (ids.length >= 2) editor.groupShapes(ids)
+}
+
+function applyUngroupCards(editor: Editor, op: Extract<Op, { kind: 'ungroup_cards' }>): void {
+  const group = editor.getShape(op.groupId as TLShapeId)
+  if (group) editor.ungroupShapes([group.id])
+}
+
 function applySetSummary(editor: Editor, op: Extract<Op, { kind: 'set_summary' }>): void {
   const shape = editor.getShape(op.cardId as CardShape['id']) as CardShape | undefined
   if (!shape) return
@@ -122,6 +138,12 @@ function applyOp(editor: Editor, op: Op): void {
       break
     case 'edit_section_text':
       applyEditSectionText(editor, op)
+      break
+    case 'group_cards':
+      applyGroupCards(editor, op)
+      break
+    case 'ungroup_cards':
+      applyUngroupCards(editor, op)
       break
     case 'set_summary':
       applySetSummary(editor, op)

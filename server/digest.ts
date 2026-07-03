@@ -29,6 +29,18 @@ export interface SectionDigest {
   authoredBy: SectionAuthor
 }
 
+/**
+ * A group on the MAP — a mechanical "these cards travel together" binding
+ * (a tldraw group). `cardIds` are its direct card members; `bounds` is the
+ * union of their resolved page bounds so Claude can see where the bundle sits.
+ */
+export interface GroupDigest {
+  id: string
+  cardIds: string[]
+  memberCount: number
+  bounds: { x: number; y: number; w: number; h: number }
+}
+
 export interface CanvasDigest {
   cards: CardDigest[]
   sections: SectionDigest[]
@@ -51,11 +63,14 @@ export interface CardMapEntry {
   textLen: number
   mergedInto?: string
   refType?: RefType
+  /** Set when this card is bound into a group (see CardMap.groups); omitted otherwise. */
+  groupId?: string
 }
 
 export interface CardMap {
   cards: CardMapEntry[]
   sections: SectionDigest[]
+  groups: GroupDigest[]
 }
 
 function storeOf(snapshot: CanvasSnapshot): Record<string, any> {
@@ -70,15 +85,51 @@ function cardShapes(snapshot: CanvasSnapshot): any[] {
   )
 }
 
+function groupShapes(snapshot: CanvasSnapshot): any[] {
+  return Object.values(storeOf(snapshot)).filter(
+    (r: any) => r && r.typeName === 'shape' && r.type === 'group',
+  )
+}
+
+/**
+ * Resolve a shape's PAGE position from the raw store JSON. In tldraw a shape's
+ * x/y are in its parent's space; a top-level shape's parent is the page (so
+ * x/y are already page coords), but a grouped shape's parent is a `group` shape,
+ * making its x/y group-local. We sum x/y up the parentId chain to the page.
+ *
+ * This additive walk is exact only when no ancestor is rotated — which holds for
+ * this app: cards are axis-aligned and we never rotate a group. Depth-guarded so
+ * a malformed cyclic parentId can't spin forever.
+ */
+export function resolvePageXY(store: Record<string, any>, shape: any): { x: number; y: number } {
+  let x = shape.x ?? 0
+  let y = shape.y ?? 0
+  let parentId = shape.parentId
+  for (let depth = 0; depth < 32; depth++) {
+    const parent = parentId ? store[parentId] : undefined
+    if (!parent || parent.typeName !== 'shape') break // reached the page (or a dangling ref)
+    x += parent.x ?? 0
+    y += parent.y ?? 0
+    parentId = parent.parentId
+  }
+  return { x, y }
+}
+
+/** The direct group parent of a shape, if it sits inside a `group`; else null. */
+function directGroupId(store: Record<string, any>, shape: any): string | null {
+  const parent = shape.parentId ? store[shape.parentId] : undefined
+  return parent && parent.typeName === 'shape' && parent.type === 'group' ? parent.id : null
+}
+
 export function snapshotToCards(snapshot: CanvasSnapshot, assetsDir?: string): CardDigest[] {
+  const store = storeOf(snapshot)
   return cardShapes(snapshot).map((r: any) => ({
     id: r.id,
     kind: r.props.kind,
     sourceKind: r.props.sourceKind ?? null,
     origin: r.props.origin ?? null,
     text: r.props.text ?? '',
-    x: r.x,
-    y: r.y,
+    ...resolvePageXY(store, r),
     comments: r.props.comments ?? [],
     mergedInto: r.props.mergedInto ?? null,
     assetPath:
@@ -104,15 +155,17 @@ export function snapshotToSummarizableCards(
   }))
 }
 
-/** The cheap navigation map — sections plus a small entry per card, no full text. */
+/** The cheap navigation map — sections/groups plus a small entry per card, no full text. */
 export function snapshotToCardMap(snapshot: CanvasSnapshot): CardMap {
+  const store = storeOf(snapshot)
   const cards = cardShapes(snapshot).map((r: any): CardMapEntry => {
+    const { x, y } = resolvePageXY(store, r)
     const entry: CardMapEntry = {
       id: r.id,
       kind: r.props.kind,
       sourceKind: r.props.sourceKind ?? null,
-      x: r.x,
-      y: r.y,
+      x,
+      y,
       gist: cardGist({
         kind: r.props.kind,
         sourceKind: r.props.sourceKind ?? null,
@@ -124,9 +177,41 @@ export function snapshotToCardMap(snapshot: CanvasSnapshot): CardMap {
     }
     if (r.props.mergedInto) entry.mergedInto = r.props.mergedInto
     if (r.props.reference?.refType) entry.refType = r.props.reference.refType
+    const groupId = directGroupId(store, r)
+    if (groupId) entry.groupId = groupId
     return entry
   })
-  return { cards, sections: snapshotToSections(snapshot) }
+  return { cards, sections: snapshotToSections(snapshot), groups: snapshotToGroups(snapshot) }
+}
+
+/**
+ * One entry per tldraw group shape: its direct card members, count, and the
+ * union of their resolved page bounds. Groups with no card members are dropped
+ * (nothing for Claude to act on).
+ */
+export function snapshotToGroups(snapshot: CanvasSnapshot): GroupDigest[] {
+  const store = storeOf(snapshot)
+  const cards = cardShapes(snapshot)
+  return groupShapes(snapshot)
+    .map((g: any): GroupDigest | null => {
+      const members = cards.filter((c: any) => c.parentId === g.id)
+      if (members.length === 0) return null
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+      for (const c of members) {
+        const { x, y } = resolvePageXY(store, c)
+        const w = c.props?.w ?? 0
+        const h = c.props?.h ?? 0
+        minX = Math.min(minX, x); minY = Math.min(minY, y)
+        maxX = Math.max(maxX, x + w); maxY = Math.max(maxY, y + h)
+      }
+      return {
+        id: g.id,
+        cardIds: members.map((c: any) => c.id),
+        memberCount: members.length,
+        bounds: { x: minX, y: minY, w: maxX - minX, h: maxY - minY },
+      }
+    })
+    .filter((g): g is GroupDigest => g !== null)
 }
 
 /** Full digests for a specific set of card ids — the drill-down after the map. */
@@ -146,8 +231,7 @@ export function snapshotToSections(snapshot: CanvasSnapshot): SectionDigest[] {
     .map((r: any) => ({
       id: r.id,
       text: r.props.text ?? '',
-      x: r.x,
-      y: r.y,
+      ...resolvePageXY(store, r),
       authoredBy: r.props.authoredBy ?? 'user',
     }))
 }
