@@ -1,7 +1,6 @@
 import type { Editor } from 'tldraw'
 import type { Reference } from '../model/types'
 import { refMeta, refDescription, refTitle, hasLeftMedia } from '../model/references'
-import { gistFontSize } from './summaryView'
 
 /**
  * Text auto-sizing for cards and section headers.
@@ -41,37 +40,6 @@ export function measuredCardHeight(
     padding: '0px',
   })
   return Math.ceil(h + CARD_PAD_Y + (hasBadge ? CARD_BADGE_ROW : 0))
-}
-
-/**
- * The zoomed-out gist font size that stays as large as the zoom wants (see
- * gistFontSize) WITHOUT overflowing the card. The card's height was measured to
- * fit the FULL text at 15px, and the gist is a shorter string — so 15px is a
- * guaranteed-fitting floor. We scale up toward the zoom-compensated target only
- * as far as the box's height allows, so the gist is never clipped.
- */
-export function fitGistFontSize(
-  editor: Editor,
-  gist: string,
-  width: number,
-  height: number,
-  zoom: number,
-  hasBadge: boolean,
-): number {
-  const target = gistFontSize(zoom)
-  const maxWidth = Math.max(40, width - CARD_PAD_X)
-  const availH = Math.max(20, height - CARD_PAD_Y - (hasBadge ? CARD_BADGE_ROW : 0))
-  const measure = (fontSize: number) =>
-    editor.textMeasure.measureText(gist || ' ', {
-      fontFamily: FONT_FAMILY, fontSize, lineHeight: 1.2,
-      fontWeight: '500', fontStyle: 'italic', maxWidth, padding: '0px',
-    }).h
-  const atTarget = measure(target)
-  if (atTarget <= availH) return target
-  // Too tall at the target: shrink proportionally, but never below 15px (which
-  // fits by construction) and never above the target.
-  const scaled = Math.floor(target * (availH / atTarget))
-  return Math.max(15, Math.min(target, scaled))
 }
 
 // --- Reference cards -----------------------------------------------------

@@ -9,8 +9,8 @@ import { makeProseCardProps } from '../model/cards'
 import { cardGist } from '../model/summary'
 import { visibleComments, resolveComment } from '../model/comments'
 import { assetUrl } from '../client/assets'
-import { measuredCardHeight, measuredReferenceHeight, fitGistFontSize } from './autosize'
-import { shouldShowGist } from './summaryView'
+import { measuredCardHeight, measuredReferenceHeight } from './autosize'
+import { shouldShowGist, gistFontSize } from './summaryView'
 import { ReferenceCardFace } from './ReferenceCardFace'
 import './card.css'
 
@@ -226,10 +226,12 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
               </>
             ) : (
               <>
-                {kind === 'source' && (
+                {/* Zoomed out, hide the Note/merged chrome so the gist owns the
+                    whole card and reads at a glance. */}
+                {!showGist && kind === 'source' && (
                   <span className="elves-badge" data-testid="card-badge">Note</span>
                 )}
-                {mergedCount > 0 && (
+                {!showGist && mergedCount > 0 && (
                   <span className="elves-merged" data-testid="merged-badge">⊕ {mergedCount} merged</span>
                 )}
                 {isEditing ? (
@@ -250,11 +252,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                   <div
                     className="elves-card__text elves-card__text--gist"
                     data-testid="card-gist"
-                    style={{
-                      fontSize: fitGistFontSize(
-                        this.editor, cardGist(shape.props), shape.props.w, shape.props.h, zoom, kind === 'source',
-                      ),
-                    }}
+                    style={{ fontSize: gistFontSize(zoom) }}
                   >
                     {cardGist(shape.props)}
                   </div>

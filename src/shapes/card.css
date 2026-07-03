@@ -45,16 +45,13 @@
 .elves-card__text { white-space: pre-wrap; flex: 1; overflow-wrap: anywhere; }
 /* The zoomed-out gist: a model-authored summary, so it reads in Claude's accent
    colour (same signal as Claude-authored section headers) — never mistaken for
-   the user's own card text. Font size is set inline (counter-scaled to the zoom)
-   so it stays legible like a map label; here we just centre it in the card's
-   box and give it a label's weight and leading. */
+   the user's own card text. Font size is set inline (counter-scaled to the zoom,
+   consistent across all cards); it sits top-left and owns the card since the
+   Note/merged chrome is hidden in this mode. */
 .elves-card__text--gist {
   color: var(--elves-claude-accent);
-  font-style: italic;
   font-weight: 500;
-  line-height: 1.2;
-  display: flex;
-  align-items: center;
+  line-height: 1.25;
 }
 .elves-card__editor {
   flex: 1;
