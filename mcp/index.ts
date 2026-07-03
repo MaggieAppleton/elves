@@ -15,6 +15,7 @@ import {
   groupCardsTool,
   ungroupCardsTool,
   listProjectsTool,
+  setAgentId,
 } from './tools'
 
 const COMMENT_TYPE = z.enum(['needs-evidence', 'weak-argument', 'needs-citation'])
@@ -177,6 +178,11 @@ export function createMcpServer(baseUrl: string): McpServer {
 }
 
 async function main() {
+  // This MCP process authors cards as one agent. Its id (stamped onto every note
+  // it creates, driving the card's authorship mark) is configurable so other
+  // agents — an OpenAI model, an open-source model — can run the same server and
+  // mark their own notes: set ELVES_AGENT=openai. Defaults to 'claude'.
+  setAgentId(process.env.ELVES_AGENT ?? 'claude')
   const server = createMcpServer(process.env.ELVES_URL ?? 'http://localhost:5199')
   await server.connect(new StdioServerTransport())
 }

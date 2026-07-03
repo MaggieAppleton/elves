@@ -12,15 +12,17 @@ const NO_SUMMARY = { summary: null, summaryOfHash: null, summaryBy: null, summar
 export function makeProseCardProps(text = ''): CardProps {
   return {
     w: CARD_DEFAULT_W, h: CARD_DEFAULT_H,
-    kind: 'prose', noteKind: null, origin: null, text,
+    kind: 'prose', noteKind: null, origin: null, text, authoredBy: null,
     comments: [], mergedInto: null, assetId: null, reference: null, ...NO_SUMMARY,
   }
 }
 
-export function makeNoteCardProps(text = '', origin: Origin = 'typed'): CardProps {
+// An agent id (e.g. the changeset author) when an agent created the note through
+// the MCP; null when a human made it. Renders as that agent's small logo mark.
+export function makeNoteCardProps(text = '', origin: Origin = 'typed', authoredBy: string | null = null): CardProps {
   return {
     w: CARD_DEFAULT_W, h: CARD_DEFAULT_H,
-    kind: 'note', noteKind: 'text', origin, text,
+    kind: 'note', noteKind: 'text', origin, text, authoredBy,
     comments: [], mergedInto: null, assetId: null, reference: null, ...NO_SUMMARY,
   }
 }
@@ -28,7 +30,7 @@ export function makeNoteCardProps(text = '', origin: Origin = 'typed'): CardProp
 export function makeImageNoteCardProps(assetId: string): CardProps {
   return {
     w: 280, h: 200,
-    kind: 'note', noteKind: 'image', origin: 'image', text: '',
+    kind: 'note', noteKind: 'image', origin: 'image', text: '', authoredBy: null,
     comments: [], mergedInto: null, assetId, reference: null, ...NO_SUMMARY,
   }
 }
@@ -41,7 +43,7 @@ export function makeImageNoteCardProps(assetId: string): CardProps {
 export function makeReferenceCardProps(reference: Reference): CardProps {
   return {
     w: REFERENCE_DEFAULT_W, h: REFERENCE_DEFAULT_H,
-    kind: 'note', noteKind: 'reference', origin: 'reference', text: '',
+    kind: 'note', noteKind: 'reference', origin: 'reference', text: '', authoredBy: null,
     comments: [], mergedInto: null, assetId: null, reference, ...NO_SUMMARY,
   }
 }

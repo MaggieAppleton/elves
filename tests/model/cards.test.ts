@@ -10,7 +10,7 @@ describe('card factories', () => {
     const p = makeProseCardProps('a point I wrote')
     expect(p).toEqual({
       w: CARD_DEFAULT_W, h: CARD_DEFAULT_H, kind: 'prose',
-      noteKind: null, origin: null, text: 'a point I wrote',
+      noteKind: null, origin: null, text: 'a point I wrote', authoredBy: null,
       comments: [], mergedInto: null, assetId: null, reference: null,
       summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
     })
@@ -33,11 +33,21 @@ describe('card factories', () => {
     expect(makeNoteCardProps('x', 'tana').origin).toBe('tana')
   })
 
+  test('note card is human-authored by default, and can be stamped with an agent id', () => {
+    // Default: no agent — a human made it, so no authorship mark.
+    expect(makeNoteCardProps('x').authoredBy).toBeNull()
+    // An agent (its changeset author) stamps its id onto the card it creates.
+    expect(makeNoteCardProps('x', 'transcribed', 'claude').authoredBy).toBe('claude')
+    // Prose, image, and reference cards are never agent-authored.
+    expect(makeProseCardProps('x').authoredBy).toBeNull()
+    expect(makeImageNoteCardProps('a.png').authoredBy).toBeNull()
+  })
+
   test('makeImageNoteCardProps builds an image note card', () => {
     const p = makeImageNoteCardProps('abc.png')
     expect(p).toEqual({
       w: 280, h: 200, kind: 'note', noteKind: 'image', origin: 'image',
-      text: '', comments: [], mergedInto: null, assetId: 'abc.png', reference: null,
+      text: '', authoredBy: null, comments: [], mergedInto: null, assetId: 'abc.png', reference: null,
       summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
     })
   })

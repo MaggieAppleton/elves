@@ -108,7 +108,8 @@ export function applyChangeSetToSnapshot(
           meta: {},
           parentId: defaultPageId(store),
           index: getIndexAbove(topIndex(store)),
-          props: makeNoteCardProps(op.text, 'transcribed'),
+          // Stamp the change-set's author so the persisted card keeps its mark.
+          props: makeNoteCardProps(op.text, 'transcribed', cs.author),
         }
         break
       }

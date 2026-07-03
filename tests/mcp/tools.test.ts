@@ -9,6 +9,8 @@ import { attachRealtime } from '../../server/realtime'
 import { createProject } from '../../server/projects'
 import {
   makeChangeSet,
+  setAgentId,
+  getAgentId,
   addCommentTool,
   readMapTool,
   readCardsTool,
@@ -59,6 +61,19 @@ test('makeChangeSet stamps author claude and a string id', () => {
   expect(cs.author).toBe('claude')
   expect(typeof cs.id).toBe('string')
   expect(cs.ops).toEqual([{ kind: 'move_cards', moves: [] }])
+})
+
+test('the configured agent id (ELVES_AGENT) becomes the change-set author', () => {
+  // Default is Claude, but another agent's MCP process configures its own id,
+  // which then stamps every change-set it posts (and thus its notes' marks).
+  expect(getAgentId()).toBe('claude')
+  try {
+    setAgentId('openai')
+    expect(getAgentId()).toBe('openai')
+    expect(makeChangeSet([{ kind: 'move_cards', moves: [] }]).author).toBe('openai')
+  } finally {
+    setAgentId('claude') // reset process-wide state so other tests see the default
+  }
 })
 
 test('listProjectsTool returns the project id and name', async () => {
