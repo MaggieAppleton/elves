@@ -71,18 +71,76 @@
   cursor: text;
 }
 
-/* Merged-count chip — neutral grey, tucked into the card's top-right corner
-   (absolute, so it doesn't sit under the NOTE label). */
+/* Merged-count chip — a button that fans the merged cards out to the right.
+   Neutral grey, tucked into the card's top-right corner (absolute, so it doesn't
+   sit under the NOTE label). pointer-events:all because the card container is
+   pointer-events:none (clicks otherwise fall through to the canvas). */
 .elves-merged {
   position: absolute;
   top: 10px;
   right: 12px;
+  z-index: 2;
+  font: inherit;
   font-size: 10px;
   font-weight: 600;
   padding: 2px 6px;
+  border: none;
   border-radius: 4px;
   background: var(--elves-tertiary);
   color: var(--elves-ink-soft);
+  cursor: pointer;
+  pointer-events: all;
+  transition: background-color 100ms ease, color 100ms ease;
+}
+.elves-merged:hover { color: var(--elves-ink); background: var(--elves-border); }
+.elves-merged[aria-expanded="true"] { color: var(--elves-ink); background: var(--elves-border); }
+
+/* The stack peeking out behind the representative: 1–2 thin paper edges offset
+   down-right, layered BEHIND the card (negative z-index within the wrap's
+   stacking context) so only their bottom-right corner shows. */
+.elves-merge-stack { position: absolute; inset: 0; pointer-events: none; }
+.elves-merge-stack__edge {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: 10px;
+  background: var(--elves-surface-muted);
+  border: 1px solid var(--elves-border);
+  box-shadow: var(--elves-shadow-sm);
+  /* Each successive edge sits a little further down-right. */
+  transform: translate(calc(var(--edge) * 4px), calc(var(--edge) * 5px));
+}
+
+/* The fan-out: merged cards shown to the right of the representative, read-only.
+   A quiet column of muted note cards; pointer-events:all so the text is
+   selectable and the click doesn't fall through to the canvas. */
+.elves-merge-fan {
+  position: absolute;
+  top: 0;
+  left: 100%;
+  margin-left: 16px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 10;
+  pointer-events: all;
+}
+.elves-merge-fan__card {
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-family: var(--elves-card-font);
+  font-size: 15px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--elves-ink-soft);
+  background: var(--elves-surface-muted);
+  border: 1px solid var(--elves-border);
+  box-shadow: var(--elves-shadow-sm), var(--elves-highlight);
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .elves-card__image {

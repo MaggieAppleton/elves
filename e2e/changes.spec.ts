@@ -52,6 +52,23 @@ test('merge_sources hides duplicates under the representative and marks provenan
   // Poll for the persisted provenance (the client save of the merge is async).
   await expect.poll(async () => (await cardById(request, ids[1]))?.props?.mergedInto).toBe(ids[0])
 
+  // The merged card is truly hidden — no invisible "ghost" shape left behind.
+  // Only the representative renders (its stack/fan-out live inside its own shape).
+  await expect(page.locator('.tl-shape')).toHaveCount(1)
+
+  // A stack peeks out behind the representative to signal "there's more here".
+  await expect(page.getByTestId('merge-stack')).toBeVisible()
+
+  // Clicking the badge fans the merged card out to the right, read-only; the
+  // stack gives way to the fan. Clicking again collapses it back.
+  await expect(page.getByTestId('merge-fan')).toHaveCount(0)
+  await page.getByTestId('merged-badge').click()
+  await expect(page.getByTestId('merge-fan')).toBeVisible()
+  await expect(page.getByTestId('merge-fan-card')).toHaveCount(1)
+  await expect(page.getByTestId('merge-stack')).toHaveCount(0)
+  await page.getByTestId('merged-badge').click()
+  await expect(page.getByTestId('merge-fan')).toHaveCount(0)
+
   // Ctrl-Z restores the duplicate
   await page.keyboard.press('Control+z')
   await expect(page.getByTestId('merged-badge')).toHaveCount(0)
