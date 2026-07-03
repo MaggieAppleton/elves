@@ -4,6 +4,32 @@ A local-first, canvas-based writing studio for taking a piece from scattered not
 
 > **Status: Phase 5 (external references).** Create, edit, arrange, and persist cards; keep several **projects** (separate pieces) and switch between them; drop in **images** (photos of paper notes, sketches) as source cards; add **references** (papers, links, tweets, books…) as rich, clickable cards — paste a url to unfurl it, or ask Claude to enrich a mention or research a topic onto the canvas; and work with Claude, who comments / dedupes / reorders and **transcribes handwritten notes** into text source cards — all within a hard boundary (never writing your prose), everything natively undoable. Tana import and MDX are later — see [Roadmap](#roadmap).
 
+## Features at a glance
+
+**The canvas.** An infinite [tldraw](https://tldraw.dev) canvas of **cards** you arrange spatially — a card's horizontal position is its place in the narrative (left = earlier, right = later). Everything autosaves locally, per project, and survives reload.
+
+**Two kinds of card — one hard rule.**
+- **Prose cards** — your finished, your-own-voice writing (a point, sentence, or paragraph). **Only you** write these; Claude can never write or edit prose. Shown in your ink.
+- **Note cards** — raw material and reference notes (a *source* card's text). These can be **yours** (type them, or import) **or made by Claude** (it transcribes a photo of your handwriting into a note card — still *your* words, digitized). Shown muted with a small **Note** badge.
+
+**Anything Claude writes is orange.** Claude's own wording renders in a warm orange accent so you can always tell it from yours — this covers **comments**, **section headers** it writes or renames, and **summaries**. Your prose, and any notes/sections you wrote, stay in your ink.
+
+**Section headers.** Big thematic labels that float above a cluster of cards so the shape of the piece reads at a glance when you zoom out. You or Claude can write and rename them (Claude's show orange).
+
+**Comments.** Claude flags weak spots in your prose — `needs-evidence`, `weak-argument`, `needs-citation`, or a freeform note — each individually resolvable. Always Claude-authored; it comments on your prose, never rewrites it.
+
+**Merge duplicates.** Near-identical note/source cards collapse under one representative (the rest hidden but recoverable) with an "N merged" badge.
+
+**Images.** Drop in a photo of paper notes or a sketch as an **image card**; ask Claude to **transcribe** it into a note card in your words.
+
+**References.** Papers, articles, books, software, tweets, videos, links — paste a url and the server **unfurls** it into a rich, clickable **reference card** with a type-adaptive face (favicon + hero cached locally so it stays offline). Or ask Claude to enrich a plain-text mention or research a topic onto the canvas. A reference is a *source* card: Claude writes its bibliographic *facts*, never your annotation.
+
+**Summaries & the zoom-out map.** Every note and prose card gets a one-line **summary** generated **locally by [Ollama](https://ollama.com)**. Zoom out past ~70% and each card shows its summary instead of its full text (orange, one uniform readable size, cards grow to fit so nothing is cut off) — so a big piece reads at a glance. No Ollama? Summaries just stay empty and nothing breaks.
+
+**Projects.** Keep several pieces at once, each a self-contained, portable folder; create / switch / rename from the toolbar.
+
+**Claude via MCP.** With the app running, Claude works the canvas through a scoped [MCP](https://modelcontextprotocol.io) server: `list_projects`, `read_map` (a cheap, token-light map with a one-line gist per card) / `read_cards` (full text on demand), `add_comment`, `merge_sources`, `move_cards`, `create_source_card` (transcribe), `create_reference`, and the section tools. Every tool targets a specific project, and **none can write your prose**.
+
 ## What it does (Phase 1)
 
 - An infinite [tldraw](https://tldraw.dev) canvas with two kinds of **card**:
@@ -160,16 +186,18 @@ ELVES_DATA=./scratch-data npm run server
 
 ### Card summaries (zoom-out gists)
 
-Long cards get a one-line, model-authored **summary** shown on Claude's `read_map`
-and when you zoom out over the canvas — so the shape of a big piece reads at a glance.
+Every note and prose card gets a one-line, model-authored **summary** — shown on Claude's
+`read_map` and, when you **zoom out past ~70%**, in place of the card's full text, so the
+shape of a big piece reads at a glance. Summaries render in Claude's orange accent at one
+uniform size, and a card grows to fit its summary so nothing is clipped.
+
 Summaries are generated **server-side, locally, by default** via
 [Ollama](https://ollama.com): install it and `ollama pull llama3.2`, and the server
-summarizes long cards as you edit (and backfills existing ones on startup). No Ollama?
-No problem — summaries stay empty and the map/zoom fall back to a mechanical first-line
-truncation; nothing breaks. Summaries never touch your card text — like section
-headers and comments, they're a Claude-authored label *about* a card, shown in Claude's
-accent colour. Set `ELVES_SUMMARIZER=openai` (with `OPENAI_API_KEY`) to use a cheap
-cloud model instead, or `off` to disable generation.
+summarizes cards as you edit (and backfills existing ones on startup). No Ollama? No
+problem — summaries stay empty and the map/zoom fall back to a mechanical first-line
+truncation; nothing breaks. Summaries never touch your card text — like section headers
+and comments, they're a Claude-authored label *about* a card. Set `ELVES_SUMMARIZER=openai`
+(with `OPENAI_API_KEY`) to use a cheap cloud model instead, or `off` to disable generation.
 
 ## Scripts
 
