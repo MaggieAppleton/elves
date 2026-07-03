@@ -43,13 +43,14 @@
   color: var(--elves-ink-soft);
 }
 .elves-card__text { white-space: pre-wrap; flex: 1; overflow-wrap: anywhere; }
-/* The zoomed-out gist: a model-authored summary, so it reads in Claude's accent
-   colour (same signal as Claude-authored section headers) — never mistaken for
-   the user's own card text. Font size is set inline (counter-scaled to the zoom,
-   consistent across all cards); it sits top-left and owns the card since the
-   Note/merged chrome is hidden in this mode. */
+/* The zoomed-out gist: a model-authored summary. Although it's model-written,
+   it stands in for the card's own content at low zoom, so it reads in the card's
+   normal ink colour (inherited from the card) rather than Claude's accent — the
+   accent stays reserved for chrome like Claude-authored section headers. Font
+   size is set inline (counter-scaled to the zoom, consistent across all cards);
+   it sits top-left and owns the card since the Note/merged chrome is hidden in
+   this mode. */
 .elves-card__text--gist {
-  color: var(--elves-claude-accent);
   font-weight: 500;
   line-height: 1.25;
 }
