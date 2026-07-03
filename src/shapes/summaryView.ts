@@ -21,3 +21,18 @@ export function shouldShowGist(
   if (card.sourceKind === 'image' || card.sourceKind === 'reference') return false
   return !!card.summary
 }
+
+/**
+ * The gist's font size, in card-space px. The whole canvas is scaled by `zoom`,
+ * so a fixed size would shrink to nothing as you zoom out — the very moment the
+ * gist matters. We counter-scale to hold a roughly constant ON-SCREEN size
+ * (`GIST_ON_SCREEN_PX`), clamped so it never gets too small to read or so large
+ * it overflows a card. This is what keeps the gist legible like a map label.
+ */
+export const GIST_ON_SCREEN_PX = 18
+export const GIST_FONT_MIN = 30
+export const GIST_FONT_MAX = 56
+export function gistFontSize(zoom: number): number {
+  const compensated = GIST_ON_SCREEN_PX / Math.max(zoom, 0.01)
+  return Math.round(Math.min(Math.max(compensated, GIST_FONT_MIN), GIST_FONT_MAX))
+}

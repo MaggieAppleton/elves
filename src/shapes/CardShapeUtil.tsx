@@ -9,7 +9,7 @@ import { makeProseCardProps } from '../model/cards'
 import { cardGist } from '../model/summary'
 import { visibleComments, resolveComment } from '../model/comments'
 import { assetUrl } from '../client/assets'
-import { measuredCardHeight, measuredReferenceHeight } from './autosize'
+import { measuredCardHeight, measuredReferenceHeight, fitGistFontSize } from './autosize'
 import { shouldShowGist } from './summaryView'
 import { ReferenceCardFace } from './ReferenceCardFace'
 import './card.css'
@@ -193,8 +193,10 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     const isReference = sourceKind === 'reference' && !!reference
     const isEditing = this.editor.getEditingShapeId() === shape.id
     // Zoomed far out, a summarized card shows its gist so the piece reads at a
-    // glance. getZoomLevel is reactive, so this re-renders as the user zooms.
-    const showGist = !isEditing && shouldShowGist(this.editor.getZoomLevel(), shape.props)
+    // glance. getZoomLevel is reactive, so this re-renders as the user zooms;
+    // the gist font counter-scales with zoom to stay a readable on-screen size.
+    const zoom = this.editor.getZoomLevel()
+    const showGist = !isEditing && shouldShowGist(zoom, shape.props)
     const comments = visibleComments(shape.props.comments)
     return (
       <AutosizeCard editor={this.editor} shape={shape}>
@@ -245,7 +247,15 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                     }
                   />
                 ) : showGist ? (
-                  <div className="elves-card__text elves-card__text--gist" data-testid="card-gist">
+                  <div
+                    className="elves-card__text elves-card__text--gist"
+                    data-testid="card-gist"
+                    style={{
+                      fontSize: fitGistFontSize(
+                        this.editor, cardGist(shape.props), shape.props.w, shape.props.h, zoom, kind === 'source',
+                      ),
+                    }}
+                  >
                     {cardGist(shape.props)}
                   </div>
                 ) : (
