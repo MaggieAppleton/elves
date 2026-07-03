@@ -30,7 +30,7 @@ export function blankReference(
 }
 
 /**
- * Pure display helpers for reference source cards. Kept out of the shape
+ * Pure display helpers for reference note cards. Kept out of the shape
  * component so the type-adaptive rules (what a paper vs a tweet vs a repo shows)
  * are unit-testable and shared with height measurement. Nothing here touches the
  * DOM or the network.

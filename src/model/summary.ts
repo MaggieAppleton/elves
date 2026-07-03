@@ -1,4 +1,4 @@
-import type { CardKind, SourceKind } from './types'
+import type { CardKind, NoteKind } from './types'
 
 /**
  * A card's `summary` is a model-authored one-phrase gist of a long card. This
@@ -12,7 +12,7 @@ import type { CardKind, SourceKind } from './types'
 /** The minimal card shape this module reasons about. */
 export interface SummarizableCard {
   kind: CardKind
-  sourceKind: SourceKind | null
+  noteKind: NoteKind | null
   text: string
   summary: string | null
   summaryOfHash: string | null
@@ -30,14 +30,14 @@ export function summaryHash(text: string): string {
 }
 
 /**
- * Text-bearing (prose, or a text source card) with any content at all. Every
+ * Text-bearing (prose, or a text note card) with any content at all. Every
  * note and prose card gets a summary regardless of length — at the zoom-out map
  * level even a short card's own text is too small to read, so we give them all a
  * consistent, legible gist. (Image and reference cards are excluded: images have
  * no text, references already carry a description.)
  */
 export function isSummarizable(card: SummarizableCard): boolean {
-  const textBearing = card.kind === 'prose' || (card.kind === 'source' && card.sourceKind === 'text')
+  const textBearing = card.kind === 'prose' || (card.kind === 'note' && card.noteKind === 'text')
   return textBearing && card.text.trim().length > 0
 }
 

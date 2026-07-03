@@ -1,5 +1,8 @@
 import { expect, test } from 'vitest'
-import { addCommentsUp, addAssetIdUp, addReferenceUp, addSummaryUp } from '../../src/shapes/CardShapeUtil'
+import {
+  addCommentsUp, addAssetIdUp, addReferenceUp, addSummaryUp,
+  renameSourceToNoteUp, renameSourceToNoteDown,
+} from '../../src/shapes/CardShapeUtil'
 
 test('migration adds comments[] and mergedInto to a pre-Phase-2 card', () => {
   const oldProps: Record<string, unknown> = {
@@ -37,4 +40,36 @@ test('AddSummary migration adds the four null summary fields to a pre-summary ca
   expect(props).toMatchObject({
     summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
   })
+})
+
+test('RenameSourceToNote migration renames kind and the sourceKind prop', () => {
+  const props: Record<string, unknown> = {
+    w: 240, h: 120, kind: 'source', sourceKind: 'text', origin: 'typed', text: 'x',
+  }
+  renameSourceToNoteUp(props)
+  expect(props.kind).toBe('note')
+  expect(props.noteKind).toBe('text')
+  expect('sourceKind' in props).toBe(false)
+})
+
+test('RenameSourceToNote leaves prose cards alone and carries a null sub-kind across', () => {
+  const props: Record<string, unknown> = { kind: 'prose', sourceKind: null }
+  renameSourceToNoteUp(props)
+  expect(props.kind).toBe('prose')
+  expect(props.noteKind).toBeNull()
+  expect('sourceKind' in props).toBe(false)
+})
+
+test('RenameSourceToNote up() is idempotent on already-renamed props', () => {
+  const props: Record<string, unknown> = { kind: 'note', noteKind: 'reference' }
+  renameSourceToNoteUp(props)
+  expect(props).toEqual({ kind: 'note', noteKind: 'reference' })
+})
+
+test('RenameSourceToNote down() restores the pre-rename shape', () => {
+  const props: Record<string, unknown> = { kind: 'note', noteKind: 'image' }
+  renameSourceToNoteDown(props)
+  expect(props.kind).toBe('source')
+  expect(props.sourceKind).toBe('image')
+  expect('noteKind' in props).toBe(false)
 })

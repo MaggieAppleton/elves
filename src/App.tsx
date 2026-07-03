@@ -5,7 +5,7 @@ import './theme.css'
 import { CardShapeUtil, CardShape } from './shapes/CardShapeUtil'
 import { SectionShapeUtil, SectionShape } from './shapes/SectionShapeUtil'
 import {
-  makeProseCardProps, makeSourceCardProps, makeImageSourceCardProps, makeReferenceCardProps,
+  makeProseCardProps, makeNoteCardProps, makeImageNoteCardProps, makeReferenceCardProps,
 } from './model/cards'
 import { makeSectionProps } from './model/sections'
 import { requestUnfurl } from './client/references'
@@ -102,7 +102,7 @@ export default function App() {
       type: 'card',
       x: at.x - w / 2,
       y: at.y - h / 2,
-      props: { ...makeImageSourceCardProps(assetId), w, h },
+      props: { ...makeImageNoteCardProps(assetId), w, h },
     })
     ed.select(id)
   }
@@ -156,10 +156,10 @@ export default function App() {
       })
   }
 
-  const addCard = (kind: 'prose' | 'source') => {
+  const addCard = (kind: 'prose' | 'note') => {
     if (!editor) return
     const center = editor.getViewportPageBounds().center
-    const props = kind === 'prose' ? makeProseCardProps() : makeSourceCardProps()
+    const props = kind === 'prose' ? makeProseCardProps() : makeNoteCardProps()
     const id = createShapeId()
     editor.createShape<CardShape>({
       id,
@@ -187,7 +187,7 @@ export default function App() {
     editor.setEditingShape(id)
   }
 
-  const addLinkFlow = async () => {
+  const addReferenceFlow = async () => {
     if (!editor) return
     const raw = window.prompt('Paste a link to add as a reference')?.trim()
     if (!raw) return
@@ -283,9 +283,9 @@ export default function App() {
       />
       <div className="elves-toolbar">
         <button data-testid="new-prose" onClick={() => addCard('prose')}><PlusIcon />Prose</button>
-        <button data-testid="new-source" onClick={() => addCard('source')}><PlusIcon />Notes</button>
+        <button data-testid="new-note" onClick={() => addCard('note')}><PlusIcon />Notes</button>
         <button data-testid="new-image" onClick={() => fileInputRef.current?.click()}><PlusIcon />Image</button>
-        <button data-testid="new-link" onClick={addLinkFlow}><PlusIcon />Link</button>
+        <button data-testid="new-reference" onClick={addReferenceFlow}><PlusIcon />Link</button>
         <button data-testid="new-section" onClick={addSection}><PlusIcon />Section</button>
         <input
           ref={fileInputRef}

@@ -12,7 +12,7 @@ const LONG = 'A '.repeat(120) + 'the end.'
 const SHORT = 'a short point'
 
 function card(over: Partial<SummarizableCard> = {}): SummarizableCard {
-  return { kind: 'prose', sourceKind: null, text: LONG, summary: null, summaryOfHash: null, ...over }
+  return { kind: 'prose', noteKind: null, text: LONG, summary: null, summaryOfHash: null, ...over }
 }
 
 test('summaryHash is stable for the same text and differs for different text', () => {
@@ -20,13 +20,13 @@ test('summaryHash is stable for the same text and differs for different text', (
   expect(summaryHash('hello world')).not.toBe(summaryHash('hello  world'))
 })
 
-test('isSummarizable: any non-empty prose/text-source card yes; empty/image/reference no', () => {
+test('isSummarizable: any non-empty prose/text-note card yes; empty/image/reference no', () => {
   expect(isSummarizable(card())).toBe(true)
-  expect(isSummarizable(card({ kind: 'source', sourceKind: 'text' }))).toBe(true)
+  expect(isSummarizable(card({ kind: 'note', noteKind: 'text' }))).toBe(true)
   expect(isSummarizable(card({ text: SHORT }))).toBe(true) // short cards are summarized too now
   expect(isSummarizable(card({ text: '   ' }))).toBe(false) // empty/whitespace: nothing to summarize
-  expect(isSummarizable(card({ sourceKind: 'image', kind: 'source' }))).toBe(false)
-  expect(isSummarizable(card({ sourceKind: 'reference', kind: 'source' }))).toBe(false)
+  expect(isSummarizable(card({ noteKind: 'image', kind: 'note' }))).toBe(false)
+  expect(isSummarizable(card({ noteKind: 'reference', kind: 'note' }))).toBe(false)
 })
 
 test('summaryState: generate when text-bearing and missing a summary, at any length', () => {

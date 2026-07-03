@@ -47,7 +47,7 @@ test('the + Link button unfurls a pasted url into a clickable reference card', a
 
   // The + Link flow prompts for a url via window.prompt.
   page.once('dialog', (dialog) => dialog.accept('example.com/malleable'))
-  await page.getByTestId('new-link').click()
+  await page.getByTestId('new-reference').click()
 
   await expect(page.getByTestId('ref-card')).toBeVisible()
   await expect(page.getByTestId('ref-title')).toHaveText('Intercepted Reference')

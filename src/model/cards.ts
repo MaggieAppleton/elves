@@ -12,36 +12,36 @@ const NO_SUMMARY = { summary: null, summaryOfHash: null, summaryBy: null, summar
 export function makeProseCardProps(text = ''): CardProps {
   return {
     w: CARD_DEFAULT_W, h: CARD_DEFAULT_H,
-    kind: 'prose', sourceKind: null, origin: null, text,
+    kind: 'prose', noteKind: null, origin: null, text,
     comments: [], mergedInto: null, assetId: null, reference: null, ...NO_SUMMARY,
   }
 }
 
-export function makeSourceCardProps(text = '', origin: Origin = 'typed'): CardProps {
+export function makeNoteCardProps(text = '', origin: Origin = 'typed'): CardProps {
   return {
     w: CARD_DEFAULT_W, h: CARD_DEFAULT_H,
-    kind: 'source', sourceKind: 'text', origin, text,
+    kind: 'note', noteKind: 'text', origin, text,
     comments: [], mergedInto: null, assetId: null, reference: null, ...NO_SUMMARY,
   }
 }
 
-export function makeImageSourceCardProps(assetId: string): CardProps {
+export function makeImageNoteCardProps(assetId: string): CardProps {
   return {
     w: 280, h: 200,
-    kind: 'source', sourceKind: 'image', origin: 'image', text: '',
+    kind: 'note', noteKind: 'image', origin: 'image', text: '',
     comments: [], mergedInto: null, assetId, reference: null, ...NO_SUMMARY,
   }
 }
 
 /**
- * A reference source card: structured bibliographic metadata (from unfurl or
+ * A reference note card: structured bibliographic metadata (from unfurl or
  * Claude) with an empty annotation `text` the user fills in later. It is a
- * SOURCE card — reference material, never prose — so the boundary holds.
+ * note card — reference material, never prose — so the boundary holds.
  */
 export function makeReferenceCardProps(reference: Reference): CardProps {
   return {
     w: REFERENCE_DEFAULT_W, h: REFERENCE_DEFAULT_H,
-    kind: 'source', sourceKind: 'reference', origin: 'reference', text: '',
+    kind: 'note', noteKind: 'reference', origin: 'reference', text: '',
     comments: [], mergedInto: null, assetId: null, reference, ...NO_SUMMARY,
   }
 }
@@ -50,13 +50,13 @@ export function isProseCard(p: { kind: CardKind }): boolean {
   return p.kind === 'prose'
 }
 
-export function isSourceCard(p: { kind: CardKind }): boolean {
-  return p.kind === 'source'
+export function isNoteCard(p: { kind: CardKind }): boolean {
+  return p.kind === 'note'
 }
 
 /**
  * Elves' core rule, as testable code. Claude never edits the text of an
- * existing card — source or prose. (Claude *creating* new source cards is a
+ * existing card — note or prose. (Claude *creating* new note cards is a
  * separate, dedicated capability added in Phase 2's tool layer; it is not
  * text-editing.) Phase 2's server tool API MUST consult this before applying
  * any text mutation attributed to Claude.

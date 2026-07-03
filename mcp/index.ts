@@ -5,9 +5,9 @@ import {
   readMapTool,
   readCardsTool,
   addCommentTool,
-  mergeSourcesTool,
+  mergeNotesTool,
   moveCardsTool,
-  createSourceCardTool,
+  createNoteCardTool,
   createReferenceTool,
   createSectionTool,
   moveSectionsTool,
@@ -39,7 +39,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'read_map',
-    "Read a project's canvas MAP — the cheap, token-light first pass. Returns { cards, sections }. Each card is a small entry: id, kind (prose|source), sourceKind (text|image|reference), x/y position (x is narrative order: left=earlier, right=later), `gist` (a one-line summary of the card — a model-authored summary for long cards, else the card's own short text), `textLen` (character count of the full text), and — when set — `mergedInto` and `refType`. It does NOT include full card text, comment bodies, or reference metadata. Sections: id, text (a short thematic label), x/y, authoredBy (user|claude). Call this FIRST (with the project id) to see the shape of the piece and get ids; then call read_cards for the few cards you actually need in full before commenting, merging, moving, renaming, or enriching.",
+    "Read a project's canvas MAP — the cheap, token-light first pass. Returns { cards, sections }. Each card is a small entry: id, kind (prose|note), noteKind (text|image|reference), x/y position (x is narrative order: left=earlier, right=later), `gist` (a one-line summary of the card — a model-authored summary for long cards, else the card's own short text), `textLen` (character count of the full text), and — when set — `mergedInto` and `refType`. It does NOT include full card text, comment bodies, or reference metadata. Sections: id, text (a short thematic label), x/y, authoredBy (user|claude). Call this FIRST (with the project id) to see the shape of the piece and get ids; then call read_cards for the few cards you actually need in full before commenting, merging, moving, renaming, or enriching.",
     { project: PROJECT },
     async ({ project }) => ({
       content: [{ type: 'text', text: JSON.stringify(await readMapTool(baseUrl, project)) }],
@@ -48,7 +48,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'read_cards',
-    "Read the FULL content of specific cards by id (get the ids from read_map). Returns each card's kind, sourceKind, origin, full `text`, x/y, `comments`, `mergedInto`, `assetPath` (image cards), `reference` (reference cards), and `summary`. Use this to drill into the handful of cards relevant to your task instead of pulling the whole canvas — read_map first, then read_cards for what matters.",
+    "Read the FULL content of specific cards by id (get the ids from read_map). Returns each card's kind, noteKind, origin, full `text`, x/y, `comments`, `mergedInto`, `assetPath` (image cards), `reference` (reference cards), and `summary`. Use this to drill into the handful of cards relevant to your task instead of pulling the whole canvas — read_map first, then read_cards for what matters.",
     { project: PROJECT, cardIds: z.array(z.string()).min(1) },
     async ({ project, cardIds }) => ({
       content: [{ type: 'text', text: JSON.stringify({ cards: await readCardsTool(baseUrl, project, cardIds) }) }],
@@ -66,12 +66,12 @@ export function createMcpServer(baseUrl: string): McpServer {
   )
 
   server.tool(
-    'merge_sources',
-    'Collapse duplicate SOURCE cards in a project into one. Pass the card ids to merge; the FIRST id is kept as the representative and the others are hidden (recoverable) under it. Source cards only.',
+    'merge_notes',
+    'Collapse duplicate note cards in a project into one. Pass the card ids to merge; the FIRST id is kept as the representative and the others are hidden (recoverable) under it. Note cards only.',
     { project: PROJECT, cardIds: z.array(z.string()).min(2) },
     async ({ project, cardIds }) => {
-      await mergeSourcesTool(baseUrl, project, { cardIds })
-      return { content: [{ type: 'text', text: 'sources merged' }] }
+      await mergeNotesTool(baseUrl, project, { cardIds })
+      return { content: [{ type: 'text', text: 'notes merged' }] }
     },
   )
 
@@ -86,18 +86,18 @@ export function createMcpServer(baseUrl: string): McpServer {
   )
 
   server.tool(
-    'create_source_card',
-    "Create a SOURCE card in a project containing text you transcribed from an image. First read the image card's file (read_cards gives each image card an `assetPath`), then transcribe the handwriting FAITHFULLY — these are the user's own words; digitize them, do not summarize. Position (x, y) near the image. Creates a SOURCE card only — never a prose card.",
+    'create_note_card',
+    "Create a note card in a project containing text you transcribed from an image. First read the image card's file (read_cards gives each image card an `assetPath`), then transcribe the handwriting FAITHFULLY — these are the user's own words; digitize them, do not summarize. Position (x, y) near the image. Creates a note card only — never a prose card.",
     { project: PROJECT, text: z.string(), x: z.number(), y: z.number() },
     async ({ project, text, x, y }) => {
-      await createSourceCardTool(baseUrl, project, { text, x, y })
-      return { content: [{ type: 'text', text: 'source card created' }] }
+      await createNoteCardTool(baseUrl, project, { text, x, y })
+      return { content: [{ type: 'text', text: 'note card created' }] }
     },
   )
 
   server.tool(
     'create_reference',
-    "Create a REFERENCE source card from a url — a clickable, metadata-bearing card for an external source (paper, article, book, software, tweet/post, video, wiki, link). The server unfurls the url for a baseline (title, site, favicon, hero image, and citation metadata for papers); pass any fields you researched to override it — for an academic paper, look up authoritative `authors`, `year`, `venue`, and `doi` (e.g. via arXiv/Crossref) and pass them. Two main uses: (1) ENRICH a plain-text mention — read the note, and for EACH source it names call create_reference positioned just to the right of that note, leaving the note itself untouched (augment alongside, never delete). (2) RESEARCH a topic — find good sources and place them clustered near the card the user pointed at, optionally with a create_section label over them. x is narrative order like other cards. This creates a SOURCE card carrying reference facts; it never writes the user's prose or annotation.",
+    "Create a REFERENCE note card from a url — a clickable, metadata-bearing card for an external source (paper, article, book, software, tweet/post, video, wiki, link). The server unfurls the url for a baseline (title, site, favicon, hero image, and citation metadata for papers); pass any fields you researched to override it — for an academic paper, look up authoritative `authors`, `year`, `venue`, and `doi` (e.g. via arXiv/Crossref) and pass them. Two main uses: (1) ENRICH a plain-text mention — read the note, and for EACH source it names call create_reference positioned just to the right of that note, leaving the note itself untouched (augment alongside, never delete). (2) RESEARCH a topic — find good sources and place them clustered near the card the user pointed at, optionally with a create_section label over them. x is narrative order like other cards. This creates a note card carrying reference facts; it never writes the user's prose or annotation.",
     {
       project: PROJECT,
       url: z.string().describe('The canonical url of the source (the link the card opens).'),

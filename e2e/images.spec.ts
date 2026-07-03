@@ -5,7 +5,7 @@ test.beforeEach(async ({ request }) => {
   await resetProject(request)
 })
 
-test('adding an image creates an image source card that renders and persists', async ({ page }) => {
+test('adding an image creates an image note card that renders and persists', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
 

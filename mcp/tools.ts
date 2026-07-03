@@ -48,12 +48,12 @@ export function addCommentTool(
   ]))
 }
 
-export function mergeSourcesTool(
+export function mergeNotesTool(
   baseUrl: string,
   projectId: string,
   args: { cardIds: string[] },
 ): Promise<void> {
-  return postChangeSet(baseUrl, projectId, makeChangeSet([{ kind: 'merge_sources', cardIds: args.cardIds }]))
+  return postChangeSet(baseUrl, projectId, makeChangeSet([{ kind: 'merge_notes', cardIds: args.cardIds }]))
 }
 
 export function moveCardsTool(
@@ -64,23 +64,23 @@ export function moveCardsTool(
   return postChangeSet(baseUrl, projectId, makeChangeSet([{ kind: 'move_cards', moves: args.moves }]))
 }
 
-export function createSourceCardTool(
+export function createNoteCardTool(
   baseUrl: string,
   projectId: string,
   args: { text: string; x: number; y: number },
 ): Promise<void> {
   return postChangeSet(baseUrl, projectId, makeChangeSet([
-    { kind: 'create_source_card', text: args.text, x: args.x, y: args.y },
+    { kind: 'create_note_card', text: args.text, x: args.x, y: args.y },
   ]))
 }
 
 /**
- * Create a reference source card. Fetches an unfurl baseline for the url
+ * Create a reference note card. Fetches an unfurl baseline for the url
  * (title/site/favicon/hero, and citation metadata for papers), then overlays any
  * fields Claude researched — Claude wins for the fields it provides, the unfurl
  * baseline fills the rest (and keeps the locally-cached favicon/thumbnail). If
  * the page can't be fetched, falls back to a minimal reference so a card still
- * lands. Writes only reference *facts* + a new source card — never prose.
+ * lands. Writes only reference *facts* + a new note card — never prose.
  */
 export async function createReferenceTool(
   baseUrl: string,

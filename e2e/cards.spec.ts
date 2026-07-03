@@ -41,8 +41,8 @@ test('note card is muted and shows its Note badge', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
 
-  await page.getByTestId('new-source').click()
-  const source = page.locator('.elves-card--source').first()
+  await page.getByTestId('new-note').click()
+  const source = page.locator('.elves-card--note').first()
   await expect(source).toBeVisible()
   await expect(source.getByTestId('card-badge')).toHaveText('Note')
 })

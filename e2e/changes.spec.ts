@@ -17,7 +17,7 @@ test.beforeEach(async ({ request }) => {
 test('move_cards repositions a card and one Ctrl-Z reverts it', async ({ page, request }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
-  await page.getByTestId('new-source').click()
+  await page.getByTestId('new-note').click()
   // Wait until the card is persisted so the change-set cross-check is satisfied.
   await expect.poll(async () => (await serverCardIds(request, projectId)).length).toBe(1)
   const [id] = await serverCardIds(request, projectId)
@@ -33,22 +33,22 @@ test('move_cards repositions a card and one Ctrl-Z reverts it', async ({ page, r
   await expect.poll(async () => Math.round((await cardById(request, id))?.x ?? 0)).toBe(Math.round(before.x))
 })
 
-test('merge_sources hides duplicates under the representative and marks provenance', async ({ page, request }) => {
+test('merge_notes hides duplicates under the representative and marks provenance', async ({ page, request }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
-  await page.getByTestId('new-source').click()
-  await page.getByTestId('new-source').click()
+  await page.getByTestId('new-note').click()
+  await page.getByTestId('new-note').click()
   // Both cards must be persisted before the merge (cross-check references both ids).
   await expect.poll(async () => (await serverCardIds(request, projectId)).length).toBe(2)
   const ids = await serverCardIds(request, projectId)
 
   await request.post(`${BASE}/projects/${projectId}/changeset`, {
-    data: { id: 'mg1', author: 'claude', ops: [{ kind: 'merge_sources', cardIds: ids }] },
+    data: { id: 'mg1', author: 'claude', ops: [{ kind: 'merge_notes', cardIds: ids }] },
   })
 
-  // representative shows the merged badge; exactly one visible source card remains
+  // representative shows the merged badge; exactly one visible note card remains
   await expect(page.getByTestId('merged-badge')).toBeVisible()
-  await expect(page.locator('.elves-card--source:visible')).toHaveCount(1)
+  await expect(page.locator('.elves-card--note:visible')).toHaveCount(1)
   // Poll for the persisted provenance (the client save of the merge is async).
   await expect.poll(async () => (await cardById(request, ids[1]))?.props?.mergedInto).toBe(ids[0])
 

@@ -2,9 +2,9 @@ import { CommentType, Reference, RefType } from './types'
 
 export type Op =
   | { kind: 'add_comment'; cardId: string; comment: { type: CommentType | null; text: string } }
-  | { kind: 'merge_sources'; cardIds: string[] }
+  | { kind: 'merge_notes'; cardIds: string[] }
   | { kind: 'move_cards'; moves: { cardId: string; x: number; y: number }[] }
-  | { kind: 'create_source_card'; text: string; x: number; y: number }
+  | { kind: 'create_note_card'; text: string; x: number; y: number }
   | { kind: 'create_reference'; reference: Reference; x: number; y: number }
   | { kind: 'create_section'; text: string; x: number; y: number }
   | { kind: 'move_sections'; moves: { sectionId: string; x: number; y: number }[] }
@@ -68,14 +68,14 @@ function isOp(v: unknown): v is Op {
       return typeof op.cardId === 'string' && !!c &&
         typeof c.text === 'string' && COMMENT_TYPES.includes(c.type as CommentType | null)
     }
-    case 'merge_sources':
+    case 'merge_notes':
       return Array.isArray(op.cardIds) && op.cardIds.every((id) => typeof id === 'string')
     case 'move_cards':
       return Array.isArray(op.moves) && op.moves.every((m) => {
         const mm = m as Record<string, unknown>
         return typeof mm.cardId === 'string' && typeof mm.x === 'number' && typeof mm.y === 'number'
       })
-    case 'create_source_card':
+    case 'create_note_card':
       return typeof op.text === 'string' && typeof op.x === 'number' && typeof op.y === 'number'
     case 'create_reference':
       return isReference(op.reference) && typeof op.x === 'number' && typeof op.y === 'number'
@@ -107,7 +107,7 @@ export function isChangeSet(value: unknown): value is ChangeSet {
 /**
  * Defense-in-depth for the core rule "Claude never writes prose". Returns true
  * iff any op in the change-set would write prose text or edit an existing card's text.
- * create_source_card creates a new source card (allowed), so it returns false for it.
+ * create_note_card creates a new note card (allowed), so it returns false for it.
  * The server calls this before applying, so if a text-writing op is ever added it must
  * be added here consciously.
  *
@@ -116,10 +116,10 @@ export function isChangeSet(value: unknown): value is ChangeSet {
  * explicitly permitted to write and rename them. That permission is scoped to
  * this one op — it does not touch card text in any way.
  *
- * create_reference is likewise allowed: it creates a new SOURCE card carrying
+ * create_reference is likewise allowed: it creates a new note card carrying
  * structured bibliographic *facts* (the reference object) with an EMPTY
  * annotation `text`. It writes reference material and metadata, never the user's
- * own words — the same side of the boundary as create_source_card.
+ * own words — the same side of the boundary as create_note_card.
  *
  * set_summary is likewise a deliberate exception: it writes a model-authored
  * GIST *about* a card into the card's separate `summary` field. Like a comment
@@ -130,9 +130,9 @@ export function changeSetWritesText(cs: ChangeSet): boolean {
   return cs.ops.some((op) => {
     switch (op.kind) {
       case 'add_comment':
-      case 'merge_sources':
+      case 'merge_notes':
       case 'move_cards':
-      case 'create_source_card':
+      case 'create_note_card':
       case 'create_reference':
       case 'create_section':
       case 'move_sections':
@@ -158,7 +158,7 @@ export function planMerge(cardIds: string[]): MergePlan {
 
 /**
  * Card ids an op references as an EXISTING card (comment target, merge members,
- * move targets). create_source_card mints a new id and references nothing, so it
+ * move targets). create_note_card mints a new id and references nothing, so it
  * is excluded. The server uses this to reject a change-set that targets a card
  * outside the project it was posted to.
  */
@@ -166,7 +166,7 @@ export function referencedCardIds(cs: ChangeSet): string[] {
   const ids: string[] = []
   for (const op of cs.ops) {
     if (op.kind === 'add_comment') ids.push(op.cardId)
-    else if (op.kind === 'merge_sources') ids.push(...op.cardIds)
+    else if (op.kind === 'merge_notes') ids.push(...op.cardIds)
     else if (op.kind === 'move_cards') ids.push(...op.moves.map((m) => m.cardId))
     else if (op.kind === 'set_summary') ids.push(op.cardId)
   }

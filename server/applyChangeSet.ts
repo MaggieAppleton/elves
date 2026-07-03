@@ -3,7 +3,7 @@ import { getIndexAbove, IndexKey } from '@tldraw/utils'
 import type { CanvasSnapshot } from './store'
 import { ChangeSet, planMerge } from '../src/model/changeset'
 import { makeComment, addComment } from '../src/model/comments'
-import { makeSourceCardProps, makeReferenceCardProps } from '../src/model/cards'
+import { makeNoteCardProps, makeReferenceCardProps } from '../src/model/cards'
 import { makeSectionProps } from '../src/model/sections'
 
 type StoreRecords = Record<string, any>
@@ -61,11 +61,11 @@ export function applyChangeSetToSnapshot(
         shape.props.comments = addComment(shape.props.comments ?? [], comment)
         break
       }
-      case 'merge_sources': {
+      case 'merge_notes': {
         const { representativeId, hiddenIds } = planMerge(op.cardIds)
         for (const id of hiddenIds) {
           const shape = findCardShape(store, id)
-          if (shape && shape.props.kind === 'source') shape.props.mergedInto = representativeId
+          if (shape && shape.props.kind === 'note') shape.props.mergedInto = representativeId
         }
         break
       }
@@ -79,7 +79,7 @@ export function applyChangeSetToSnapshot(
         }
         break
       }
-      case 'create_source_card': {
+      case 'create_note_card': {
         const id = createShapeId()
         store[id] = {
           id,
@@ -93,7 +93,7 @@ export function applyChangeSetToSnapshot(
           meta: {},
           parentId: defaultPageId(store),
           index: getIndexAbove(topIndex(store)),
-          props: makeSourceCardProps(op.text, 'transcribed'),
+          props: makeNoteCardProps(op.text, 'transcribed'),
         }
         break
       }

@@ -12,7 +12,7 @@ import {
   addCommentTool,
   readMapTool,
   readCardsTool,
-  createSourceCardTool,
+  createNoteCardTool,
   createReferenceTool,
   createSectionTool,
   moveSectionsTool,
@@ -44,7 +44,7 @@ afterEach(async () => {
 
 async function seedCard(base: string, id: string) {
   const snap = {
-    document: { store: { [id]: { id, typeName: 'shape', type: 'card', x: 1, y: 2, props: { w: 240, h: 120, kind: 'prose', sourceKind: null, origin: null, text: 'hi', comments: [], mergedInto: null } } } },
+    document: { store: { [id]: { id, typeName: 'shape', type: 'card', x: 1, y: 2, props: { w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text: 'hi', comments: [], mergedInto: null } } } },
     session: null,
   }
   await fetch(`${base}/projects/essay/canvas`, {
@@ -84,17 +84,17 @@ test('addCommentTool posts a change-set the server broadcasts tagged with the pr
   ws.close()
 })
 
-test('createSourceCardTool posts a create_source_card change-set', async () => {
+test('createNoteCardTool posts a create_note_card change-set', async () => {
   const { base } = await liveElves()
   const ws = new WebSocket(base.replace('http', 'ws') + '/ws')
   const received = new Promise<any>((res) => ws.on('message', (d) => res(JSON.parse(d.toString()))))
   await new Promise<void>((r) => ws.on('open', () => r()))
 
-  await createSourceCardTool(base, 'essay', { text: 'typed handwriting', x: 5, y: 6 })
+  await createNoteCardTool(base, 'essay', { text: 'typed handwriting', x: 5, y: 6 })
 
   const { projectId, changeSet } = await received
   expect(projectId).toBe('essay')
-  expect(changeSet.ops).toEqual([{ kind: 'create_source_card', text: 'typed handwriting', x: 5, y: 6 }])
+  expect(changeSet.ops).toEqual([{ kind: 'create_note_card', text: 'typed handwriting', x: 5, y: 6 }])
   ws.close()
 })
 
@@ -103,7 +103,7 @@ test('readMapTool reads the cheap map (gist, no full text) for the project', asy
   await seedCard(base, 'shape:a')
   const map = await readMapTool(base, 'essay')
   expect(map).toEqual({
-    cards: [{ id: 'shape:a', kind: 'prose', sourceKind: null, x: 1, y: 2, gist: 'hi', textLen: 2 }],
+    cards: [{ id: 'shape:a', kind: 'prose', noteKind: null, x: 1, y: 2, gist: 'hi', textLen: 2 }],
     sections: [],
   })
 })
@@ -113,7 +113,7 @@ test('readCardsTool reads full digests for the requested card ids', async () => 
   await seedCard(base, 'shape:a')
   const cards = await readCardsTool(base, 'essay', ['shape:a'])
   expect(cards).toEqual([
-    { id: 'shape:a', kind: 'prose', sourceKind: null, origin: null, text: 'hi', x: 1, y: 2, comments: [], mergedInto: null, assetPath: null, reference: null, summary: null },
+    { id: 'shape:a', kind: 'prose', noteKind: null, origin: null, text: 'hi', x: 1, y: 2, comments: [], mergedInto: null, assetPath: null, reference: null, summary: null },
   ])
 })
 

@@ -22,7 +22,7 @@ class FakeSummarizer implements Summarizer {
 }
 
 function card(over: Partial<ReconcileCard> = {}): ReconcileCard {
-  return { id: 'c1', kind: 'prose', sourceKind: null, text: LONG, summary: null, summaryOfHash: null, ...over }
+  return { id: 'c1', kind: 'prose', noteKind: null, text: LONG, summary: null, summaryOfHash: null, ...over }
 }
 
 test('reconcile generates a set_summary for a long card with no summary', async () => {
@@ -91,7 +91,7 @@ test('createServer with a summarizer broadcasts + persists a summary after a can
   const snap = {
     document: { store: { 'shape:a': {
       id: 'shape:a', typeName: 'shape', type: 'card', x: 0, y: 0,
-      props: { w: 240, h: 120, kind: 'prose', sourceKind: null, origin: null, text: LONG, comments: [], mergedInto: null },
+      props: { w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text: LONG, comments: [], mergedInto: null },
     } } },
     session: null,
   }

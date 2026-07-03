@@ -3,7 +3,7 @@ import {
   shouldShowGist, gistFontSize, GIST_ZOOM, GIST_FONT_MIN, GIST_FONT_MAX,
 } from '../../src/shapes/summaryView'
 
-const summarized = { sourceKind: null, summary: 'a gist' } as const
+const summarized = { noteKind: null, summary: 'a gist' } as const
 const OUT = GIST_ZOOM - 0.1
 const IN = GIST_ZOOM + 0.1
 
@@ -17,12 +17,12 @@ test('zoomed out with a summary: show the gist', () => {
 })
 
 test('zoomed out but no summary (short or ungenerated): keep the real text', () => {
-  expect(shouldShowGist(OUT, { sourceKind: null, summary: null })).toBe(false)
+  expect(shouldShowGist(OUT, { noteKind: null, summary: null })).toBe(false)
 })
 
 test('image and reference cards never swap to a gist', () => {
-  expect(shouldShowGist(OUT, { sourceKind: 'image', summary: 'x' })).toBe(false)
-  expect(shouldShowGist(OUT, { sourceKind: 'reference', summary: 'x' })).toBe(false)
+  expect(shouldShowGist(OUT, { noteKind: 'image', summary: 'x' })).toBe(false)
+  expect(shouldShowGist(OUT, { noteKind: 'reference', summary: 'x' })).toBe(false)
 })
 
 test('gistFontSize is a consistent, clamped size across the zoom-out range', () => {

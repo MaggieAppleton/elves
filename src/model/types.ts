@@ -1,5 +1,5 @@
-export type CardKind = 'source' | 'prose'
-export type SourceKind = 'text' | 'image' | 'reference'
+export type CardKind = 'note' | 'prose'
+export type NoteKind = 'text' | 'image' | 'reference'
 export type Origin = 'tana' | 'image' | 'typed' | 'transcribed' | 'reference'
 
 export type CommentType = 'needs-evidence' | 'weak-argument' | 'needs-citation'
@@ -13,7 +13,7 @@ export type RefType =
 export type RefFetcher = 'unfurl' | 'claude' | 'user'
 
 /**
- * Structured metadata for a reference source card (sourceKind === 'reference').
+ * Structured metadata for a reference note card (noteKind === 'reference').
  * These are bibliographic *facts* — the app (unfurl) or Claude (research) may
  * write them. They are distinct from the card's `text`, which stays the user's
  * own annotation about the source. Favicon/thumbnail are stored as local asset
@@ -53,19 +53,19 @@ export interface CardProps {
   w: number
   h: number
   kind: CardKind
-  /** Set when kind === 'source'; null for prose. */
-  sourceKind: SourceKind | null
-  /** Provenance for source cards; null for prose. */
+  /** Set when kind === 'note'; null for prose. */
+  noteKind: NoteKind | null
+  /** Provenance for note cards; null for prose. */
   origin: Origin | null
-  /** Human-authored. For source cards this is reference text, never prose. */
+  /** Human-authored. For note cards this is reference text, never prose. */
   text: string
   /** Claude-authored comments attached to this card. */
   comments: Comment[]
-  /** If set, this source card was merged into the referenced representative card (hidden, recoverable). */
+  /** If set, this note card was merged into the referenced representative card (hidden, recoverable). */
   mergedInto: string | null
-  /** For image source cards: the stored asset id (a filename under data/assets/). null otherwise. */
+  /** For image note cards: the stored asset id (a filename under data/assets/). null otherwise. */
   assetId: string | null
-  /** For reference source cards (sourceKind === 'reference'): structured metadata; null otherwise. */
+  /** For reference note cards (noteKind === 'reference'): structured metadata; null otherwise. */
   reference: Reference | null
   /**
    * A model-authored one-phrase gist of a long card's `text`, shown on the

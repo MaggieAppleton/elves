@@ -18,11 +18,11 @@ const FONT_FAMILY = "'Inter Variable', 'Inter', system-ui, -apple-system, sans-s
 
 // --- Cards ---------------------------------------------------------------
 // card.css: font 15px / line-height 1.45; padding 12px (top/bottom) 14px (l/r).
-// A source card also carries a "NOTE" badge row (badge + 6px flex gap) above
+// A note card also carries a "NOTE" badge row (badge + 6px flex gap) above
 // the text; prose cards don't.
 const CARD_PAD_X = 28 // 14 left + 14 right
 const CARD_PAD_Y = 24 // 12 top + 12 bottom
-const CARD_BADGE_ROW = 20 // NOTE badge line + gap (source cards only)
+const CARD_BADGE_ROW = 20 // NOTE badge line + gap (note cards only)
 
 export function measuredCardHeight(
   editor: Editor,

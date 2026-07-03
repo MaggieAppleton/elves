@@ -3,7 +3,7 @@ import { ChangeSet, Op, planMerge } from '../model/changeset'
 import { CardShape } from '../shapes/CardShapeUtil'
 import { SectionShape } from '../shapes/SectionShapeUtil'
 import { makeComment, addComment } from '../model/comments'
-import { makeSourceCardProps, makeReferenceCardProps } from '../model/cards'
+import { makeNoteCardProps, makeReferenceCardProps } from '../model/cards'
 import { makeSectionProps } from '../model/sections'
 
 function newId(prefix: string): string {
@@ -20,11 +20,11 @@ function applyAddComment(editor: Editor, op: Extract<Op, { kind: 'add_comment' }
   })
 }
 
-function applyMerge(editor: Editor, op: Extract<Op, { kind: 'merge_sources' }>): void {
+function applyMerge(editor: Editor, op: Extract<Op, { kind: 'merge_notes' }>): void {
   const { representativeId, hiddenIds } = planMerge(op.cardIds)
   for (const id of hiddenIds) {
     const shape = editor.getShape(id as CardShape['id']) as CardShape | undefined
-    if (shape && shape.props.kind === 'source') {
+    if (shape && shape.props.kind === 'note') {
       editor.updateShape<CardShape>({ id: shape.id, type: 'card', props: { mergedInto: representativeId } })
     }
   }
@@ -37,13 +37,13 @@ function applyMove(editor: Editor, op: Extract<Op, { kind: 'move_cards' }>): voi
   }
 }
 
-function applyCreateSourceCard(editor: Editor, op: Extract<Op, { kind: 'create_source_card' }>): void {
+function applyCreateNoteCard(editor: Editor, op: Extract<Op, { kind: 'create_note_card' }>): void {
   editor.createShape<CardShape>({
     id: createShapeId(),
     type: 'card',
     x: op.x,
     y: op.y,
-    props: makeSourceCardProps(op.text, 'transcribed'),
+    props: makeNoteCardProps(op.text, 'transcribed'),
   })
 }
 
@@ -102,14 +102,14 @@ function applyOp(editor: Editor, op: Op): void {
     case 'add_comment':
       applyAddComment(editor, op)
       break
-    case 'merge_sources':
+    case 'merge_notes':
       applyMerge(editor, op)
       break
     case 'move_cards':
       applyMove(editor, op)
       break
-    case 'create_source_card':
-      applyCreateSourceCard(editor, op)
+    case 'create_note_card':
+      applyCreateNoteCard(editor, op)
       break
     case 'create_reference':
       applyCreateReference(editor, op)
