@@ -1,9 +1,9 @@
 import type { ChangeSet, Op } from '../src/model/changeset'
 import type { CommentType, Reference, RefType } from '../src/model/types'
-import type { CanvasDigest } from '../server/digest'
+import type { CardDigest, CardMap } from '../server/digest'
 import { minimalReference } from '../server/unfurl'
 import {
-  readCanvasDigest, postChangeSet, unfurlReference, listProjects, type ProjectSummary,
+  readCardMap, readCards, postChangeSet, unfurlReference, listProjects, type ProjectSummary,
 } from './elvesClient'
 
 /** Fields Claude may supply to override / enrich the unfurl baseline. */
@@ -26,8 +26,16 @@ export function listProjectsTool(baseUrl: string): Promise<ProjectSummary[]> {
   return listProjects(baseUrl)
 }
 
-export function readCanvasTool(baseUrl: string, projectId: string): Promise<CanvasDigest> {
-  return readCanvasDigest(baseUrl, projectId)
+export function readMapTool(baseUrl: string, projectId: string): Promise<CardMap> {
+  return readCardMap(baseUrl, projectId)
+}
+
+export function readCardsTool(
+  baseUrl: string,
+  projectId: string,
+  cardIds: string[],
+): Promise<CardDigest[]> {
+  return readCards(baseUrl, projectId, cardIds)
 }
 
 export function addCommentTool(

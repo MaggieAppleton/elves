@@ -10,7 +10,8 @@ import { createProject } from '../../server/projects'
 import {
   makeChangeSet,
   addCommentTool,
-  readCanvasTool,
+  readMapTool,
+  readCardsTool,
   createSourceCardTool,
   createReferenceTool,
   createSectionTool,
@@ -97,16 +98,23 @@ test('createSourceCardTool posts a create_source_card change-set', async () => {
   ws.close()
 })
 
-test('readCanvasTool reads the cards+sections digest for the project', async () => {
+test('readMapTool reads the cheap map (gist, no full text) for the project', async () => {
   const { base } = await liveElves()
   await seedCard(base, 'shape:a')
-  const digest = await readCanvasTool(base, 'essay')
-  expect(digest).toEqual({
-    cards: [
-      { id: 'shape:a', kind: 'prose', sourceKind: null, origin: null, text: 'hi', x: 1, y: 2, comments: [], mergedInto: null, assetPath: null, reference: null },
-    ],
+  const map = await readMapTool(base, 'essay')
+  expect(map).toEqual({
+    cards: [{ id: 'shape:a', kind: 'prose', sourceKind: null, x: 1, y: 2, gist: 'hi', textLen: 2 }],
     sections: [],
   })
+})
+
+test('readCardsTool reads full digests for the requested card ids', async () => {
+  const { base } = await liveElves()
+  await seedCard(base, 'shape:a')
+  const cards = await readCardsTool(base, 'essay', ['shape:a'])
+  expect(cards).toEqual([
+    { id: 'shape:a', kind: 'prose', sourceKind: null, origin: null, text: 'hi', x: 1, y: 2, comments: [], mergedInto: null, assetPath: null, reference: null, summary: null },
+  ])
 })
 
 test('createReferenceTool unfurls a url and posts a create_reference change-set, Claude fields winning', async () => {
@@ -140,7 +148,7 @@ test('createReferenceTool unfurls a url and posts a create_reference change-set,
 
 test('a tool call for an unknown project rejects with a helpful error', async () => {
   const { base } = await liveElves()
-  await expect(readCanvasTool(base, 'ghost')).rejects.toThrow(/unknown project/)
+  await expect(readMapTool(base, 'ghost')).rejects.toThrow(/unknown project/)
 })
 
 test('createSectionTool posts a create_section change-set', async () => {

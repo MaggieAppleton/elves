@@ -151,6 +151,16 @@ export function applyChangeSetToSnapshot(
         }
         break
       }
+      case 'set_summary': {
+        const shape = findCardShape(store, op.cardId)
+        if (shape) {
+          shape.props.summary = op.summary
+          shape.props.summaryOfHash = op.summaryOfHash
+          shape.props.summaryBy = op.summaryBy
+          shape.props.summaryAt = op.summaryAt
+        }
+        break
+      }
     }
   }
   return next

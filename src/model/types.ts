@@ -67,6 +67,20 @@ export interface CardProps {
   assetId: string | null
   /** For reference source cards (sourceKind === 'reference'): structured metadata; null otherwise. */
   reference: Reference | null
+  /**
+   * A model-authored one-phrase gist of a long card's `text`, shown on the
+   * navigation map and when the canvas is zoomed out. It is a LABEL about the
+   * card — like a comment or a section header — never the card's own words, so
+   * it lives here beside `text` and never replaces it. null when the card is
+   * short (it is its own summary) or no summary has been generated yet.
+   */
+  summary: string | null
+  /** Hash of the `text` this summary was built from, for staleness detection. */
+  summaryOfHash: string | null
+  /** Provenance of the summary, e.g. 'ollama/llama3.2' or 'openai/gpt-4o-mini'. */
+  summaryBy: string | null
+  /** ISO timestamp of when the summary was generated. */
+  summaryAt: string | null
 }
 
 export const CARD_DEFAULT_W = 240

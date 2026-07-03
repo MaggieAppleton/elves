@@ -44,7 +44,8 @@ MCP server. In Claude Code, opening this project offers the `elves` MCP server
 weak spots", "dedupe my source cards", or "reorder these points for flow". Claude's
 changes appear live and are undoable.
 
-Claude's tools include `list_projects`, `read_canvas`, `add_comment`,
+Claude's tools include `list_projects`, `read_map` (a cheap, token-light canvas map
+with a one-line gist per card) and `read_cards` (full text for specific cards), `add_comment`,
 `merge_sources`, `move_cards`, `create_source_card` (transcribe an image, Phase 3b),
 `create_reference` (turn a mention or url into a rich reference card, Phase 5), and the
 section tools. Every canvas tool takes a **required `project` id**: Claude calls
@@ -146,12 +147,29 @@ Set via environment variables:
 | `ELVES_DATA` | `data/` (relative to `server/`) | Data root holding `projects/<id>/…` — **all your projects**. |
 | `PORT` | `5199` | Port for the canvas server. |
 | `VITE_SERVER_URL` | `http://localhost:5199` | Where the web app looks for the server. |
+| `ELVES_SUMMARIZER` | `ollama` | Summary backend: `ollama` (local, default), `openai` (cloud mini model), or `off`. |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama endpoint used when `ELVES_SUMMARIZER=ollama`. |
+| `OLLAMA_MODEL` | `llama3.2` | Local model for summaries. |
+| `OPENAI_API_KEY` / `OPENAI_MODEL` | — / `gpt-4o-mini` | Used when `ELVES_SUMMARIZER=openai`. |
 
 Example — keep a separate set of projects (e.g. for testing):
 
 ```bash
 ELVES_DATA=./scratch-data npm run server
 ```
+
+### Card summaries (zoom-out gists)
+
+Long cards get a one-line, model-authored **summary** shown on Claude's `read_map`
+and when you zoom out over the canvas — so the shape of a big piece reads at a glance.
+Summaries are generated **server-side, locally, by default** via
+[Ollama](https://ollama.com): install it and `ollama pull llama3.2`, and the server
+summarizes long cards as you edit (and backfills existing ones on startup). No Ollama?
+No problem — summaries stay empty and the map/zoom fall back to a mechanical first-line
+truncation; nothing breaks. Summaries never touch your card text — like section
+headers and comments, they're a Claude-authored label *about* a card, shown in Claude's
+accent colour. Set `ELVES_SUMMARIZER=openai` (with `OPENAI_API_KEY`) to use a cheap
+cloud model instead, or `off` to disable generation.
 
 ## Scripts
 

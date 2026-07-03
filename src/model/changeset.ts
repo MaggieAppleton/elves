@@ -9,6 +9,14 @@ export type Op =
   | { kind: 'create_section'; text: string; x: number; y: number }
   | { kind: 'move_sections'; moves: { sectionId: string; x: number; y: number }[] }
   | { kind: 'edit_section_text'; sectionId: string; text: string }
+  | {
+      kind: 'set_summary'
+      cardId: string
+      summary: string | null
+      summaryOfHash: string | null
+      summaryBy: string | null
+      summaryAt: string | null
+    }
 
 const REF_TYPES: readonly RefType[] = [
   'paper', 'article', 'book', 'software', 'social', 'video', 'wiki', 'link',
@@ -80,6 +88,10 @@ function isOp(v: unknown): v is Op {
       })
     case 'edit_section_text':
       return typeof op.sectionId === 'string' && typeof op.text === 'string'
+    case 'set_summary':
+      return typeof op.cardId === 'string' &&
+        isStringOrNull(op.summary) && isStringOrNull(op.summaryOfHash) &&
+        isStringOrNull(op.summaryBy) && isStringOrNull(op.summaryAt)
     default:
       return false
   }
@@ -108,6 +120,11 @@ export function isChangeSet(value: unknown): value is ChangeSet {
  * structured bibliographic *facts* (the reference object) with an EMPTY
  * annotation `text`. It writes reference material and metadata, never the user's
  * own words — the same side of the boundary as create_source_card.
+ *
+ * set_summary is likewise a deliberate exception: it writes a model-authored
+ * GIST *about* a card into the card's separate `summary` field. Like a comment
+ * or a section label, it is a machine annotation, never the user's prose or the
+ * card's own `text` — which it does not touch. Scoped to this one op.
  */
 export function changeSetWritesText(cs: ChangeSet): boolean {
   return cs.ops.some((op) => {
@@ -120,6 +137,7 @@ export function changeSetWritesText(cs: ChangeSet): boolean {
       case 'create_section':
       case 'move_sections':
       case 'edit_section_text':
+      case 'set_summary':
         return false
       default:
         return true // unknown op: treat as unsafe
@@ -150,6 +168,7 @@ export function referencedCardIds(cs: ChangeSet): string[] {
     if (op.kind === 'add_comment') ids.push(op.cardId)
     else if (op.kind === 'merge_sources') ids.push(...op.cardIds)
     else if (op.kind === 'move_cards') ids.push(...op.moves.map((m) => m.cardId))
+    else if (op.kind === 'set_summary') ids.push(op.cardId)
   }
   return ids
 }

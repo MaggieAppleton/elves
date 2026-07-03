@@ -2,7 +2,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import {
-  readCanvasTool,
+  readMapTool,
+  readCardsTool,
   addCommentTool,
   mergeSourcesTool,
   moveCardsTool,
@@ -37,11 +38,20 @@ export function createMcpServer(baseUrl: string): McpServer {
   )
 
   server.tool(
-    'read_canvas',
-    'Read a project\'s canvas as { cards, sections }. Cards: id, kind (prose|source), sourceKind (text|image|reference), text, x/y position (x is narrative order: left=earlier, right=later), comments, mergedInto, and — for reference cards — a `reference` object (url, refType, title, authors, year, venue, doi, …). Sections: id, text (a short thematic label), x/y, and authoredBy (user|claude — who wrote its current wording). Call this (with the project id) to get ids before commenting, merging, moving, renaming, or enriching mentions into references.',
+    'read_map',
+    "Read a project's canvas MAP — the cheap, token-light first pass. Returns { cards, sections }. Each card is a small entry: id, kind (prose|source), sourceKind (text|image|reference), x/y position (x is narrative order: left=earlier, right=later), `gist` (a one-line summary of the card — a model-authored summary for long cards, else the card's own short text), `textLen` (character count of the full text), and — when set — `mergedInto` and `refType`. It does NOT include full card text, comment bodies, or reference metadata. Sections: id, text (a short thematic label), x/y, authoredBy (user|claude). Call this FIRST (with the project id) to see the shape of the piece and get ids; then call read_cards for the few cards you actually need in full before commenting, merging, moving, renaming, or enriching.",
     { project: PROJECT },
     async ({ project }) => ({
-      content: [{ type: 'text', text: JSON.stringify(await readCanvasTool(baseUrl, project), null, 2) }],
+      content: [{ type: 'text', text: JSON.stringify(await readMapTool(baseUrl, project)) }],
+    }),
+  )
+
+  server.tool(
+    'read_cards',
+    "Read the FULL content of specific cards by id (get the ids from read_map). Returns each card's kind, sourceKind, origin, full `text`, x/y, `comments`, `mergedInto`, `assetPath` (image cards), `reference` (reference cards), and `summary`. Use this to drill into the handful of cards relevant to your task instead of pulling the whole canvas — read_map first, then read_cards for what matters.",
+    { project: PROJECT, cardIds: z.array(z.string()).min(1) },
+    async ({ project, cardIds }) => ({
+      content: [{ type: 'text', text: JSON.stringify({ cards: await readCardsTool(baseUrl, project, cardIds) }) }],
     }),
   )
 
@@ -77,7 +87,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'create_source_card',
-    "Create a SOURCE card in a project containing text you transcribed from an image. First read the image card's file (read_canvas gives each image card an `assetPath`), then transcribe the handwriting FAITHFULLY — these are the user's own words; digitize them, do not summarize. Position (x, y) near the image. Creates a SOURCE card only — never a prose card.",
+    "Create a SOURCE card in a project containing text you transcribed from an image. First read the image card's file (read_cards gives each image card an `assetPath`), then transcribe the handwriting FAITHFULLY — these are the user's own words; digitize them, do not summarize. Position (x, y) near the image. Creates a SOURCE card only — never a prose card.",
     { project: PROJECT, text: z.string(), x: z.number(), y: z.number() },
     async ({ project, text, x, y }) => {
       await createSourceCardTool(baseUrl, project, { text, x, y })

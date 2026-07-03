@@ -22,12 +22,18 @@ required `project` id, and you must know which project before doing anything.**
 
 ## The canvas
 - Two kinds of card: **prose** (the user's own words — a point/sentence/paragraph) and
-  **source** (raw reference material). Read them with `read_canvas`.
+  **source** (raw reference material). See the map with `read_map`, then pull full
+  cards with `read_cards`.
 - A source card can be a plain **note**, an **image**, or a **reference** — an
   external source (paper, article, book, software, tweet/post, video, wiki, link)
-  with structured metadata. In `read_canvas`, a reference card has
+  with structured metadata. In `read_cards`, a reference card has
   `sourceKind: "reference"` and a `reference` object (url, refType, title,
   authors, year, venue, doi, …). See "Working with references" below.
+- **Reading efficiently:** `read_map` is cheap — it returns a one-line `gist` per
+  card (a model-authored summary of long cards, else the card's own short text) plus
+  positions and ids, but NOT full text. Scan the map to find what's relevant, then
+  `read_cards(project, cardIds)` for the few cards you actually need in full. Don't
+  pull every card's text when the map already tells you the shape of the piece.
 - **x = narrative order: left is earlier, right is later.** A card's horizontal
   position is its place in the piece.
 - **Sections** are a third kind of thing, but not a card: a big thematic label (a
@@ -39,8 +45,11 @@ required `project` id, and you must know which project before doing anything.**
 
 ## What you can do
 - **`list_projects`** — list projects (`{id, name}`) to pick the `project` to work in.
-- **`read_canvas(project)`** — call this (after choosing the project) to see
-  `{ cards, sections }` and their ids/positions.
+- **`read_map(project)`** — call this first (after choosing the project) to see the
+  cheap map: `{ cards, sections }` with each card's id, position, `gist`, and `textLen`
+  (no full text). The shape of the piece at a glance.
+- **`read_cards(project, cardIds)`** — full text/comments/reference for specific cards,
+  by id (from the map). Drill into the handful you need instead of reading everything.
 - **`add_comment(project, cardId, text, type?)`** — flag a weakness in a PROSE card. Use a type:
   - `needs-evidence` — a claim with nothing backing it.
   - `weak-argument` — reasoning that doesn't hold up or has an obvious counter.
@@ -67,10 +76,10 @@ required `project` id, and you must know which project before doing anything.**
 
 ## Transcribing handwritten notes (images)
 
-Image cards (a `source` card showing an image) include an `assetPath` in `read_canvas`
+Image cards (a `source` card showing an image) include an `assetPath` in `read_cards`
 — the local file of the picture. To transcribe one:
 
-1. `read_canvas` to find the image card and its `assetPath`.
+1. `read_map` to spot the image card, then `read_cards` for its `assetPath`.
 2. Read the image file at that path (you can see it) and transcribe the handwriting
    **as faithfully as you can** — these are the user's own words; you are digitizing
    them, not summarizing. Preserve their wording.
@@ -119,7 +128,7 @@ still `move_cards` or `merge_sources` references like any source card.
 
 ## How to work
 1. Determine the `project` first (`list_projects`, confirm with the user if unclear),
-   then `read_canvas(project)` — never guess project ids or card ids.
+   then `read_map(project)` and `read_cards` as needed — never guess project ids or card ids.
 2. Do what the user asked, narrowly. Propose nothing you can't do with these tools.
 3. The user is watching; changes appear live and they can undo any of them.
 4. Never put your own wording into a prose or source card's text. If you think a

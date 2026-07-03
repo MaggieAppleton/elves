@@ -6,9 +6,11 @@ import {
 import { useLayoutEffect, type ReactNode } from 'react'
 import type { CardKind, SourceKind, Origin, Comment, Reference } from '../model/types'
 import { makeProseCardProps } from '../model/cards'
+import { cardGist } from '../model/summary'
 import { visibleComments, resolveComment } from '../model/comments'
 import { assetUrl } from '../client/assets'
 import { measuredCardHeight, measuredReferenceHeight } from './autosize'
+import { shouldShowGist } from './summaryView'
 import { ReferenceCardFace } from './ReferenceCardFace'
 import './card.css'
 
@@ -23,6 +25,10 @@ export type CardShape = TLBaseShape<'card', {
   mergedInto: string | null
   assetId: string | null
   reference: Reference | null
+  summary: string | null
+  summaryOfHash: string | null
+  summaryBy: string | null
+  summaryAt: string | null
 }>
 
 // Validator for the structured reference metadata (sourceKind === 'reference').
@@ -56,8 +62,15 @@ export function addReferenceUp(props: Record<string, unknown>): void {
   props.reference = null
 }
 
+export function addSummaryUp(props: Record<string, unknown>): void {
+  props.summary = null
+  props.summaryOfHash = null
+  props.summaryBy = null
+  props.summaryAt = null
+}
+
 const cardVersions = createShapePropsMigrationIds('card', {
-  AddComments: 1, AddAssetId: 2, AddReference: 3,
+  AddComments: 1, AddAssetId: 2, AddReference: 3, AddSummary: 4,
 })
 
 export const cardMigrations = createShapePropsMigrationSequence({
@@ -83,6 +96,17 @@ export const cardMigrations = createShapePropsMigrationSequence({
       up: (props) => addReferenceUp(props as Record<string, unknown>),
       down: (props) => {
         delete (props as Record<string, unknown>).reference
+      },
+    },
+    {
+      id: cardVersions.AddSummary,
+      up: (props) => addSummaryUp(props as Record<string, unknown>),
+      down: (props) => {
+        const p = props as Record<string, unknown>
+        delete p.summary
+        delete p.summaryOfHash
+        delete p.summaryBy
+        delete p.summaryAt
       },
     },
   ],
@@ -141,6 +165,10 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     mergedInto: T.nullable(T.string),
     assetId: T.nullable(T.string),
     reference: T.nullable(referenceValidator),
+    summary: T.nullable(T.string),
+    summaryOfHash: T.nullable(T.string),
+    summaryBy: T.nullable(T.string),
+    summaryAt: T.nullable(T.string),
   }
 
   getDefaultProps(): CardShape['props'] {
@@ -164,6 +192,9 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     const isImage = sourceKind === 'image' && !!assetId
     const isReference = sourceKind === 'reference' && !!reference
     const isEditing = this.editor.getEditingShapeId() === shape.id
+    // Zoomed far out, a summarized card shows its gist so the piece reads at a
+    // glance. getZoomLevel is reactive, so this re-renders as the user zooms.
+    const showGist = !isEditing && shouldShowGist(this.editor.getZoomLevel(), shape.props)
     const comments = visibleComments(shape.props.comments)
     return (
       <AutosizeCard editor={this.editor} shape={shape}>
@@ -213,6 +244,10 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                       })
                     }
                   />
+                ) : showGist ? (
+                  <div className="elves-card__text elves-card__text--gist" data-testid="card-gist">
+                    {cardGist(shape.props)}
+                  </div>
                 ) : (
                   <div className="elves-card__text" data-testid="card-text">{text}</div>
                 )}

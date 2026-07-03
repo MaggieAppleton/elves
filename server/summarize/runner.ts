@@ -1,0 +1,28 @@
+import type { ChangeSet } from '../../src/model/changeset'
+import { readCanvas, writeCanvas } from '../store'
+import { snapshotToSummarizableCards } from '../digest'
+import { applyChangeSetToSnapshot } from '../applyChangeSet'
+import { reconcileSummaries } from './reconcile'
+import type { Summarizer } from './summarizer'
+
+/**
+ * Read a project's canvas, generate any needed summary updates, persist them,
+ * and return the change-set (for the caller to broadcast) or null if nothing
+ * changed. Re-reads the canvas immediately before writing so a slow summarizer
+ * run can't clobber a user save that landed in the meantime — the set_summary
+ * ops only touch summary fields, and any text that changed under them will fail
+ * the hash check and be regenerated on the next pass.
+ */
+export async function reconcileCanvasFile(
+  canvasPath: string,
+  summarizer: Summarizer,
+  now: () => string,
+): Promise<ChangeSet | null> {
+  const canvas = await readCanvas(canvasPath)
+  const cs = await reconcileSummaries(snapshotToSummarizableCards(canvas), summarizer, now)
+  if (!cs) return null
+  const fresh = await readCanvas(canvasPath)
+  const applied = applyChangeSetToSnapshot(fresh, cs)
+  if (applied) await writeCanvas(canvasPath, applied)
+  return cs
+}

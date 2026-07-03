@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import type { Reference } from '../../src/model/types'
 import {
-  isChangeSet, isReference, planMerge, referencedCardIds, referencedSectionIds,
+  isChangeSet, isReference, planMerge, referencedCardIds, referencedSectionIds, changeSetWritesText,
 } from '../../src/model/changeset'
 
 const VALID_REF: Reference = {
@@ -109,5 +109,35 @@ describe('referencedSectionIds', () => {
       ],
     }
     expect(referencedSectionIds(cs).sort()).toEqual(['shape:a', 'shape:b'])
+  })
+})
+
+describe('set_summary op', () => {
+  const summ = (over: Record<string, unknown> = {}) => ({
+    kind: 'set_summary' as const, cardId: 'shape:a',
+    summary: 'a gist', summaryOfHash: 'abc', summaryBy: 'ollama/llama3.2',
+    summaryAt: '2026-07-03T00:00:00.000Z', ...over,
+  })
+
+  test('a well-formed set_summary change-set validates', () => {
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [summ()] })).toBe(true)
+    // nulls are valid (a clear)
+    expect(isChangeSet({
+      id: 'x', author: 'claude',
+      ops: [summ({ summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null })],
+    })).toBe(true)
+  })
+
+  test('a malformed set_summary is rejected', () => {
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [summ({ cardId: 42 })] })).toBe(false)
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [summ({ summary: 5 })] })).toBe(false)
+  })
+
+  test('set_summary does NOT count as writing card text — it is a label about the card', () => {
+    expect(changeSetWritesText({ id: 'x', author: 'claude', ops: [summ()] })).toBe(false)
+  })
+
+  test('referencedCardIds includes a set_summary target so the project cross-check applies', () => {
+    expect(referencedCardIds({ id: 'x', author: 'claude', ops: [summ()] })).toEqual(['shape:a'])
   })
 })

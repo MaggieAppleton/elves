@@ -5,11 +5,15 @@ import {
 
 export { CARD_DEFAULT_W, CARD_DEFAULT_H }
 
+// A summary is generated later (server-side, for long cards); a card is born
+// without one. Keeping the four fields together keeps every factory honest.
+const NO_SUMMARY = { summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null }
+
 export function makeProseCardProps(text = ''): CardProps {
   return {
     w: CARD_DEFAULT_W, h: CARD_DEFAULT_H,
     kind: 'prose', sourceKind: null, origin: null, text,
-    comments: [], mergedInto: null, assetId: null, reference: null,
+    comments: [], mergedInto: null, assetId: null, reference: null, ...NO_SUMMARY,
   }
 }
 
@@ -17,7 +21,7 @@ export function makeSourceCardProps(text = '', origin: Origin = 'typed'): CardPr
   return {
     w: CARD_DEFAULT_W, h: CARD_DEFAULT_H,
     kind: 'source', sourceKind: 'text', origin, text,
-    comments: [], mergedInto: null, assetId: null, reference: null,
+    comments: [], mergedInto: null, assetId: null, reference: null, ...NO_SUMMARY,
   }
 }
 
@@ -25,7 +29,7 @@ export function makeImageSourceCardProps(assetId: string): CardProps {
   return {
     w: 280, h: 200,
     kind: 'source', sourceKind: 'image', origin: 'image', text: '',
-    comments: [], mergedInto: null, assetId, reference: null,
+    comments: [], mergedInto: null, assetId, reference: null, ...NO_SUMMARY,
   }
 }
 
@@ -38,7 +42,7 @@ export function makeReferenceCardProps(reference: Reference): CardProps {
   return {
     w: REFERENCE_DEFAULT_W, h: REFERENCE_DEFAULT_H,
     kind: 'source', sourceKind: 'reference', origin: 'reference', text: '',
-    comments: [], mergedInto: null, assetId: null, reference,
+    comments: [], mergedInto: null, assetId: null, reference, ...NO_SUMMARY,
   }
 }
 

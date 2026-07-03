@@ -22,9 +22,11 @@ test('the MCP server exposes the scoped tools plus list_projects, and no text-ed
     'merge_sources',
     'move_cards',
     'move_sections',
-    'read_canvas',
+    'read_cards',
+    'read_map',
   ])
   expect(names).not.toContain('edit_text')
+  expect(names).not.toContain('read_canvas')
 
   // Every canvas tool requires a `project`; list_projects does not.
   for (const t of tools) {

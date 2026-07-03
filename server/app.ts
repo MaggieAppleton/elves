@@ -8,8 +8,9 @@ import {
   referencedCardIds,
   referencedSectionIds,
 } from '../src/model/changeset'
-import { snapshotToCards, snapshotToSections, snapshotToCanvasDigest } from './digest'
+import { snapshotToCards, snapshotToSections, snapshotToCardMap, snapshotToCardsById } from './digest'
 import { applyChangeSetToSnapshot } from './applyChangeSet'
+import { reconcileCanvasFile, type Summarizer } from './summarize'
 import { extForMime, saveAsset, resolveAssetPath } from './assets'
 import { unfurl, type UnfurlDeps, type FetchedImage } from './unfurl'
 import {
@@ -81,13 +82,69 @@ function wrap(fn: (req: Request, res: Response) => Promise<unknown>) {
   }
 }
 
+/**
+ * Server-side summary generation. Provided only in production (server/index.ts);
+ * tests and existing callers omit it, so the feature is dormant and every suite
+ * stays hermetic. When present, card-text saves trigger a debounced, single-
+ * flight reconcile per project that broadcasts model-authored summaries.
+ */
+export interface SummarizeConfig {
+  summarizer: Summarizer
+  now?: () => string
+  debounceMs?: number
+}
+
 export function createServer(
   dataRoot: string,
   onChangeSet?: (projectId: string, cs: ChangeSet) => void,
+  summarize?: SummarizeConfig,
 ) {
   const app = express()
   app.use(cors())
   app.use(express.json({ limit: '64mb' }))
+
+  // --- Summary reconciliation scheduler -------------------------------------
+  // Debounce rapid saves per project, and never run two reconciles for the same
+  // project at once (a save during a run re-marks it dirty and re-runs after).
+  const now = summarize?.now ?? (() => new Date().toISOString())
+  const debounceMs = summarize?.debounceMs ?? 1500
+  const pendingTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  const running = new Set<string>()
+  const dirty = new Set<string>()
+
+  async function runSummaries(projectId: string): Promise<void> {
+    if (!summarize) return
+    if (running.has(projectId)) {
+      dirty.add(projectId)
+      return
+    }
+    running.add(projectId)
+    try {
+      const canvasPath = canvasPathFor(dataRoot, projectId)
+      if (canvasPath && (await getProject(dataRoot, projectId))) {
+        const cs = await reconcileCanvasFile(canvasPath, summarize.summarizer, now)
+        if (cs) onChangeSet?.(projectId, cs)
+      }
+    } catch (err) {
+      console.error('[elves] summary reconcile failed:', err)
+    } finally {
+      running.delete(projectId)
+      if (dirty.delete(projectId)) void runSummaries(projectId)
+    }
+  }
+
+  function scheduleSummaries(projectId: string): void {
+    if (!summarize) return
+    const existing = pendingTimers.get(projectId)
+    if (existing) clearTimeout(existing)
+    const timer = setTimeout(() => {
+      pendingTimers.delete(projectId)
+      void runSummaries(projectId)
+    }, debounceMs)
+    // Don't let a pending summary timer keep the process (or a test) alive.
+    timer.unref?.()
+    pendingTimers.set(projectId, timer)
+  }
 
   // Resolve a project's on-disk paths, or send 404 and return null.
   async function requireProject(
@@ -168,16 +225,36 @@ export function createServer(
         return
       }
       await writeCanvas(paths.canvasPath, body as CanvasSnapshot)
+      // A canvas save is where user text edits land — reconcile summaries after.
+      scheduleSummaries(req.params.id)
       res.json({ ok: true })
     }),
   )
 
+  // The cheap navigation map: sections + a small entry per card (gist, position,
+  // textLen), no full text. Claude reads this first, then drills into specific
+  // cards with POST /cards.
   app.get(
-    '/projects/:id/canvas-digest',
+    '/projects/:id/map',
     wrap(async (req, res) => {
       const paths = await requireProject(req.params.id, res)
       if (!paths) return
-      res.json(snapshotToCanvasDigest(await readCanvas(paths.canvasPath), paths.assetsDir))
+      res.json(snapshotToCardMap(await readCanvas(paths.canvasPath)))
+    }),
+  )
+
+  // Drill-down: full digests (text, comments, reference) for specific card ids.
+  app.post(
+    '/projects/:id/cards',
+    wrap(async (req, res) => {
+      const paths = await requireProject(req.params.id, res)
+      if (!paths) return
+      const ids = req.body?.ids
+      if (!Array.isArray(ids) || !ids.every((i) => typeof i === 'string')) {
+        res.status(400).json({ error: 'ids must be a string array' })
+        return
+      }
+      res.json({ cards: snapshotToCardsById(await readCanvas(paths.canvasPath), ids, paths.assetsDir) })
     }),
   )
 
@@ -217,6 +294,9 @@ export function createServer(
       const applied = applyChangeSetToSnapshot(canvas, req.body)
       if (applied) await writeCanvas(paths.canvasPath, applied)
       onChangeSet?.(req.params.id, req.body)
+      // A new source card (e.g. a long transcribed note) may need summarizing;
+      // set_summary change-sets themselves settle to a no-op on the next pass.
+      scheduleSummaries(req.params.id)
       res.json({ ok: true })
     }),
   )

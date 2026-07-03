@@ -1,5 +1,5 @@
 import type { ChangeSet } from '../src/model/changeset'
-import type { CanvasDigest } from '../server/digest'
+import type { CardDigest, CardMap } from '../server/digest'
 import type { Project } from '../server/projects'
 import type { Reference } from '../src/model/types'
 
@@ -12,11 +12,27 @@ export async function listProjects(baseUrl: string): Promise<ProjectSummary[]> {
   return projects.map((p) => ({ id: p.id, name: p.name }))
 }
 
-export async function readCanvasDigest(baseUrl: string, projectId: string): Promise<CanvasDigest> {
-  const res = await fetch(`${baseUrl}/projects/${encodeURIComponent(projectId)}/canvas-digest`)
+export async function readCardMap(baseUrl: string, projectId: string): Promise<CardMap> {
+  const res = await fetch(`${baseUrl}/projects/${encodeURIComponent(projectId)}/map`)
   if (res.status === 404) throw new Error(`unknown project '${projectId}' — call list_projects to see valid ids`)
-  if (!res.ok) throw new Error(`read_canvas failed: ${res.status}`)
-  return res.json() as Promise<CanvasDigest>
+  if (!res.ok) throw new Error(`read_map failed: ${res.status}`)
+  return res.json() as Promise<CardMap>
+}
+
+export async function readCards(
+  baseUrl: string,
+  projectId: string,
+  ids: string[],
+): Promise<CardDigest[]> {
+  const res = await fetch(`${baseUrl}/projects/${encodeURIComponent(projectId)}/cards`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  })
+  if (res.status === 404) throw new Error(`unknown project '${projectId}' — call list_projects to see valid ids`)
+  if (!res.ok) throw new Error(`read_cards failed: ${res.status}`)
+  const { cards } = (await res.json()) as { cards: CardDigest[] }
+  return cards
 }
 
 export async function unfurlReference(

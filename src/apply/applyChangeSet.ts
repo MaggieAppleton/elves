@@ -83,6 +83,20 @@ function applyEditSectionText(editor: Editor, op: Extract<Op, { kind: 'edit_sect
   })
 }
 
+function applySetSummary(editor: Editor, op: Extract<Op, { kind: 'set_summary' }>): void {
+  const shape = editor.getShape(op.cardId as CardShape['id']) as CardShape | undefined
+  if (!shape) return
+  editor.updateShape<CardShape>({
+    id: shape.id, type: 'card',
+    props: {
+      summary: op.summary,
+      summaryOfHash: op.summaryOfHash,
+      summaryBy: op.summaryBy,
+      summaryAt: op.summaryAt,
+    },
+  })
+}
+
 function applyOp(editor: Editor, op: Op): void {
   switch (op.kind) {
     case 'add_comment':
@@ -108,6 +122,9 @@ function applyOp(editor: Editor, op: Op): void {
       break
     case 'edit_section_text':
       applyEditSectionText(editor, op)
+      break
+    case 'set_summary':
+      applySetSummary(editor, op)
       break
   }
 }

@@ -12,6 +12,7 @@ describe('card factories', () => {
       w: CARD_DEFAULT_W, h: CARD_DEFAULT_H, kind: 'prose',
       sourceKind: null, origin: null, text: 'a point I wrote',
       comments: [], mergedInto: null, assetId: null, reference: null,
+      summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
     })
     expect(isProseCard(p)).toBe(true)
     expect(isSourceCard(p)).toBe(false)
@@ -37,6 +38,7 @@ describe('card factories', () => {
     expect(p).toEqual({
       w: 280, h: 200, kind: 'source', sourceKind: 'image', origin: 'image',
       text: '', comments: [], mergedInto: null, assetId: 'abc.png', reference: null,
+      summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
     })
   })
 

@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from 'vitest'
-import { snapshotToCards, snapshotToCanvasDigest } from '../../server/digest'
+import { snapshotToCards } from '../../server/digest'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -68,6 +68,18 @@ function sectionSnapshot(id: string) {
     },
     session: null,
   }
+}
+
+// The old GET /canvas-digest was replaced by GET /map (cheap, no full text) +
+// POST /cards (full digests by id). This rebuilds the equivalent { cards,
+// sections } shape those persistence assertions expect, exercising both.
+async function fullDigest(app: any, project: string) {
+  const map = await request(app).get(`/projects/${project}/map`)
+  const ids = (map.body.cards ?? []).map((c: any) => c.id)
+  const cards = ids.length
+    ? (await request(app).post(`/projects/${project}/cards`).send({ ids })).body.cards
+    : []
+  return { status: map.status, body: { cards, sections: map.body.sections } }
 }
 
 test('POST changeset validates and forwards to onChangeSet with the project id', async () => {
@@ -140,7 +152,7 @@ test('a move_cards change-set persists to disk even with no browser connected', 
   const move = { id: 'x', author: 'claude', ops: [{ kind: 'move_cards', moves: [{ cardId: 'shape:a', x: 9, y: 9 }] }] }
   expect((await request(app).post('/projects/essay/changeset').send(move)).status).toBe(200)
 
-  const digest = await request(app).get('/projects/essay/canvas-digest')
+  const digest = await fullDigest(app, 'essay')
   expect(digest.body.cards[0]).toMatchObject({ x: 9, y: 9 })
 })
 
@@ -154,7 +166,7 @@ test('an add_comment change-set persists to disk even with no browser connected'
   }
   expect((await request(app).post('/projects/essay/changeset').send(cs)).status).toBe(200)
 
-  const digest = await request(app).get('/projects/essay/canvas-digest')
+  const digest = await fullDigest(app, 'essay')
   expect(digest.body.cards[0].comments).toEqual([
     expect.objectContaining({ text: 'needs a source', author: 'claude', resolved: false }),
   ])
@@ -176,7 +188,7 @@ test('a merge_sources change-set persists mergedInto to disk even with no browse
   const cs = { id: 'x', author: 'claude', ops: [{ kind: 'merge_sources', cardIds: ['shape:a', 'shape:b'] }] }
   expect((await request(app).post('/projects/essay/changeset').send(cs)).status).toBe(200)
 
-  const digest = await request(app).get('/projects/essay/canvas-digest')
+  const digest = await fullDigest(app, 'essay')
   const byId = Object.fromEntries(digest.body.cards.map((c: any) => [c.id, c]))
   expect(byId['shape:b'].mergedInto).toBe('shape:a')
   expect(byId['shape:a'].mergedInto).toBeNull()
@@ -189,7 +201,7 @@ test('a create_source_card change-set persists a new card when the project alrea
   const cs = { id: 'x', author: 'claude', ops: [{ kind: 'create_source_card', text: 'new note', x: 5, y: 6 }] }
   expect((await request(app).post('/projects/essay/changeset').send(cs)).status).toBe(200)
 
-  const digest = await request(app).get('/projects/essay/canvas-digest')
+  const digest = await fullDigest(app, 'essay')
   expect(digest.body.cards).toHaveLength(2)
   expect(digest.body.cards.find((c: any) => c.text === 'new note')).toMatchObject({ x: 5, y: 6, kind: 'source' })
 })
@@ -201,7 +213,7 @@ test('create_source_card on a project with no canvas yet falls back to broadcast
   const res = await request(app).post('/projects/essay/changeset').send(csCreate)
   expect(res.status).toBe(200)
   expect(onChangeSet).toHaveBeenCalledWith('essay', csCreate)
-  expect((await request(app).get('/projects/essay/canvas-digest')).body.cards).toEqual([])
+  expect((await fullDigest(app, 'essay')).body.cards).toEqual([])
 })
 
 test('two changesets targeting different projects both land on disk with no browser connected', async () => {
@@ -221,8 +233,8 @@ test('two changesets targeting different projects both land on disk with no brow
   expect(resA.status).toBe(200)
   expect(resB.status).toBe(200)
 
-  const digestA = await request(app).get('/projects/essay-a/canvas-digest')
-  const digestB = await request(app).get('/projects/essay-b/canvas-digest')
+  const digestA = await fullDigest(app, 'essay-a')
+  const digestB = await fullDigest(app, 'essay-b')
   expect(digestA.body.cards[0]).toMatchObject({ x: 1, y: 1 })
   expect(digestB.body.cards[0].comments).toHaveLength(1)
 })
@@ -234,7 +246,7 @@ test('a create_section change-set persists a new section when the project alread
   const cs = { id: 'x', author: 'claude', ops: [{ kind: 'create_section', text: 'Origins', x: 5, y: 6 }] }
   expect((await request(app).post('/projects/essay/changeset').send(cs)).status).toBe(200)
 
-  const digest = await request(app).get('/projects/essay/canvas-digest')
+  const digest = await fullDigest(app, 'essay')
   expect(digest.body.sections).toHaveLength(1)
   expect(digest.body.sections[0]).toMatchObject({ text: 'Origins', x: 5, y: 6, authoredBy: 'claude' })
 })
@@ -246,7 +258,7 @@ test('a move_sections change-set persists to disk even with no browser connected
   const cs = { id: 'x', author: 'claude', ops: [{ kind: 'move_sections', moves: [{ sectionId: 'shape:s', x: 9, y: 9 }] }] }
   expect((await request(app).post('/projects/essay/changeset').send(cs)).status).toBe(200)
 
-  const digest = await request(app).get('/projects/essay/canvas-digest')
+  const digest = await fullDigest(app, 'essay')
   expect(digest.body.sections[0]).toMatchObject({ x: 9, y: 9 })
 })
 
@@ -257,7 +269,7 @@ test('an edit_section_text change-set persists the new text and flips authoredBy
   const cs = { id: 'x', author: 'claude', ops: [{ kind: 'edit_section_text', sectionId: 'shape:s', text: 'The turn' }] }
   expect((await request(app).post('/projects/essay/changeset').send(cs)).status).toBe(200)
 
-  const digest = await request(app).get('/projects/essay/canvas-digest')
+  const digest = await fullDigest(app, 'essay')
   expect(digest.body.sections[0]).toMatchObject({ text: 'The turn', authoredBy: 'claude' })
 })
 
@@ -285,7 +297,7 @@ test('attachRealtime broadcasts a tagged change-set to websocket clients', async
   await new Promise<void>((r) => server.close(() => r()))
 })
 
-test('GET canvas-digest returns cards and sections for the project', async () => {
+test('GET /map returns the cheap map and POST /cards returns full digests', async () => {
   const d = await rootWithProject()
   const app = createServer(d)
   const snap = {
@@ -298,10 +310,22 @@ test('GET canvas-digest returns cards and sections for the project', async () =>
     session: null,
   }
   await request(app).post('/projects/essay/canvas').send(snap)
-  const res = await request(app).get('/projects/essay/canvas-digest')
-  expect(res.status).toBe(200)
-  expect(res.body).toEqual(snapshotToCanvasDigest(snap, assetsDirFor(d, 'essay')!))
-  expect(res.body.cards).toEqual(snapshotToCards(snap, assetsDirFor(d, 'essay')!))
+
+  // The map: a small entry per card (gist, no full text) plus sections.
+  const map = await request(app).get('/projects/essay/map')
+  expect(map.status).toBe(200)
+  expect(map.body.cards).toEqual([
+    { id: 'shape:a', kind: 'source', sourceKind: 'text', x: 5, y: 6, gist: 'raw', textLen: 3 },
+  ])
+  expect(map.body.sections).toEqual([{ id: 'shape:s', text: 'Origins', x: 1, y: 2, authoredBy: 'user' }])
+
+  // The drill-down: full digests for requested ids.
+  const cards = await request(app).post('/projects/essay/cards').send({ ids: ['shape:a'] })
+  expect(cards.status).toBe(200)
+  expect(cards.body.cards).toEqual(snapshotToCards(snap, assetsDirFor(d, 'essay')!))
+
+  // A bad ids payload is a 400.
+  expect((await request(app).post('/projects/essay/cards').send({ ids: 'nope' })).status).toBe(400)
 })
 
 const TINY_PNG = Buffer.from(
