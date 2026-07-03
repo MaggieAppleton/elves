@@ -282,3 +282,7 @@ Your writing stays yours. The data model separates **source** (reference) cards 
 - **Later:** the citation loop (a `needs-citation` comment → attach a reference), reference→claim links, references surviving Tana import / MDX export, multi-device.
 
 See the design specs and build plans for the full rationale: [`2026-07-01-elves-design.md`](./2026-07-01-elves-design.md) (overall) · [`2026-07-01-elves-mvp-phase1-plan.md`](./2026-07-01-elves-mvp-phase1-plan.md) (Phase 1) · [`2026-07-01-elves-phase2-design.md`](./2026-07-01-elves-phase2-design.md) + [`2026-07-01-elves-phase2a-plan.md`](./2026-07-01-elves-phase2a-plan.md) (Phase 2) · [`2026-07-01-elves-phase3-design.md`](./2026-07-01-elves-phase3-design.md) + [`2026-07-01-elves-phase3a-plan.md`](./2026-07-01-elves-phase3a-plan.md) (Phase 3).
+
+## License
+
+[MIT](./LICENSE) © Maggie Appleton. Shared so others can read, learn from, and tinker with the tool. Your own writing and notes live under `data/` (gitignored) and stay on your machine — they are never part of this repository.
