@@ -65,6 +65,10 @@ describe('isChangeSet', () => {
     expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'move_sections', moves: [{ x: 1, y: 2 }] }] })).toBe(false) // missing sectionId
     expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'edit_section_text', sectionId: 'a' }] })).toBe(false) // missing text
   })
+  test('accepts create_question and rejects it without coords', () => {
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'create_question', text: 'why?', x: 0, y: 0 }] })).toBe(true)
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'create_question', text: 'why?' }] })).toBe(false) // missing x/y
+  })
 })
 
 describe('isReference', () => {

@@ -40,3 +40,11 @@ test('section ops, including edit_section_text, do not count as writing CARD tex
   }
   expect(changeSetWritesText(cs)).toBe(false)
 })
+
+test('create_question writes a machine annotation (a question), not card prose — allowed', () => {
+  const cs = {
+    id: 'x', author: 'claude' as const,
+    ops: [{ kind: 'create_question' as const, text: 'What did it cost her?', x: 0, y: 0 }],
+  }
+  expect(changeSetWritesText(cs)).toBe(false)
+})

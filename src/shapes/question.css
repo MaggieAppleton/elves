@@ -1,0 +1,89 @@
+/* =========================================================================
+   Question cards — an editor's sticky note. Visually distinct from cards,
+   comments, and sections: a small, soft, orange-accented note with a "?" glyph
+   and the asking agent's mark. It reads as an annotation floating ON the work,
+   never part of the piece. Its accent is per-agent (--q-accent, set inline from
+   the agent registry); the styles below are neutral about which agent asked.
+   ========================================================================= */
+.elves-question {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border-radius: 8px;
+  font-family: var(--elves-card-font);
+  /* A faint warm wash + a hairline in the agent's accent, so it never reads as
+     one of the user's cream cards. color-mix keeps it in step with any accent. */
+  background: color-mix(in oklch, var(--q-accent) 8%, var(--elves-surface));
+  border: 1px solid color-mix(in oklch, var(--q-accent) 30%, transparent);
+  box-shadow: var(--elves-shadow-sm);
+}
+
+/* Header row: the "?" glyph, the agent logomark, and (on hover) the dismiss ✓. */
+.elves-question__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 18px;
+}
+.elves-question__glyph {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--q-accent);
+}
+.elves-question__mark {
+  display: inline-flex;
+  align-items: center;
+  color: var(--q-accent);
+}
+.elves-question__mark svg { width: 12px; height: 12px; display: block; }
+
+.elves-question__text {
+  font-size: 14px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  /* The agent's words, in the agent's accent (darkened for body legibility) —
+     so it reads unmistakably as Claude asking, not the user's ink. */
+  color: color-mix(in oklch, var(--q-accent) 78%, var(--elves-ink));
+}
+
+/* Dismiss ✓ — pushed to the right of the header, hidden until hover/focus.
+   pointer-events:all because the shape container is pointer-events:none (clicks
+   on the body otherwise fall through to the canvas so you can drag the note). */
+.elves-question__dismiss {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--q-accent);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: all;
+  transition: opacity 120ms ease, background-color 100ms ease;
+}
+/* Revealed on hover/selection (data-reveal is set from tldraw's own hover +
+   selection state, since the pointer-events:none body can't fire CSS :hover). */
+.elves-question[data-reveal="true"] .elves-question__dismiss,
+.elves-question__dismiss:focus-visible { opacity: 1; }
+.elves-question__dismiss:hover {
+  background: color-mix(in oklch, var(--q-accent) 18%, transparent);
+}
+.elves-question__dismiss:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 3px var(--q-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .elves-question__dismiss { transition: none; }
+}

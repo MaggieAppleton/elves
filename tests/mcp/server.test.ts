@@ -15,6 +15,7 @@ test('the MCP server exposes the scoped tools plus list_projects, and no text-ed
   expect(names).toEqual([
     'add_comment',
     'create_note_card',
+    'create_question',
     'create_reference',
     'create_section',
     'edit_section_text',

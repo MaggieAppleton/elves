@@ -160,6 +160,16 @@ export function editSectionTextTool(
   ]))
 }
 
+export function createQuestionTool(
+  baseUrl: string,
+  projectId: string,
+  args: { text: string; x: number; y: number },
+): Promise<void> {
+  return postChangeSet(baseUrl, projectId, makeChangeSet([
+    { kind: 'create_question', text: args.text, x: args.x, y: args.y },
+  ]))
+}
+
 export function groupCardsTool(
   baseUrl: string,
   projectId: string,
