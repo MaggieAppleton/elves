@@ -211,6 +211,41 @@ test('applyChangeSetToSnapshot stamps the change-set author onto the created not
   expect(created.props.authoredBy).toBe('openai')
 })
 
+test('applyChangeSetToSnapshot persists a figure card with title, description-as-text, status, and author', () => {
+  const snap = {
+    document: { store: { 'page:page': { id: 'page:page', typeName: 'page' } } },
+    session: null,
+  } as any
+  const cs = {
+    id: 'x', author: 'openai',
+    ops: [{ kind: 'create_figure_card' as const, title: 'Spectrum', description: 'rigid → malleable axis', x: 1, y: 2 }],
+  }
+  const next = applyChangeSetToSnapshot(snap, cs) as any
+  const created = Object.values(next.document.store).find(
+    (r: any) => r?.typeName === 'shape' && r.type === 'card',
+  ) as any
+  expect(created.props.kind).toBe('figure')
+  expect(created.props.figureTitle).toBe('Spectrum')
+  expect(created.props.text).toBe('rigid → malleable axis')
+  expect(created.props.figureStatus).toBe('idea')
+  expect(created.props.authoredBy).toBe('openai')
+})
+
+test('a create_figure_card change-set persists a figure and the map shows its title + status', async () => {
+  const d = await rootWithProject()
+  const app = createServer(d)
+  await request(app).post('/projects/essay/canvas').send(cardSnapshot('shape:a'))
+  const cs = {
+    id: 'x', author: 'claude',
+    ops: [{ kind: 'create_figure_card', title: 'Timeline', description: 'the sequence of releases', x: 400, y: 0 }],
+  }
+  expect((await request(app).post('/projects/essay/changeset').send(cs)).status).toBe(200)
+
+  const map = await request(app).get('/projects/essay/map')
+  const figure = map.body.cards.find((c: any) => c.kind === 'figure')
+  expect(figure).toMatchObject({ kind: 'figure', gist: 'Timeline', figureStatus: 'idea' })
+})
+
 test('a create_note_card change-set persists a new card when the project already has a canvas', async () => {
   const d = await rootWithProject()
   const app = createServer(d)

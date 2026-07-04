@@ -110,6 +110,21 @@ describe('applyChangeSet affected-id contract', () => {
     expect(ed._shapes.get(ids[0]!)).toBeDefined()
   })
 
+  test('create_figure_card → a freshly-minted figure card stamped with the author', () => {
+    const ed = fakeEditor([])
+    const ids = applyChangeSet(ed as unknown as Editor, cs([
+      { kind: 'create_figure_card', title: 'Spectrum', description: 'rigid → malleable axis', x: 0, y: 0 },
+    ]))
+    expect(ids).toHaveLength(1)
+    const shape = ed._shapes.get(ids[0]!) as any
+    expect(shape.type).toBe('card')
+    expect(shape.props.kind).toBe('figure')
+    expect(shape.props.figureTitle).toBe('Spectrum')
+    expect(shape.props.text).toBe('rigid → malleable axis') // description lives in text
+    expect(shape.props.figureStatus).toBe('idea')
+    expect(shape.props.authoredBy).toBe('claude') // its suggestion, my call
+  })
+
   test('create_section → the freshly-minted section id', () => {
     const ed = fakeEditor([])
     const ids = applyChangeSet(ed as unknown as Editor, cs([

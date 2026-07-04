@@ -1,5 +1,5 @@
 import type { CanvasSnapshot } from './store'
-import type { CardKind, NoteKind, Origin, Comment, Reference, RefType } from '../src/model/types'
+import type { CardKind, NoteKind, Origin, Comment, Reference, RefType, FigureStatus } from '../src/model/types'
 import type { SectionAuthor } from '../src/model/sections'
 import { SummarizableCard, cardGist } from '../src/model/summary'
 import {
@@ -20,6 +20,10 @@ export interface CardDigest {
   assetPath: string | null
   /** Structured metadata when this is a reference note card; null otherwise. */
   reference: Reference | null
+  /** A figure card's working title; '' for non-figure cards. Its `text` holds the description. */
+  figureTitle: string
+  /** A figure card's status (idea|sketched|final); null for non-figure cards. */
+  figureStatus: FigureStatus | null
   /** Model-authored gist of a long card; null when short or not yet generated. */
   summary: string | null
 }
@@ -85,6 +89,9 @@ export interface CardMapEntry {
   textLen: number
   mergedInto?: string
   refType?: RefType
+  /** A figure card's status (idea|sketched|final); set only for figures, so a
+   * critique pass can see planned visuals and nudge long-standing `idea`s. */
+  figureStatus?: FigureStatus
   /** Set when this card is bound into a group (see CardMap.groups); omitted otherwise. */
   groupId?: string
 }
@@ -160,6 +167,8 @@ export function snapshotToCards(snapshot: CanvasSnapshot, assetsDir?: string): C
         ? resolveAssetPath(assetsDir, r.props.assetId)
         : null,
     reference: r.props.reference ?? null,
+    figureTitle: r.props.figureTitle ?? '',
+    figureStatus: r.props.figureStatus ?? null,
     summary: r.props.summary ?? null,
   }))
 }
@@ -197,11 +206,13 @@ export function snapshotToCardMap(snapshot: CanvasSnapshot): CardMap {
         text: r.props.text ?? '',
         summary: r.props.summary ?? null,
         summaryOfHash: r.props.summaryOfHash ?? null,
+        figureTitle: r.props.figureTitle ?? '',
       }),
       textLen: (r.props.text ?? '').length,
     }
     if (r.props.mergedInto) entry.mergedInto = r.props.mergedInto
     if (r.props.reference?.refType) entry.refType = r.props.reference.refType
+    if (r.props.kind === 'figure' && r.props.figureStatus) entry.figureStatus = r.props.figureStatus
     const groupId = directGroupId(store, r)
     if (groupId) entry.groupId = groupId
     return entry

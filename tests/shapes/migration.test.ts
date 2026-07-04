@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest'
 import {
   addCommentsUp, addAssetIdUp, addReferenceUp, addSummaryUp,
-  renameSourceToNoteUp, renameSourceToNoteDown, addAuthoredByUp, addDraftExcludedUp,
+  renameSourceToNoteUp, renameSourceToNoteDown, addAuthoredByUp, addDraftExcludedUp, addFigureUp,
 } from '../../src/shapes/CardShapeUtil'
 
 test('migration adds comments[] and mergedInto to a pre-Phase-2 card', () => {
@@ -96,4 +96,17 @@ test('AddDraftExcluded migration defaults an existing card into the draft (not e
   }
   addDraftExcludedUp(props)
   expect(props.draftExcluded).toBe(false)
+})
+
+test('AddFigure migration defaults an existing card to the non-figure shape', () => {
+  // Existing cards are notes or prose, never figures — default them to an empty
+  // title and no status so they load unchanged and show no figure chrome.
+  const props: Record<string, unknown> = {
+    w: 240, h: 120, kind: 'note', noteKind: 'text', origin: 'typed', text: 'x',
+    comments: [], mergedInto: null, assetId: null, reference: null, authoredBy: null,
+    draftExcluded: false, summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+  }
+  addFigureUp(props)
+  expect(props.figureTitle).toBe('')
+  expect(props.figureStatus).toBeNull()
 })

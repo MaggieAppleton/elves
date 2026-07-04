@@ -30,7 +30,7 @@ test('snapshotToCards projects card shapes into a clean digest', () => {
     session: null,
   }
   expect(snapshotToCards(snapshot)).toEqual([
-    { id: 'shape:a', kind: 'prose', noteKind: null, origin: null, text: 'my point', x: 10, y: 20, comments: [], mergedInto: null, assetPath: null, reference: null, summary: null },
+    { id: 'shape:a', kind: 'prose', noteKind: null, origin: null, text: 'my point', x: 10, y: 20, comments: [], mergedInto: null, assetPath: null, reference: null, figureTitle: '', figureStatus: null, summary: null },
   ])
 })
 
@@ -68,6 +68,43 @@ test('snapshotToCards passes a reference card\'s structured metadata through to 
   const [card] = snapshotToCards(snapshot)
   expect(card.noteKind).toBe('reference')
   expect(card.reference).toEqual(reference)
+})
+
+test('snapshotToCards exposes a figure card\'s title and status, description in text', () => {
+  const snapshot = {
+    document: { store: { 'shape:f': {
+      id: 'shape:f', typeName: 'shape', type: 'card', x: 7, y: 8,
+      props: {
+        w: 260, h: 148, kind: 'figure', noteKind: null, origin: null,
+        text: 'a horizontal rigid → malleable axis', comments: [], mergedInto: null,
+        assetId: null, reference: null, figureTitle: 'Malleability spectrum', figureStatus: 'sketched',
+      },
+    } } },
+    session: null,
+  }
+  const [card] = snapshotToCards(snapshot)
+  expect(card.kind).toBe('figure')
+  expect(card.figureTitle).toBe('Malleability spectrum')
+  expect(card.figureStatus).toBe('sketched')
+  expect(card.text).toBe('a horizontal rigid → malleable axis')
+})
+
+test('the map shows a figure by its title as gist, plus its status', () => {
+  const snapshot = {
+    document: { store: { 'shape:f': {
+      id: 'shape:f', typeName: 'shape', type: 'card', x: 7, y: 8,
+      props: {
+        w: 260, h: 148, kind: 'figure', noteKind: null, origin: null,
+        text: 'a long description of the visual '.repeat(6), comments: [], mergedInto: null,
+        assetId: null, reference: null, figureTitle: 'Malleability spectrum', figureStatus: 'idea',
+      },
+    } } },
+    session: null,
+  }
+  const [entry] = snapshotToCardMap(snapshot).cards
+  expect(entry.kind).toBe('figure')
+  expect(entry.gist).toBe('Malleability spectrum') // the title is the gist, not a truncated description
+  expect(entry.figureStatus).toBe('idea')
 })
 
 test('snapshotToSections projects section shapes into a clean digest, ignoring cards', () => {

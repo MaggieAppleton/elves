@@ -11,6 +11,7 @@ import {
   createNoteCardTool,
   createReferenceTool,
   createSectionTool,
+  createFigureCardTool,
   moveSectionsTool,
   editSectionTextTool,
   createQuestionTool,
@@ -20,7 +21,7 @@ import {
   setAgentId,
 } from './tools'
 
-const COMMENT_TYPE = z.enum(['needs-evidence', 'weak-argument', 'needs-citation'])
+const COMMENT_TYPE = z.enum(['needs-evidence', 'weak-argument', 'needs-citation', 'wants-figure'])
 const REF_TYPE = z.enum(['paper', 'article', 'book', 'software', 'social', 'video', 'wiki', 'link'])
 
 // Every tool that touches a canvas requires this. Claude must know which project
@@ -44,7 +45,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'read_map',
-    "Read a project's canvas MAP — the cheap, token-light first pass. Returns { cards, sections, questions, groups }. Each card is a small entry: id, kind (prose|note), noteKind (text|image|reference), x/y position (x is narrative order: left=earlier, right=later), `gist` (a one-line summary of the card — a model-authored summary for long cards, else the card's own short text), `textLen` (character count of the full text), and — when set — `mergedInto` and `refType`. It does NOT include full card text, comment bodies, or reference metadata. Sections: id, text (a short thematic label), x/y, authoredBy (user|claude). Questions: id, text (a question you or another agent asked), x/y, authoredBy, and `dismissed` — the user hides a question once they've answered or waved it off; check these before asking, and NEVER re-ask a dismissed one (it's an answered \"no\"). Groups: id, cardIds, memberCount, bounds — a set of cards bound to travel together (see group_cards); each grouped card also carries a `groupId`. Call this FIRST (with the project id) to see the shape of the piece and get ids; then call read_cards for the few cards you actually need in full before commenting, merging, moving, renaming, questioning, or enriching.",
+    "Read a project's canvas MAP — the cheap, token-light first pass. Returns { cards, sections, questions, groups }. Each card is a small entry: id, kind (prose|note|figure), noteKind (text|image|reference), x/y position (x is narrative order: left=earlier, right=later), `gist` (a one-line summary of the card — a model-authored summary for long cards, else the card's own short text; for a figure card the gist is its title), `textLen` (character count of the full text), and — when set — `mergedInto`, `refType`, and `figureStatus` (idea|sketched|final, on figure cards). It does NOT include full card text, comment bodies, or reference metadata. A `figure` card is a placeholder for a PLANNED VISUAL (see create_figure_card) — use the map to see which visuals are already planned so you don't suggest a duplicate. Sections: id, text (a short thematic label), x/y, authoredBy (user|claude). Questions: id, text (a question you or another agent asked), x/y, authoredBy, and `dismissed` — the user hides a question once they've answered or waved it off; check these before asking, and NEVER re-ask a dismissed one (it's an answered \"no\"). Groups: id, cardIds, memberCount, bounds — a set of cards bound to travel together (see group_cards); each grouped card also carries a `groupId`. Call this FIRST (with the project id) to see the shape of the piece and get ids; then call read_cards for the few cards you actually need in full before commenting, merging, moving, renaming, questioning, or enriching.",
     { project: PROJECT },
     async ({ project }) => ({
       content: [{ type: 'text', text: JSON.stringify(await readMapTool(baseUrl, project)) }],
@@ -53,7 +54,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'read_cards',
-    "Read the FULL content of specific cards by id (get the ids from read_map). Returns each card's kind, noteKind, origin, full `text`, x/y, `comments`, `mergedInto`, `assetPath` (image cards), `reference` (reference cards), and `summary`. Use this to drill into the handful of cards relevant to your task instead of pulling the whole canvas — read_map first, then read_cards for what matters.",
+    "Read the FULL content of specific cards by id (get the ids from read_map). Returns each card's kind, noteKind, origin, full `text`, x/y, `comments`, `mergedInto`, `assetPath` (image cards), `reference` (reference cards), `figureTitle` + `figureStatus` (figure cards — the title, and the description in `text`), and `summary`. Use this to drill into the handful of cards relevant to your task instead of pulling the whole canvas — read_map first, then read_cards for what matters.",
     { project: PROJECT, cardIds: z.array(z.string()).min(1) },
     async ({ project, cardIds }) => ({
       content: [{ type: 'text', text: JSON.stringify({ cards: await readCardsTool(baseUrl, project, cardIds) }) }],
@@ -71,7 +72,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'add_comment',
-    "Attach a comment to a card in a project. Use a typed comment to flag a weakness in the user's PROSE (needs-evidence, weak-argument, needs-citation) or omit type for a freeform note. You never write or edit card text — only comments.",
+    "Attach a comment to a card in a project. Use a typed comment to flag a weakness in the user's PROSE (needs-evidence, weak-argument, needs-citation), or `wants-figure` to point out a passage that would carry more as a visual (a spatial relationship described in words, a process/sequence, a comparison across several dimensions — anything the prose is straining to say linearly). Omit type for a freeform note. You never write or edit card text — only comments. (To drop an actual figure placeholder on the canvas, use create_figure_card.)",
     { project: PROJECT, cardId: z.string(), text: z.string(), type: COMMENT_TYPE.nullish() },
     async ({ project, cardId, text, type }) => {
       await addCommentTool(baseUrl, project, { cardId, text, type: type ?? null })
@@ -142,6 +143,16 @@ export function createMcpServer(baseUrl: string): McpServer {
     async ({ project, text, x, y }) => {
       await createSectionTool(baseUrl, project, { text, x, y })
       return { content: [{ type: 'text', text: 'section created' }] }
+    },
+  )
+
+  server.tool(
+    'create_figure_card',
+    "Drop a FIGURE CARD — a placeholder for a planned visual (illustration, diagram, interactive animation) — at its narrative position among the prose and notes. `title` is a short working title; `description` says, in words, what the visual needs to show. Suggest one where the prose would carry more as a picture: a spatial relationship described in words, a process or sequence, a comparison across more than two dimensions, or anything the text is straining to say linearly. It lands at status `idea` and renders with your authorship mark — your suggestion, the user's call to refine, keep, or delete (they own the actual illustration; you only plan it, never generate it). x is narrative order like other cards; place it beside the prose it would illustrate. First check read_map: if a figure is already planned there, don't add a duplicate. This writes a placeholder plan, never the user's prose.",
+    { project: PROJECT, title: z.string(), description: z.string(), x: z.number(), y: z.number() },
+    async ({ project, title, description, x, y }) => {
+      await createFigureCardTool(baseUrl, project, { title, description, x, y })
+      return { content: [{ type: 'text', text: 'figure card created' }] }
     },
   )
 

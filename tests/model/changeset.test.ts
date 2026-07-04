@@ -65,6 +65,28 @@ describe('isChangeSet', () => {
     expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'move_sections', moves: [{ x: 1, y: 2 }] }] })).toBe(false) // missing sectionId
     expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'edit_section_text', sectionId: 'a' }] })).toBe(false) // missing text
   })
+
+  test('accepts a well-formed create_figure_card', () => {
+    const cs = {
+      id: 'x', author: 'claude',
+      ops: [{ kind: 'create_figure_card', title: 'Spectrum', description: 'rigid → malleable axis', x: 0, y: 0 }],
+    }
+    expect(isChangeSet(cs)).toBe(true)
+  })
+  test('rejects a malformed create_figure_card', () => {
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'create_figure_card', title: 'x', description: 'y' }] })).toBe(false) // missing x/y
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'create_figure_card', title: 'x', x: 0, y: 0 }] })).toBe(false) // missing description
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'create_figure_card', description: 'y', x: 0, y: 0 }] })).toBe(false) // missing title
+  })
+
+  test('accepts a wants-figure comment (Claude flagging a spot for a visual)', () => {
+    const cs = {
+      id: 'x', author: 'claude',
+      ops: [{ kind: 'add_comment', cardId: 'card1', comment: { type: 'wants-figure', text: 'this spatial relationship is a diagram' } }],
+    }
+    expect(isChangeSet(cs)).toBe(true)
+  })
+
   test('accepts create_question and rejects it without coords', () => {
     expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'create_question', text: 'why?', x: 0, y: 0 }] })).toBe(true)
     expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'create_question', text: 'why?' }] })).toBe(false) // missing x/y
@@ -146,6 +168,20 @@ describe('set_summary op', () => {
 
   test('set_summary does NOT count as writing card text — it is a label about the card', () => {
     expect(changeSetWritesText({ id: 'x', author: 'claude', ops: [summ()] })).toBe(false)
+  })
+
+  test('create_figure_card does NOT count as writing prose — it is a placeholder plan', () => {
+    expect(changeSetWritesText({
+      id: 'x', author: 'claude',
+      ops: [{ kind: 'create_figure_card', title: 'Spectrum', description: 'rigid → malleable axis', x: 0, y: 0 }],
+    })).toBe(false)
+  })
+
+  test('referencedCardIds ignores create_figure_card — it mints a new card, references none', () => {
+    expect(referencedCardIds({
+      id: 'x', author: 'claude',
+      ops: [{ kind: 'create_figure_card', title: 't', description: 'd', x: 0, y: 0 }],
+    })).toEqual([])
   })
 
   test('referencedCardIds includes a set_summary target so the project cross-check applies', () => {
