@@ -21,6 +21,7 @@ import {
 } from './client/persistence'
 import { uploadAsset, setAssetProject } from './client/assets'
 import { applyChangeSet } from './apply/applyChangeSet'
+import type { ChangeSet } from './model/changeset'
 import { connectRealtime } from './client/realtime'
 import { markDoing, markLooking, clearPresence } from './client/presence'
 import { ProjectSwitcher } from './components/ProjectSwitcher'
@@ -44,6 +45,21 @@ function PlusIcon() {
   )
 }
 
+// Apply a change-set to the loaded store and persist the result. Shared by the
+// live realtime handler and the post-load catch-up, so a change-set replayed
+// after the canvas finishes loading behaves exactly like one applied live —
+// same document edit, same "doing" glow, same save.
+function applyAndPersist(ed: Editor, projectId: string, cs: ChangeSet) {
+  const affected = applyChangeSet(ed, cs)
+  // Glow the cards the agent just acted on ("doing"). Summary reconciles are
+  // background machine work, not the agent working — skip them so the board
+  // doesn't flicker orange every time a gist settles.
+  if (cs.ops.some((op) => op.kind !== 'set_summary')) markDoing(affected)
+  saveCanvas(projectId, getSnapshot(ed.store)).catch((err) =>
+    console.error('Elves: canvas save failed', err),
+  )
+}
+
 export default function App() {
   const [projects, setProjects] = useState<Project[] | null>(null) // null = still loading
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
@@ -56,6 +72,12 @@ export default function App() {
   // checks this so a failed (or not-yet-finished) load can't serialize an empty
   // store over real on-disk data.
   const canvasLoadedRef = useRef(false)
+  // Change-sets that arrive in the window between the canvas element mounting and
+  // its document finishing loading can't be applied yet — doing so and saving
+  // would clobber the real on-disk document (see the realtime handler). Rather
+  // than drop them and lose the agent's action, buffer them here, tagged with
+  // their target project, and reconcile once the load resolves.
+  const pendingChangeSetsRef = useRef<{ projectId: string; cs: ChangeSet }[]>([])
 
   // Keep the refs + the asset base in sync during render so they are correct the
   // instant tldraw's onMount fires and whenever a card image renders.
@@ -87,18 +109,17 @@ export default function App() {
           if (projectId !== projectIdRef.current) return
           const ed = editorRef.current
           if (!ed) return
-          // Applying a change-set onto — and then saving — a store that hasn't
-          // loaded yet would clobber the real document on disk. The server already
-          // persisted this change-set itself, so skipping here loses nothing.
-          if (!canvasLoadedRef.current) return
-          const affected = applyChangeSet(ed, cs)
-          // Glow the cards the agent just acted on ("doing"). Summary reconciles
-          // are background machine work, not the agent working — skip them so the
-          // board doesn't flicker orange every time a gist settles.
-          if (cs.ops.some((op) => op.kind !== 'set_summary')) markDoing(affected)
-          saveCanvas(projectId, getSnapshot(ed.store)).catch((err) =>
-            console.error('Elves: canvas save failed', err),
-          )
+          // The canvas hasn't finished loading. Applying now — onto a not-yet-
+          // loaded store — then saving would clobber the real document on disk.
+          // But silently dropping the change-set loses the agent's action for
+          // this page session (and for a brand-new project it may never have been
+          // persisted server-side, so a reload wouldn't recover it either).
+          // Buffer it; handleMount reconciles the buffer once the load resolves.
+          if (!canvasLoadedRef.current) {
+            pendingChangeSetsRef.current.push({ projectId, cs })
+            return
+          }
+          applyAndPersist(ed, projectId, cs)
         },
         (projectId, presence) => {
           // The agent is "looking" at these cards (read_cards). Ephemeral: no
@@ -159,6 +180,37 @@ export default function App() {
     ed.select(id)
   }
 
+  // Once the canvas has loaded, reconcile any change-sets that arrived — and were
+  // buffered — while it was still loading. Re-fetch once to tell two cases apart:
+  //  • The server persisted them (a project that already has a document): the
+  //    re-fetched snapshot is authoritative and already includes them, so reload
+  //    it rather than replay — replaying would mint duplicate cards, since create
+  //    ops assign fresh shape ids with nothing to dedupe against.
+  //  • The server only broadcast them (a brand-new project with no document yet —
+  //    it won't synthesise a tldraw schema server-side): nothing was persisted,
+  //    so replay the buffered ops to materialise them; the save then writes the
+  //    now-real document to disk.
+  const reconcilePendingChangeSets = async (ed: Editor, pid: string) => {
+    const queued = pendingChangeSetsRef.current.filter((e) => e.projectId === pid)
+    // Reset unconditionally: anything not for `pid` is a straggler from a project
+    // whose load never finished, and can't belong to the canvas mounting now.
+    pendingChangeSetsRef.current = []
+    if (!queued.length) return
+    let fresh: any = null
+    try {
+      fresh = await loadCanvas(pid)
+    } catch (err) {
+      console.error('Elves: resync fetch after load failed; replaying buffered change-sets', err)
+    }
+    // A project switch may have unmounted this editor while we were fetching.
+    if (projectIdRef.current !== pid || editorRef.current !== ed) return
+    if (fresh?.document) {
+      loadSnapshot(ed.store, fresh)
+      return
+    }
+    for (const { cs } of queued) applyAndPersist(ed, pid, cs)
+  }
+
   const handleMount = (ed: Editor) => {
     editorRef.current = ed
     setEditor(ed)
@@ -200,13 +252,21 @@ export default function App() {
         ed.registerExternalContentHandler('url', async ({ url, point }) => {
           await addReferenceFromUrl(ed, url, point)
         })
+        // Catch up on anything the agent did while the canvas was still loading.
+        void reconcilePendingChangeSets(ed, pid)
       })
-      .catch((err) =>
+      .catch((err) => {
+        // Load failed — persistence stays disabled to protect on-disk data, and
+        // buffered change-sets can't be safely applied onto an unloaded store, so
+        // drop this project's rather than let them accumulate.
+        pendingChangeSetsRef.current = pendingChangeSetsRef.current.filter(
+          (e) => e.projectId !== pid,
+        )
         console.error(
           'Elves: canvas load failed — persistence disabled to protect on-disk data',
           err,
-        ),
-      )
+        )
+      })
   }
 
   const addCard = (kind: 'prose' | 'note') => {
