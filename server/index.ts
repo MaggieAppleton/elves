@@ -6,7 +6,7 @@ import { attachRealtime } from './realtime'
 import { migrateLegacyCanvas } from './migrate'
 import { migrateSourceCardsToNotes } from './migrateNotes'
 import { listProjects, canvasPathFor } from './projects'
-import { summarizerFromEnv, reconcileCanvasFile } from './summarize'
+import { OllamaSummarizer, reconcileCanvasFile, type Summarizer } from './summarize'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const dataRoot = process.env.ELVES_DATA ?? join(here, '..', 'data')
@@ -21,7 +21,7 @@ async function main() {
 
   const httpServer = http.createServer()
   const { broadcast, broadcastPresence } = attachRealtime(httpServer)
-  const summarizer = summarizerFromEnv()
+  const summarizer = new OllamaSummarizer()
   const now = () => new Date().toISOString()
   const app = createServer(dataRoot, broadcast, { summarizer, now }, broadcastPresence)
   httpServer.on('request', app)
@@ -39,7 +39,7 @@ async function main() {
 
 async function backfillSummaries(
   dataRoot: string,
-  summarizer: ReturnType<typeof summarizerFromEnv>,
+  summarizer: Summarizer,
   now: () => string,
   broadcast: (projectId: string, cs: import('../src/model/changeset').ChangeSet) => void,
 ): Promise<void> {
