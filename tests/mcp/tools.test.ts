@@ -120,6 +120,7 @@ test('readMapTool reads the cheap map (gist, no full text) for the project', asy
   expect(map).toEqual({
     cards: [{ id: 'shape:a', kind: 'prose', noteKind: null, x: 1, y: 2, w: 240, h: 120, gist: 'hi', textLen: 2 }],
     sections: [],
+    questions: [],
     groups: [],
   })
 })

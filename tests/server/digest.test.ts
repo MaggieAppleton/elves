@@ -2,6 +2,7 @@ import { expect, test } from 'vitest'
 import {
   snapshotToCards,
   snapshotToSections,
+  snapshotToQuestions,
   snapshotToCanvasDigest,
   snapshotToCardMap,
   snapshotToCardsById,
@@ -91,6 +92,51 @@ test('snapshotToSections projects section shapes into a clean digest, ignoring c
 
 test('snapshotToSections returns [] for an empty canvas', () => {
   expect(snapshotToSections({ document: null, session: null })).toEqual([])
+})
+
+test('snapshotToQuestions projects question shapes into a clean digest, carrying dismissed state', () => {
+  const snapshot = {
+    document: {
+      store: {
+        'shape:a': {
+          id: 'shape:a', typeName: 'shape', type: 'card', x: 10, y: 20,
+          props: { w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text: 'my point', comments: [], mergedInto: null },
+        },
+        'shape:q1': {
+          id: 'shape:q1', typeName: 'shape', type: 'question', x: 5, y: 6,
+          props: { w: 220, h: 96, text: 'What did it cost her?', authoredBy: 'claude', dismissed: false },
+        },
+        'shape:q2': {
+          id: 'shape:q2', typeName: 'shape', type: 'question', x: 7, y: 8,
+          props: { w: 220, h: 96, text: 'already answered', authoredBy: 'claude', dismissed: true },
+        },
+      },
+    },
+    session: null,
+  }
+  expect(snapshotToQuestions(snapshot)).toEqual([
+    { id: 'shape:q1', text: 'What did it cost her?', x: 5, y: 6, authoredBy: 'claude', dismissed: false },
+    { id: 'shape:q2', text: 'already answered', x: 7, y: 8, authoredBy: 'claude', dismissed: true },
+  ])
+})
+
+test('snapshotToQuestions returns [] for an empty canvas', () => {
+  expect(snapshotToQuestions({ document: null, session: null })).toEqual([])
+})
+
+test('snapshotToCardMap includes questions with their dismissed state', () => {
+  const snapshot = {
+    document: { store: {
+      'shape:q': {
+        id: 'shape:q', typeName: 'shape', type: 'question', x: 1, y: 2,
+        props: { w: 220, h: 96, text: 'why?', authoredBy: 'claude', dismissed: false },
+      },
+    } },
+    session: null,
+  }
+  expect(snapshotToCardMap(snapshot).questions).toEqual([
+    { id: 'shape:q', text: 'why?', x: 1, y: 2, authoredBy: 'claude', dismissed: false },
+  ])
 })
 
 const LONG = 'A '.repeat(150) + 'end' // a long card body
@@ -271,5 +317,6 @@ test('snapshotToCanvasDigest combines cards and sections', () => {
   expect(snapshotToCanvasDigest(snapshot)).toEqual({
     cards: snapshotToCards(snapshot),
     sections: snapshotToSections(snapshot),
+    questions: snapshotToQuestions(snapshot),
   })
 })
