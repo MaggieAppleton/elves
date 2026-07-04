@@ -7,6 +7,7 @@ import {
   makeNoteCardProps, makeReferenceCardProps, makeFigureCardProps, CARD_DEFAULT_W, CARD_DEFAULT_H,
 } from '../src/model/cards'
 import { makeSectionProps } from '../src/model/sections'
+import { makeQuestionProps } from '../src/model/questions'
 import { resolvePageXY } from './digest'
 
 type StoreRecords = Record<string, any>
@@ -235,6 +236,25 @@ export function applyChangeSetToSnapshot(
         if (shape) {
           shape.props.text = op.text
           shape.props.authoredBy = 'claude'
+        }
+        break
+      }
+      case 'create_question': {
+        // Stamp the change-set's author so the persisted question keeps its mark.
+        const id = createShapeId()
+        store[id] = {
+          id,
+          typeName: 'shape',
+          type: 'question',
+          x: op.x,
+          y: op.y,
+          rotation: 0,
+          isLocked: false,
+          opacity: 1,
+          meta: {},
+          parentId: defaultPageId(store),
+          index: getIndexAbove(topIndex(store)),
+          props: makeQuestionProps(op.text, cs.author),
         }
         break
       }

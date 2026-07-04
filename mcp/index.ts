@@ -4,6 +4,7 @@ import { z } from 'zod'
 import {
   readMapTool,
   readCardsTool,
+  readDraftTool,
   addCommentTool,
   mergeNotesTool,
   moveCardsTool,
@@ -13,6 +14,7 @@ import {
   createFigureCardTool,
   moveSectionsTool,
   editSectionTextTool,
+  createQuestionTool,
   groupCardsTool,
   ungroupCardsTool,
   listProjectsTool,
@@ -43,7 +45,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'read_map',
-    "Read a project's canvas MAP — the cheap, token-light first pass. Returns { cards, sections }. Each card is a small entry: id, kind (prose|note|figure), noteKind (text|image|reference), x/y position (x is narrative order: left=earlier, right=later), `gist` (a one-line summary of the card — a model-authored summary for long cards, else the card's own short text; for a figure card the gist is its title), `textLen` (character count of the full text), and — when set — `mergedInto`, `refType`, and `figureStatus` (idea|sketched|final, on figure cards). It does NOT include full card text, comment bodies, or reference metadata. A `figure` card is a placeholder for a PLANNED VISUAL (see create_figure_card) — use the map to see which visuals are already planned so you don't suggest a duplicate. Sections: id, text (a short thematic label), x/y, authoredBy (user|claude). Groups: id, cardIds, memberCount, bounds — a set of cards bound to travel together (see group_cards); each grouped card also carries a `groupId`. Call this FIRST (with the project id) to see the shape of the piece and get ids; then call read_cards for the few cards you actually need in full before commenting, merging, moving, renaming, or enriching.",
+    "Read a project's canvas MAP — the cheap, token-light first pass. Returns { cards, sections, questions, groups }. Each card is a small entry: id, kind (prose|note|figure), noteKind (text|image|reference), x/y position (x is narrative order: left=earlier, right=later), `gist` (a one-line summary of the card — a model-authored summary for long cards, else the card's own short text; for a figure card the gist is its title), `textLen` (character count of the full text), and — when set — `mergedInto`, `refType`, and `figureStatus` (idea|sketched|final, on figure cards). It does NOT include full card text, comment bodies, or reference metadata. A `figure` card is a placeholder for a PLANNED VISUAL (see create_figure_card) — use the map to see which visuals are already planned so you don't suggest a duplicate. Sections: id, text (a short thematic label), x/y, authoredBy (user|claude). Questions: id, text (a question you or another agent asked), x/y, authoredBy, and `dismissed` — the user hides a question once they've answered or waved it off; check these before asking, and NEVER re-ask a dismissed one (it's an answered \"no\"). Groups: id, cardIds, memberCount, bounds — a set of cards bound to travel together (see group_cards); each grouped card also carries a `groupId`. Call this FIRST (with the project id) to see the shape of the piece and get ids; then call read_cards for the few cards you actually need in full before commenting, merging, moving, renaming, questioning, or enriching.",
     { project: PROJECT },
     async ({ project }) => ({
       content: [{ type: 'text', text: JSON.stringify(await readMapTool(baseUrl, project)) }],
@@ -56,6 +58,15 @@ export function createMcpServer(baseUrl: string): McpServer {
     { project: PROJECT, cardIds: z.array(z.string()).min(1) },
     async ({ project, cardIds }) => ({
       content: [{ type: 'text', text: JSON.stringify({ cards: await readCardsTool(baseUrl, project, cardIds) }) }],
+    }),
+  )
+
+  server.tool(
+    'read_draft',
+    "Read the project's canvas as a LINEAR DRAFT — the piece in true narrative order. Returns { blocks: [{ section, cards: [{ id, text }] }] }: sections run left→right as the order of the piece, and WITHIN each section cards run top→bottom. `section` is the heading text, or null for the opening block of cards that sit before the first section. Only PROSE cards compile (notes/images/references are excluded in v1); merged-away and draft-excluded cards are skipped. Prefer this over read_map when you are critiquing FLOW or narrative order: read_map gives positions and makes you re-derive the reading order yourself (and it can't tell you that top-to-bottom-within-a-section is the load-bearing convention) — read_draft hands you the order directly, with full card text. Use read_map/read_cards instead when you need positions, sizes, notes, references, or comments. Read-only.",
+    { project: PROJECT },
+    async ({ project }) => ({
+      content: [{ type: 'text', text: JSON.stringify({ blocks: await readDraftTool(baseUrl, project) }) }],
     }),
   )
 
@@ -162,6 +173,16 @@ export function createMcpServer(baseUrl: string): McpServer {
     async ({ project, sectionId, text }) => {
       await editSectionTextTool(baseUrl, project, { sectionId, text })
       return { content: [{ type: 'text', text: 'section renamed' }] }
+    },
+  )
+
+  server.tool(
+    'create_question',
+    "Drop a QUESTION card near a cluster — a short, pointed question the way a good editor asks (\"What did the room smell like?\", \"You assert X in three places but never argue it — which card is the argument?\"). It provokes what the user hasn't written yet; they answer by writing their OWN cards beside it, then dismiss it. A question card holds ONLY a question, never draft prose — that's the point, and it keeps you inside the \"only the user writes the final prose\" rule. It renders in your accent with your authorship mark. Guidance: FEW and SPECIFIC — at most ~5 per pass; anchored in what the cards actually say, not generic writing advice; concrete beats abstract. Check existing questions in read_map FIRST (open AND dismissed) — a dismissed question is one the user already answered or waved off, so don't re-ask it. x is narrative order like cards; place it beside the cluster it interrogates.",
+    { project: PROJECT, text: z.string(), x: z.number(), y: z.number() },
+    async ({ project, text, x, y }) => {
+      await createQuestionTool(baseUrl, project, { text, x, y })
+      return { content: [{ type: 'text', text: 'question created' }] }
     },
   )
 

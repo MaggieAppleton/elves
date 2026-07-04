@@ -2,9 +2,11 @@ import { Editor, createShapeId, TLShapeId } from 'tldraw'
 import { ChangeSet, Op, planMerge } from '../model/changeset'
 import { CardShape } from '../shapes/CardShapeUtil'
 import { SectionShape } from '../shapes/SectionShapeUtil'
+import { QuestionShape } from '../shapes/QuestionShapeUtil'
 import { makeComment, addComment } from '../model/comments'
 import { makeNoteCardProps, makeReferenceCardProps, makeFigureCardProps } from '../model/cards'
 import { makeSectionProps } from '../model/sections'
+import { makeQuestionProps } from '../model/questions'
 
 function newId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`
@@ -156,6 +158,24 @@ function applyEditSectionText(editor: Editor, op: Extract<Op, { kind: 'edit_sect
   return [shape.id]
 }
 
+function applyCreateQuestion(
+  editor: Editor,
+  op: Extract<Op, { kind: 'create_question' }>,
+  author: string,
+): TLShapeId[] {
+  // Questions drop exactly where Claude asks (like sections) — no overlap slide;
+  // an editor's sticky note is meant to sit against the cluster it's about.
+  const id = createShapeId()
+  editor.createShape<QuestionShape>({
+    id,
+    type: 'question',
+    x: op.x,
+    y: op.y,
+    props: makeQuestionProps(op.text, author),
+  })
+  return [id]
+}
+
 function applyGroupCards(editor: Editor, op: Extract<Op, { kind: 'group_cards' }>): TLShapeId[] {
   const ids = op.cardIds
     .map((id) => editor.getShape(id as CardShape['id'])?.id)
@@ -210,6 +230,8 @@ function applyOp(editor: Editor, op: Op, author: string): TLShapeId[] {
       return applyMoveSections(editor, op)
     case 'edit_section_text':
       return applyEditSectionText(editor, op)
+    case 'create_question':
+      return applyCreateQuestion(editor, op, author)
     case 'group_cards':
       return applyGroupCards(editor, op)
     case 'ungroup_cards':

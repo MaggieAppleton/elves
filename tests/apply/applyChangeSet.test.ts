@@ -144,6 +144,19 @@ describe('applyChangeSet affected-id contract', () => {
     ]))).toEqual(['shape:s1'])
   })
 
+  test('create_question → the freshly-minted question id, stamped with the author', () => {
+    const ed = fakeEditor([])
+    const ids = applyChangeSet(ed as unknown as Editor, cs([
+      { kind: 'create_question', text: 'What did it cost her?', x: 4, y: 5 },
+    ]))
+    expect(ids).toHaveLength(1)
+    const shape = ed._shapes.get(ids[0]!) as any
+    expect(shape.type).toBe('question')
+    expect(shape.props.text).toBe('What did it cost her?')
+    expect(shape.props.authoredBy).toBe('claude') // the change-set author
+    expect(shape.props.dismissed).toBe(false)
+  })
+
   test('group_cards → the member ids', () => {
     const ed = fakeEditor([noteCard('card:a'), noteCard('card:b')])
     expect(applyChangeSet(ed as unknown as Editor, cs([

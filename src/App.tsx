@@ -5,6 +5,7 @@ import './theme.css'
 import { CardShapeUtil, CardShape } from './shapes/CardShapeUtil'
 import { cardIsHidden, collapseAll } from './shapes/mergeView'
 import { SectionShapeUtil, SectionShape } from './shapes/SectionShapeUtil'
+import { QuestionShapeUtil } from './shapes/QuestionShapeUtil'
 import {
   makeProseCardProps, makeNoteCardProps, makeImageNoteCardProps, makeReferenceCardProps,
   makeFigureCardProps,
@@ -22,19 +23,37 @@ import {
 } from './client/persistence'
 import { uploadAsset, setAssetProject } from './client/assets'
 import { applyChangeSet } from './apply/applyChangeSet'
+import type { ChangeSet } from './model/changeset'
 import { connectRealtime } from './client/realtime'
 import { markDoing, markLooking, clearPresence } from './client/presence'
 import { ProjectSwitcher } from './components/ProjectSwitcher'
+import { DraftPane } from './components/DraftPane'
+import { ViewToggle, type ViewState, VIEW_ORDER } from './components/ViewToggle'
 
-const shapeUtils = [CardShapeUtil, SectionShapeUtil]
+const shapeUtils = [CardShapeUtil, SectionShapeUtil, QuestionShapeUtil]
+
+// A dismissed question is answered/waved off: hidden from render AND hit-testing
+// (so it can't linger as an invisible-yet-selectable ghost), but kept in the
+// file so it stays recoverable and Claude still sees it in read_map.
+const questionIsHidden = (shape: { type: string; props: { dismissed?: boolean } }) =>
+  shape.type === 'question' && !!shape.props.dismissed
 
 // Cards merged away into a representative are kept for recovery but must not
 // render as their own shape — hidden here from BOTH rendering and hit-testing so
 // they can't become invisible-yet-selectable "ghosts". The representative shows
-// them (a stack + an on-demand fan-out).
+// them (a stack + an on-demand fan-out). Dismissed questions hide the same way.
 const getShapeVisibility = (shape: Parameters<typeof cardIsHidden>[0]) =>
-  cardIsHidden(shape) ? ('hidden' as const) : ('inherit' as const)
+  cardIsHidden(shape) || questionIsHidden(shape as { type: string; props: { dismissed?: boolean } })
+    ? ('hidden' as const)
+    : ('inherit' as const)
 const LAST_PROJECT_KEY = 'elves:lastProject'
+// View state (canvas / split / draft) and the split divider ratio persist PER
+// project, so each piece reopens the way you left it reading it.
+const viewKey = (id: string) => `elves:view:${id}`
+const splitKey = (id: string) => `elves:split:${id}`
+const DEFAULT_SPLIT = 0.6 // canvas gets 60% in split by default
+const MIN_SPLIT = 0.18
+const MAX_SPLIT = 0.82
 
 // Phosphor "Plus" (regular weight), inlined to avoid pulling in the whole icon package.
 function PlusIcon() {
@@ -42,6 +61,21 @@ function PlusIcon() {
     <svg className="elves-btn-icon" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
       <path d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z" />
     </svg>
+  )
+}
+
+// Apply a change-set to the loaded store and persist the result. Shared by the
+// live realtime handler and the post-load catch-up, so a change-set replayed
+// after the canvas finishes loading behaves exactly like one applied live —
+// same document edit, same "doing" glow, same save.
+function applyAndPersist(ed: Editor, projectId: string, cs: ChangeSet) {
+  const affected = applyChangeSet(ed, cs)
+  // Glow the cards the agent just acted on ("doing"). Summary reconciles are
+  // background machine work, not the agent working — skip them so the board
+  // doesn't flicker orange every time a gist settles.
+  if (cs.ops.some((op) => op.kind !== 'set_summary')) markDoing(affected)
+  saveCanvas(projectId, getSnapshot(ed.store)).catch((err) =>
+    console.error('Elves: canvas save failed', err),
   )
 }
 
@@ -57,6 +91,21 @@ export default function App() {
   // checks this so a failed (or not-yet-finished) load can't serialize an empty
   // store over real on-disk data.
   const canvasLoadedRef = useRef(false)
+  // Change-sets that arrive in the window between the canvas element mounting and
+  // its document finishing loading can't be applied yet — doing so and saving
+  // would clobber the real on-disk document (see the realtime handler). Rather
+  // than drop them and lose the agent's action, buffer them here, tagged with
+  // their target project, and reconcile once the load resolves.
+  const pendingChangeSetsRef = useRef<{ projectId: string; cs: ChangeSet }[]>([])
+
+  // Three view states — canvas only, split, draft only — plus the split ratio
+  // (canvas fraction). tldraw stays MOUNTED in all three; draft-only just
+  // collapses its pane width to 0, so the store, persistence, and realtime never
+  // tear down. Both persist per project (loaded on switch, below).
+  const [view, setView] = useState<ViewState>('canvas')
+  const [split, setSplit] = useState(DEFAULT_SPLIT)
+  const [dragging, setDragging] = useState(false)
+  const stageRef = useRef<HTMLDivElement>(null)
 
   // Keep the refs + the asset base in sync during render so they are correct the
   // instant tldraw's onMount fires and whenever a card image renders.
@@ -88,18 +137,17 @@ export default function App() {
           if (projectId !== projectIdRef.current) return
           const ed = editorRef.current
           if (!ed) return
-          // Applying a change-set onto — and then saving — a store that hasn't
-          // loaded yet would clobber the real document on disk. The server already
-          // persisted this change-set itself, so skipping here loses nothing.
-          if (!canvasLoadedRef.current) return
-          const affected = applyChangeSet(ed, cs)
-          // Glow the cards the agent just acted on ("doing"). Summary reconciles
-          // are background machine work, not the agent working — skip them so the
-          // board doesn't flicker orange every time a gist settles.
-          if (cs.ops.some((op) => op.kind !== 'set_summary')) markDoing(affected)
-          saveCanvas(projectId, getSnapshot(ed.store)).catch((err) =>
-            console.error('Elves: canvas save failed', err),
-          )
+          // The canvas hasn't finished loading. Applying now — onto a not-yet-
+          // loaded store — then saving would clobber the real document on disk.
+          // But silently dropping the change-set loses the agent's action for
+          // this page session (and for a brand-new project it may never have been
+          // persisted server-side, so a reload wouldn't recover it either).
+          // Buffer it; handleMount reconciles the buffer once the load resolves.
+          if (!canvasLoadedRef.current) {
+            pendingChangeSetsRef.current.push({ projectId, cs })
+            return
+          }
+          applyAndPersist(ed, projectId, cs)
         },
         (projectId, presence) => {
           // The agent is "looking" at these cards (read_cards). Ephemeral: no
@@ -120,6 +168,89 @@ export default function App() {
   useEffect(() => {
     clearPresence()
   }, [currentProjectId])
+
+  // Restore this project's saved view + split ratio when it opens.
+  useEffect(() => {
+    if (!currentProjectId) return
+    const savedView = localStorage.getItem(viewKey(currentProjectId))
+    setView(savedView === 'split' || savedView === 'draft' ? savedView : 'canvas')
+    const savedSplit = parseFloat(localStorage.getItem(splitKey(currentProjectId)) ?? '')
+    setSplit(
+      Number.isFinite(savedSplit) && savedSplit >= MIN_SPLIT && savedSplit <= MAX_SPLIT
+        ? savedSplit
+        : DEFAULT_SPLIT,
+    )
+  }, [currentProjectId])
+
+  const changeView = (next: ViewState) => {
+    setView(next)
+    if (projectIdRef.current) localStorage.setItem(viewKey(projectIdRef.current), next)
+  }
+
+  // Persist the split ratio as it changes (also harmlessly re-writes the restored
+  // value on open — same key, same number).
+  useEffect(() => {
+    if (currentProjectId) localStorage.setItem(splitKey(currentProjectId), String(split))
+  }, [split, currentProjectId])
+
+  // Keyboard shortcut: ⌘/Ctrl + \ cycles canvas → split → draft → canvas. A
+  // modifier is required so it never fights typing in a card.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key === '\\') {
+        e.preventDefault()
+        changeView(VIEW_ORDER[(VIEW_ORDER.indexOf(view) + 1) % VIEW_ORDER.length])
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [view])
+
+  // Drag the split divider to set the canvas/draft ratio. Pointer events are
+  // captured on window so a fast drag off the handle keeps tracking; transitions
+  // are suspended (via the stage's data-dragging flag) so the panes follow the
+  // cursor 1:1 instead of easing behind it.
+  const onDividerDown = (e: React.PointerEvent) => {
+    e.preventDefault()
+    const stage = stageRef.current
+    if (!stage) return
+    setDragging(true)
+    const onMove = (ev: PointerEvent) => {
+      const rect = stage.getBoundingClientRect()
+      if (rect.width === 0) return
+      const r = (ev.clientX - rect.left) / rect.width
+      setSplit(Math.min(MAX_SPLIT, Math.max(MIN_SPLIT, r)))
+    }
+    const onUp = () => {
+      setDragging(false)
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  // Draft → canvas navigation: pan (keeping zoom) to a clicked paragraph's card
+  // and select it. From draft-only we first open split so the canvas is visible,
+  // then pan once the pane has finished widening.
+  const focusCard = (cardId: string) => {
+    const ed = editorRef.current
+    if (!ed) return
+    const id = cardId as CardShape['id']
+    const bounds = ed.getShapePageBounds(id)
+    if (!bounds) return
+    ed.select(id)
+    ed.centerOnPoint(bounds.center, { animation: { duration: 300 } })
+  }
+
+  const onSelectCard = (cardId: string) => {
+    if (view === 'draft') {
+      changeView('split')
+      setTimeout(() => focusCard(cardId), 340) // after the width transition settles
+    } else {
+      focusCard(cardId)
+    }
+  }
 
   const addImageCard = async (ed: Editor, file: File, point?: { x: number; y: number }) => {
     const pid = projectIdRef.current
@@ -158,6 +289,37 @@ export default function App() {
     const id = createShapeId()
     ed.createShape<CardShape>({ id, type: 'card', x: at.x - props.w / 2, y: at.y - props.h / 2, props })
     ed.select(id)
+  }
+
+  // Once the canvas has loaded, reconcile any change-sets that arrived — and were
+  // buffered — while it was still loading. Re-fetch once to tell two cases apart:
+  //  • The server persisted them (a project that already has a document): the
+  //    re-fetched snapshot is authoritative and already includes them, so reload
+  //    it rather than replay — replaying would mint duplicate cards, since create
+  //    ops assign fresh shape ids with nothing to dedupe against.
+  //  • The server only broadcast them (a brand-new project with no document yet —
+  //    it won't synthesise a tldraw schema server-side): nothing was persisted,
+  //    so replay the buffered ops to materialise them; the save then writes the
+  //    now-real document to disk.
+  const reconcilePendingChangeSets = async (ed: Editor, pid: string) => {
+    const queued = pendingChangeSetsRef.current.filter((e) => e.projectId === pid)
+    // Reset unconditionally: anything not for `pid` is a straggler from a project
+    // whose load never finished, and can't belong to the canvas mounting now.
+    pendingChangeSetsRef.current = []
+    if (!queued.length) return
+    let fresh: any = null
+    try {
+      fresh = await loadCanvas(pid)
+    } catch (err) {
+      console.error('Elves: resync fetch after load failed; replaying buffered change-sets', err)
+    }
+    // A project switch may have unmounted this editor while we were fetching.
+    if (projectIdRef.current !== pid || editorRef.current !== ed) return
+    if (fresh?.document) {
+      loadSnapshot(ed.store, fresh)
+      return
+    }
+    for (const { cs } of queued) applyAndPersist(ed, pid, cs)
   }
 
   const handleMount = (ed: Editor) => {
@@ -201,13 +363,21 @@ export default function App() {
         ed.registerExternalContentHandler('url', async ({ url, point }) => {
           await addReferenceFromUrl(ed, url, point)
         })
+        // Catch up on anything the agent did while the canvas was still loading.
+        void reconcilePendingChangeSets(ed, pid)
       })
-      .catch((err) =>
+      .catch((err) => {
+        // Load failed — persistence stays disabled to protect on-disk data, and
+        // buffered change-sets can't be safely applied onto an unloaded store, so
+        // drop this project's rather than let them accumulate.
+        pendingChangeSetsRef.current = pendingChangeSetsRef.current.filter(
+          (e) => e.projectId !== pid,
+        )
         console.error(
           'Elves: canvas load failed — persistence disabled to protect on-disk data',
           err,
-        ),
-      )
+        )
+      })
   }
 
   const addCard = (kind: 'prose' | 'note' | 'figure') => {
@@ -318,26 +488,36 @@ export default function App() {
     )
   }
 
+  // Pane widths for the three states. tldraw stays mounted; draft-only just
+  // collapses the canvas pane to 0 (and vice-versa), and CSS transitions the
+  // width so moving between states feels continuous rather than modal.
+  const canvasWidth = view === 'canvas' ? '100%' : view === 'draft' ? '0%' : `${split * 100}%`
+  const draftWidth = view === 'canvas' ? '0%' : view === 'draft' ? '100%' : `${(1 - split) * 100}%`
+
   return (
     <div id="app-root" className={showTools ? undefined : 'elves-hide-tools'}>
-      <button
-        className="elves-tools-toggle"
-        data-active={showTools}
-        title="Show/hide drawing tools"
-        onClick={() => setShowTools((v) => !v)}
-      >
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
+      <ViewToggle view={view} onChange={changeView} />
+      {/* Canvas-editing chrome is only meaningful when the canvas is visible. */}
+      {view !== 'draft' && (
+        <button
+          className="elves-tools-toggle"
+          data-active={showTools}
+          title="Show/hide drawing tools"
+          onClick={() => setShowTools((v) => !v)}
         >
-          <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
-        </svg>
-      </button>
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+          </svg>
+        </button>
+      )}
       <ProjectSwitcher
         projects={projects}
         currentId={currentProjectId}
@@ -345,32 +525,56 @@ export default function App() {
         onCreate={createFlow}
         onRename={renameFlow}
       />
-      <div className="elves-toolbar">
-        <button data-testid="new-prose" onClick={() => addCard('prose')}><PlusIcon />Prose</button>
-        <button data-testid="new-note" onClick={() => addCard('note')}><PlusIcon />Notes</button>
-        <button data-testid="new-image" onClick={() => fileInputRef.current?.click()}><PlusIcon />Image</button>
-        <button data-testid="new-reference" onClick={addReferenceFlow}><PlusIcon />Link</button>
-        <button data-testid="new-figure" onClick={() => addCard('figure')}><PlusIcon />Figure</button>
-        <button data-testid="new-section" onClick={addSection}><PlusIcon />Section</button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          style={{ display: 'none' }}
-          data-testid="image-input"
-          onChange={(e) => {
-            const file = e.target.files?.[0]
-            if (file && editor) addImageCard(editor, file)
-            e.target.value = ''
-          }}
-        />
+      {view !== 'draft' && (
+        <div className="elves-toolbar">
+          <button data-testid="new-prose" onClick={() => addCard('prose')}><PlusIcon />Prose</button>
+          <button data-testid="new-note" onClick={() => addCard('note')}><PlusIcon />Notes</button>
+          <button data-testid="new-image" onClick={() => fileInputRef.current?.click()}><PlusIcon />Image</button>
+          <button data-testid="new-reference" onClick={addReferenceFlow}><PlusIcon />Link</button>
+          <button data-testid="new-figure" onClick={() => addCard('figure')}><PlusIcon />Figure</button>
+          <button data-testid="new-section" onClick={addSection}><PlusIcon />Section</button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            style={{ display: 'none' }}
+            data-testid="image-input"
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file && editor) addImageCard(editor, file)
+              e.target.value = ''
+            }}
+          />
+        </div>
+      )}
+      <div className="elves-stage" ref={stageRef} data-dragging={dragging}>
+        <div className="elves-canvas-pane" style={{ width: canvasWidth }} data-collapsed={view === 'draft'}>
+          <Tldraw
+            key={currentProjectId ?? 'none'}
+            shapeUtils={shapeUtils}
+            getShapeVisibility={getShapeVisibility}
+            onMount={handleMount}
+          />
+        </div>
+        {view === 'split' && (
+          <div
+            className="elves-divider"
+            style={{ left: `${split * 100}%` }}
+            onPointerDown={onDividerDown}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize draft pane"
+            data-testid="draft-divider"
+          />
+        )}
+        <div
+          className="elves-draft-pane"
+          style={{ width: draftWidth }}
+          aria-hidden={view === 'canvas'}
+        >
+          <DraftPane editor={editor} onSelectCard={onSelectCard} />
+        </div>
       </div>
-      <Tldraw
-        key={currentProjectId ?? 'none'}
-        shapeUtils={shapeUtils}
-        getShapeVisibility={getShapeVisibility}
-        onMount={handleMount}
-      />
     </div>
   )
 }

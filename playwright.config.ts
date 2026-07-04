@@ -1,20 +1,27 @@
 import { defineConfig } from '@playwright/test'
 
+// Ports (and the data dir) default to the standard dev setup but can be
+// overridden by env, so a run can sidestep a dev server already holding 5199/5173.
+// ELVES_E2E_BASE (read by e2e/helpers) must point at the same server port.
+const SERVER_PORT = Number(process.env.ELVES_E2E_SERVER_PORT ?? 5199)
+const WEB_PORT = Number(process.env.ELVES_E2E_WEB_PORT ?? 5173)
+const DATA = process.env.ELVES_DATA ?? '.e2e/data'
+
 export default defineConfig({
   testDir: './e2e',
   workers: 1,
   fullyParallel: false,
   globalSetup: './e2e/global-setup.ts',
-  use: { baseURL: 'http://localhost:5173' },
+  use: { baseURL: `http://localhost:${WEB_PORT}` },
   webServer: [
     {
-      command: 'ELVES_DATA=.e2e/data PORT=5199 npm run start',
-      port: 5199,
+      command: `ELVES_DATA=${DATA} PORT=${SERVER_PORT} npm run start`,
+      port: SERVER_PORT,
       reuseExistingServer: false,
     },
     {
-      command: 'npm run dev',
-      port: 5173,
+      command: `VITE_SERVER_URL=http://localhost:${SERVER_PORT} npm run dev -- --port ${WEB_PORT} --strictPort`,
+      port: WEB_PORT,
       reuseExistingServer: false,
     },
   ],

@@ -2,6 +2,9 @@ import type { CanvasSnapshot } from './store'
 import type { CardKind, NoteKind, Origin, Comment, Reference, RefType, FigureStatus } from '../src/model/types'
 import type { SectionAuthor } from '../src/model/sections'
 import { SummarizableCard, cardGist } from '../src/model/summary'
+import {
+  compileDraft, toReadDraftBlocks, type DraftCardInput, type DraftSectionInput, type ReadDraftBlock,
+} from '../src/model/draft'
 import { resolveAssetPath } from './assets'
 
 export interface CardDigest {
@@ -34,6 +37,20 @@ export interface SectionDigest {
 }
 
 /**
+ * A question card on the map: an agent-authored question floating near a cluster.
+ * `dismissed` is included so Claude sees its own answered/waved-off questions and
+ * won't re-ask them — a dismissed question is an answered "no".
+ */
+export interface QuestionDigest {
+  id: string
+  text: string
+  x: number
+  y: number
+  authoredBy: string
+  dismissed: boolean
+}
+
+/**
  * A group on the MAP — a mechanical "these cards travel together" binding
  * (a tldraw group). `cardIds` are its direct card members; `bounds` is the
  * union of their resolved page bounds so Claude can see where the bundle sits.
@@ -48,6 +65,7 @@ export interface GroupDigest {
 export interface CanvasDigest {
   cards: CardDigest[]
   sections: SectionDigest[]
+  questions: QuestionDigest[]
 }
 
 /**
@@ -81,6 +99,7 @@ export interface CardMapEntry {
 export interface CardMap {
   cards: CardMapEntry[]
   sections: SectionDigest[]
+  questions: QuestionDigest[]
   groups: GroupDigest[]
 }
 
@@ -198,7 +217,12 @@ export function snapshotToCardMap(snapshot: CanvasSnapshot): CardMap {
     if (groupId) entry.groupId = groupId
     return entry
   })
-  return { cards, sections: snapshotToSections(snapshot), groups: snapshotToGroups(snapshot) }
+  return {
+    cards,
+    sections: snapshotToSections(snapshot),
+    questions: snapshotToQuestions(snapshot),
+    groups: snapshotToGroups(snapshot),
+  }
 }
 
 /**
@@ -253,6 +277,51 @@ export function snapshotToSections(snapshot: CanvasSnapshot): SectionDigest[] {
     }))
 }
 
+export function snapshotToQuestions(snapshot: CanvasSnapshot): QuestionDigest[] {
+  const store = storeOf(snapshot)
+  return Object.values(store)
+    .filter((r: any) => r && r.typeName === 'shape' && r.type === 'question' && r.props)
+    .map((r: any) => ({
+      id: r.id,
+      text: r.props.text ?? '',
+      ...resolvePageXY(store, r),
+      authoredBy: r.props.authoredBy ?? 'claude',
+      dismissed: r.props.dismissed ?? false,
+    }))
+}
+
 export function snapshotToCanvasDigest(snapshot: CanvasSnapshot, assetsDir?: string): CanvasDigest {
-  return { cards: snapshotToCards(snapshot, assetsDir), sections: snapshotToSections(snapshot) }
+  return {
+    cards: snapshotToCards(snapshot, assetsDir),
+    sections: snapshotToSections(snapshot),
+    questions: snapshotToQuestions(snapshot),
+  }
+}
+
+/**
+ * Compile the canvas into the LINEAR DRAFT — ordered blocks of `{ section,
+ * cards: [{ id, text }] }`, reusing the same pure `compileDraft` the client pane
+ * uses so `read_draft` and the pane can never disagree about reading order. This
+ * is what surfaces the top-to-bottom-within-sections convention to Claude, which
+ * the position-only map can't. Read-only: no prose-boundary implications.
+ */
+export function snapshotToDraft(snapshot: CanvasSnapshot): ReadDraftBlock[] {
+  const store = storeOf(snapshot)
+  const cards: DraftCardInput[] = cardShapes(snapshot).map((r: any) => ({
+    id: r.id,
+    kind: r.props.kind,
+    ...resolvePageXY(store, r),
+    w: r.props.w ?? 0,
+    h: r.props.h ?? 0,
+    text: r.props.text ?? '',
+    mergedInto: r.props.mergedInto ?? null,
+    draftExcluded: r.props.draftExcluded ?? false,
+  }))
+  const sections: DraftSectionInput[] = snapshotToSections(snapshot).map((s) => ({
+    id: s.id,
+    x: s.x,
+    text: s.text,
+    authoredBy: s.authoredBy,
+  }))
+  return toReadDraftBlocks(compileDraft(cards, sections))
 }

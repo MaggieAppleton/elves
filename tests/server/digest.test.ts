@@ -2,11 +2,13 @@ import { expect, test } from 'vitest'
 import {
   snapshotToCards,
   snapshotToSections,
+  snapshotToQuestions,
   snapshotToCanvasDigest,
   snapshotToCardMap,
   snapshotToCardsById,
   snapshotToSummarizableCards,
   snapshotToGroups,
+  snapshotToDraft,
   resolvePageXY,
 } from '../../server/digest'
 import { resolveAssetPath } from '../../server/assets'
@@ -128,6 +130,51 @@ test('snapshotToSections projects section shapes into a clean digest, ignoring c
 
 test('snapshotToSections returns [] for an empty canvas', () => {
   expect(snapshotToSections({ document: null, session: null })).toEqual([])
+})
+
+test('snapshotToQuestions projects question shapes into a clean digest, carrying dismissed state', () => {
+  const snapshot = {
+    document: {
+      store: {
+        'shape:a': {
+          id: 'shape:a', typeName: 'shape', type: 'card', x: 10, y: 20,
+          props: { w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text: 'my point', comments: [], mergedInto: null },
+        },
+        'shape:q1': {
+          id: 'shape:q1', typeName: 'shape', type: 'question', x: 5, y: 6,
+          props: { w: 220, h: 96, text: 'What did it cost her?', authoredBy: 'claude', dismissed: false },
+        },
+        'shape:q2': {
+          id: 'shape:q2', typeName: 'shape', type: 'question', x: 7, y: 8,
+          props: { w: 220, h: 96, text: 'already answered', authoredBy: 'claude', dismissed: true },
+        },
+      },
+    },
+    session: null,
+  }
+  expect(snapshotToQuestions(snapshot)).toEqual([
+    { id: 'shape:q1', text: 'What did it cost her?', x: 5, y: 6, authoredBy: 'claude', dismissed: false },
+    { id: 'shape:q2', text: 'already answered', x: 7, y: 8, authoredBy: 'claude', dismissed: true },
+  ])
+})
+
+test('snapshotToQuestions returns [] for an empty canvas', () => {
+  expect(snapshotToQuestions({ document: null, session: null })).toEqual([])
+})
+
+test('snapshotToCardMap includes questions with their dismissed state', () => {
+  const snapshot = {
+    document: { store: {
+      'shape:q': {
+        id: 'shape:q', typeName: 'shape', type: 'question', x: 1, y: 2,
+        props: { w: 220, h: 96, text: 'why?', authoredBy: 'claude', dismissed: false },
+      },
+    } },
+    session: null,
+  }
+  expect(snapshotToCardMap(snapshot).questions).toEqual([
+    { id: 'shape:q', text: 'why?', x: 1, y: 2, authoredBy: 'claude', dismissed: false },
+  ])
 })
 
 const LONG = 'A '.repeat(150) + 'end' // a long card body
@@ -289,6 +336,35 @@ test('snapshotToGroups drops a group with no card members', () => {
   expect(snapshotToGroups(snap)).toEqual([])
 })
 
+test('snapshotToDraft compiles ordered blocks, skips merged/excluded, and uses PAGE coords', () => {
+  const c = (id: string, x: number, y: number, text: string, extra: Record<string, unknown> = {}) => ({
+    id, typeName: 'shape', type: 'card', x, y, parentId: 'page:p',
+    props: { w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text, comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference: null, summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null, ...extra },
+  })
+  const snap = {
+    document: {
+      store: {
+        'page:p': { id: 'page:p', typeName: 'page' },
+        // A grouped card: its stored x is group-local, so band assignment must use
+        // the resolved PAGE x (group origin 1000 + local 20 = 1020 → Turn band).
+        'shape:g': { id: 'shape:g', typeName: 'shape', type: 'group', x: 1000, y: 0, parentId: 'page:p', props: {} },
+        't1': { ...c('t1', 20, 0, 'The turn.'), parentId: 'shape:g' },
+        'o1': c('o1', 60, 300, 'Origins lower.'),
+        'o2': c('o2', 60, 0, 'Origins upper.'),
+        'gone': c('gone', 60, 0, 'merged away', { mergedInto: 'o2' }),
+        'hid': c('hid', 60, 0, 'excluded', { draftExcluded: true }),
+        'sOrigins': { id: 'sOrigins', typeName: 'shape', type: 'section', x: 0, y: -100, parentId: 'page:p', props: { w: 320, h: 72, text: 'Origins', authoredBy: 'user' } },
+        'sTurn': { id: 'sTurn', typeName: 'shape', type: 'section', x: 1000, y: -100, parentId: 'page:p', props: { w: 320, h: 72, text: 'The turn', authoredBy: 'claude' } },
+      },
+    },
+    session: null,
+  }
+  expect(snapshotToDraft(snap)).toEqual([
+    { section: 'Origins', cards: [{ id: 'o2', text: 'Origins upper.' }, { id: 'o1', text: 'Origins lower.' }] },
+    { section: 'The turn', cards: [{ id: 't1', text: 'The turn.' }] },
+  ])
+})
+
 test('snapshotToCanvasDigest combines cards and sections', () => {
   const snapshot = {
     document: {
@@ -308,5 +384,6 @@ test('snapshotToCanvasDigest combines cards and sections', () => {
   expect(snapshotToCanvasDigest(snapshot)).toEqual({
     cards: snapshotToCards(snapshot),
     sections: snapshotToSections(snapshot),
+    questions: snapshotToQuestions(snapshot),
   })
 })

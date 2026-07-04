@@ -106,9 +106,8 @@ Set via environment variables:
 | `ELVES_DATA` | `data/` (relative to `server/`) | Data root holding `projects/<id>/…` — **all your projects**. |
 | `PORT` | `5199` | Port for the canvas server. |
 | `VITE_SERVER_URL` | `http://localhost:5199` | Where the web app looks for the server. |
-| `ELVES_SUMMARIZER` | `ollama` | Summary backend: `ollama` (local, default) or `off` to disable. |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama endpoint used for summaries. |
-| `OLLAMA_MODEL` | `llama3.2` | Local model for summaries. |
+| `OLLAMA_MODEL` | `llama3.2` | Local model used for summaries. |
 
 Example — keep a separate set of projects (e.g. for testing):
 
@@ -128,8 +127,8 @@ Summaries are generated **server-side and locally** via
 summarizes cards as you edit (and backfills existing ones on startup). No Ollama? No
 problem — summaries stay empty and the map/zoom fall back to a mechanical first-line
 truncation; nothing breaks. Summaries never touch your card text — like section headers
-and comments, they're a Claude-authored label *about* a card. Set `ELVES_SUMMARIZER=off`
-to disable generation entirely.
+and comments, they're a Claude-authored label *about* a card. Point `OLLAMA_HOST` /
+`OLLAMA_MODEL` at a different endpoint or model if you'd rather not use the defaults.
 
 ## Scripts
 

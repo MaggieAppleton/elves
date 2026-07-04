@@ -1,9 +1,10 @@
 import type { ChangeSet, Op } from '../src/model/changeset'
 import type { CommentType, Reference, RefType } from '../src/model/types'
 import type { CardDigest, CardMap } from '../server/digest'
+import type { ReadDraftBlock } from '../src/model/draft'
 import { minimalReference } from '../server/unfurl'
 import {
-  readCardMap, readCards, postChangeSet, unfurlReference, listProjects, type ProjectSummary,
+  readCardMap, readCards, readDraft, postChangeSet, unfurlReference, listProjects, type ProjectSummary,
 } from './elvesClient'
 
 /** Fields Claude may supply to override / enrich the unfurl baseline. */
@@ -50,6 +51,10 @@ export function readCardsTool(
   cardIds: string[],
 ): Promise<CardDigest[]> {
   return readCards(baseUrl, projectId, cardIds)
+}
+
+export function readDraftTool(baseUrl: string, projectId: string): Promise<ReadDraftBlock[]> {
+  return readDraft(baseUrl, projectId)
 }
 
 export function addCommentTool(
@@ -171,6 +176,16 @@ export function editSectionTextTool(
 ): Promise<void> {
   return postChangeSet(baseUrl, projectId, makeChangeSet([
     { kind: 'edit_section_text', sectionId: args.sectionId, text: args.text },
+  ]))
+}
+
+export function createQuestionTool(
+  baseUrl: string,
+  projectId: string,
+  args: { text: string; x: number; y: number },
+): Promise<void> {
+  return postChangeSet(baseUrl, projectId, makeChangeSet([
+    { kind: 'create_question', text: args.text, x: args.x, y: args.y },
   ]))
 }
 

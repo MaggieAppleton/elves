@@ -18,7 +18,7 @@ export function makeProseCardProps(text = ''): CardProps {
   return {
     w: CARD_DEFAULT_W, h: CARD_DEFAULT_H,
     kind: 'prose', noteKind: null, origin: null, text, authoredBy: null,
-    comments: [], mergedInto: null, assetId: null, reference: null, ...NO_FIGURE, ...NO_SUMMARY,
+    comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference: null, ...NO_FIGURE, ...NO_SUMMARY,
   }
 }
 
@@ -28,7 +28,7 @@ export function makeNoteCardProps(text = '', origin: Origin = 'typed', authoredB
   return {
     w: CARD_DEFAULT_W, h: CARD_DEFAULT_H,
     kind: 'note', noteKind: 'text', origin, text, authoredBy,
-    comments: [], mergedInto: null, assetId: null, reference: null, ...NO_FIGURE, ...NO_SUMMARY,
+    comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference: null, ...NO_FIGURE, ...NO_SUMMARY,
   }
 }
 
@@ -36,7 +36,7 @@ export function makeImageNoteCardProps(assetId: string): CardProps {
   return {
     w: 280, h: 200,
     kind: 'note', noteKind: 'image', origin: 'image', text: '', authoredBy: null,
-    comments: [], mergedInto: null, assetId, reference: null, ...NO_FIGURE, ...NO_SUMMARY,
+    comments: [], mergedInto: null, draftExcluded: false, assetId, reference: null, ...NO_FIGURE, ...NO_SUMMARY,
   }
 }
 
@@ -49,7 +49,7 @@ export function makeReferenceCardProps(reference: Reference): CardProps {
   return {
     w: REFERENCE_DEFAULT_W, h: REFERENCE_DEFAULT_H,
     kind: 'note', noteKind: 'reference', origin: 'reference', text: '', authoredBy: null,
-    comments: [], mergedInto: null, assetId: null, reference, ...NO_FIGURE, ...NO_SUMMARY,
+    comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference, ...NO_FIGURE, ...NO_SUMMARY,
   }
 }
 
@@ -69,7 +69,7 @@ export function makeFigureCardProps(
   return {
     w: FIGURE_DEFAULT_W, h: FIGURE_DEFAULT_H,
     kind: 'figure', noteKind: null, origin: null, text: description, authoredBy,
-    comments: [], mergedInto: null, assetId: null, reference: null,
+    comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference: null,
     figureTitle: title, figureStatus: 'idea', ...NO_SUMMARY,
   }
 }

@@ -1,10 +1,10 @@
 /**
  * The one impure, possibly-networked operation in an otherwise local app:
- * turning a long card's text into a one-phrase gist. Every backend implements
- * this narrow interface, so the model is a swappable config choice, not a
- * decision baked into the server. Any failure returns null — the caller then
- * leaves the card's summary absent and consumers fall back to a mechanical
- * gist, so nothing ever breaks when no model is reachable.
+ * turning a long card's text into a one-phrase gist. The Ollama backend
+ * implements this narrow interface, keeping the network call isolated behind it.
+ * Any failure returns null — the caller then leaves the card's summary absent
+ * and consumers fall back to a mechanical gist, so nothing ever breaks when the
+ * model is unreachable.
  */
 export interface Summarizer {
   summarize(text: string): Promise<string | null>
@@ -21,15 +21,4 @@ export const SUMMARY_PROMPT =
 export function cleanSummary(raw: string): string | null {
   const line = raw.trim().split('\n')[0].trim().replace(/^["'“]|["'”.]$/g, '').trim()
   return line.length ? line : null
-}
-
-/**
- * The always-off backend: the fallback when summarization is disabled or no
- * model is configured, and the default in tests so suites stay offline.
- */
-export const NoopSummarizer: Summarizer = {
-  label: 'none',
-  async summarize() {
-    return null
-  },
 }

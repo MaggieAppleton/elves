@@ -2,6 +2,7 @@ import type { ChangeSet } from '../src/model/changeset'
 import type { CardDigest, CardMap } from '../server/digest'
 import type { Project } from '../server/projects'
 import type { Reference } from '../src/model/types'
+import type { ReadDraftBlock } from '../src/model/draft'
 
 export type ProjectSummary = Pick<Project, 'id' | 'name'>
 
@@ -17,6 +18,14 @@ export async function readCardMap(baseUrl: string, projectId: string): Promise<C
   if (res.status === 404) throw new Error(`unknown project '${projectId}' — call list_projects to see valid ids`)
   if (!res.ok) throw new Error(`read_map failed: ${res.status}`)
   return res.json() as Promise<CardMap>
+}
+
+export async function readDraft(baseUrl: string, projectId: string): Promise<ReadDraftBlock[]> {
+  const res = await fetch(`${baseUrl}/projects/${encodeURIComponent(projectId)}/draft`)
+  if (res.status === 404) throw new Error(`unknown project '${projectId}' — call list_projects to see valid ids`)
+  if (!res.ok) throw new Error(`read_draft failed: ${res.status}`)
+  const { blocks } = (await res.json()) as { blocks: ReadDraftBlock[] }
+  return blocks
 }
 
 export async function readCards(

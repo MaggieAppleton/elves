@@ -16,6 +16,7 @@ test('the MCP server exposes the scoped tools plus list_projects, and no text-ed
     'add_comment',
     'create_figure_card',
     'create_note_card',
+    'create_question',
     'create_reference',
     'create_section',
     'edit_section_text',
@@ -25,6 +26,7 @@ test('the MCP server exposes the scoped tools plus list_projects, and no text-ed
     'move_cards',
     'move_sections',
     'read_cards',
+    'read_draft',
     'read_map',
     'ungroup_cards',
   ])

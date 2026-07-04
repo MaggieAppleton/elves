@@ -10,6 +10,7 @@ export type Op =
   | { kind: 'create_figure_card'; title: string; description: string; x: number; y: number }
   | { kind: 'move_sections'; moves: { sectionId: string; x: number; y: number }[] }
   | { kind: 'edit_section_text'; sectionId: string; text: string }
+  | { kind: 'create_question'; text: string; x: number; y: number }
   | { kind: 'group_cards'; cardIds: string[] }
   | { kind: 'ungroup_cards'; groupId: string }
   | {
@@ -100,6 +101,8 @@ function isOp(v: unknown): v is Op {
       })
     case 'edit_section_text':
       return typeof op.sectionId === 'string' && typeof op.text === 'string'
+    case 'create_question':
+      return typeof op.text === 'string' && typeof op.x === 'number' && typeof op.y === 'number'
     case 'group_cards':
       return Array.isArray(op.cardIds) && op.cardIds.length >= 2 &&
         op.cardIds.every((id) => typeof id === 'string')
@@ -155,6 +158,13 @@ export function isChangeSet(value: unknown): value is ChangeSet {
  * one as a placeholder the user refines or rejects (it renders with the agent
  * authorship mark), the same way it may write a section label. Scoped to this one
  * op; it never touches an existing card's `text`.
+ *
+ * create_question is likewise a machine annotation, the same safety class as
+ * add_comment / create_section: it writes Claude's QUESTION — the agent's own
+ * words provoking what the user hasn't written yet — into a new question shape,
+ * never the user's prose or any card's `text`. A question card by construction
+ * holds only a question, never draft prose, so it sits squarely on the safe side
+ * of the boundary. Scoped to this one op.
  */
 export function changeSetWritesText(cs: ChangeSet): boolean {
   return cs.ops.some((op) => {
@@ -168,6 +178,7 @@ export function changeSetWritesText(cs: ChangeSet): boolean {
       case 'create_figure_card':
       case 'move_sections':
       case 'edit_section_text':
+      case 'create_question':
       case 'group_cards':
       case 'ungroup_cards':
       case 'set_summary':

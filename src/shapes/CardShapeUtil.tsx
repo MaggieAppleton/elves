@@ -29,6 +29,7 @@ export type CardShape = TLBaseShape<'card', {
   authoredBy: string | null
   comments: Comment[]
   mergedInto: string | null
+  draftExcluded: boolean
   assetId: string | null
   reference: Reference | null
   figureTitle: string
@@ -84,6 +85,13 @@ export function addAuthoredByUp(props: Record<string, unknown>): void {
   props.authoredBy = null
 }
 
+// The draft-exclude flag postdates every existing card. Default them to false —
+// a card is part of the linear draft unless the user deliberately excludes it,
+// so old canvases compile in full exactly as they read on the board.
+export function addDraftExcludedUp(props: Record<string, unknown>): void {
+  props.draftExcluded = false
+}
+
 // The figure-card fields (a third card kind). Existing cards are notes or prose,
 // never figures, so default them to the "not a figure" shape: an empty title and
 // no status. A figure card is only ever born via makeFigureCardProps.
@@ -115,7 +123,7 @@ export function renameSourceToNoteDown(props: Record<string, unknown>): void {
 
 const cardVersions = createShapePropsMigrationIds('card', {
   AddComments: 1, AddAssetId: 2, AddReference: 3, AddSummary: 4, RenameSourceToNote: 5,
-  AddAuthoredBy: 6, AddFigure: 7,
+  AddAuthoredBy: 6, AddDraftExcluded: 7, AddFigure: 8,
 })
 
 export const cardMigrations = createShapePropsMigrationSequence({
@@ -167,6 +175,13 @@ export const cardMigrations = createShapePropsMigrationSequence({
       },
     },
     {
+      id: cardVersions.AddDraftExcluded,
+      up: (props) => addDraftExcludedUp(props as Record<string, unknown>),
+      down: (props) => {
+        delete (props as Record<string, unknown>).draftExcluded
+      },
+    },
+    {
       id: cardVersions.AddFigure,
       up: (props) => addFigureUp(props as Record<string, unknown>),
       down: (props) => {
@@ -211,6 +226,20 @@ function AutosizeCard({
   return <>{children}</>
 }
 
+// An eye (in the draft) / struck-through eye (excluded), for the draft-exclude
+// toggle. Phosphor-style single-path glyphs, sized by the button's font.
+function EyeIcon({ off }: { off: boolean }) {
+  return (
+    <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true" focusable="false">
+      {off ? (
+        <path d="M228,175a8,8,0,0,1-10.92-3l-19-33.2A123.23,123.23,0,0,1,162,155.46l5.87,35.22a8,8,0,0,1-6.58,9.21,8.4,8.4,0,0,1-1.32.11,8,8,0,0,1-7.88-6.69l-5.77-34.58a133.06,133.06,0,0,1-36.68,0l-5.77,34.58A8,8,0,0,1,96,200.11L101.85,165A123.31,123.31,0,0,1,57,138.76L38,172a8,8,0,1,1-13.9-7.9l20.15-35.25A153.06,153.06,0,0,1,28.68,113.4a8,8,0,1,1,11.16-11.46c16.83,16.39,42.34,35.9,88.16,35.9s71.33-19.51,88.16-35.9a8,8,0,0,1,11.16,11.46,153.06,153.06,0,0,1-15.53,15.41L232,164.09A8,8,0,0,1,228,175Z" />
+      ) : (
+        <path d="M247.31,124.76c-.35-.79-8.82-19.58-27.65-38.41C194.57,61.26,162.88,48,128,48S61.43,61.26,36.34,86.35C17.51,105.18,9,124,8.69,124.76a8,8,0,0,0,0,6.5c.35.79,8.82,19.57,27.65,38.4C61.43,194.74,93.12,208,128,208s66.57-13.26,91.66-38.34c18.83-18.83,27.3-37.61,27.65-38.4A8,8,0,0,0,247.31,124.76ZM128,168a40,40,0,1,1,40-40A40,40,0,0,1,128,168Z" />
+      )}
+    </svg>
+  )
+}
+
 export class CardShapeUtil extends ShapeUtil<CardShape> {
   static override type = 'card' as const
   static override migrations = cardMigrations
@@ -232,6 +261,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
       }),
     ),
     mergedInto: T.nullable(T.string),
+    draftExcluded: T.boolean,
     assetId: T.nullable(T.string),
     reference: T.nullable(referenceValidator),
     figureTitle: T.string,
@@ -259,11 +289,18 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     const members = mergedMembers(this.editor.getCurrentPageShapes(), shape.id)
     const mergedCount = members.length
     const expanded = mergedCount > 0 && isExpanded(shape.id)
-    const { kind, text, noteKind, assetId, reference, figureTitle, figureStatus } = shape.props
+    const { kind, text, noteKind, assetId, reference, figureTitle, figureStatus, draftExcluded } = shape.props
     const isImage = noteKind === 'image' && !!assetId
     const isReference = noteKind === 'reference' && !!reference
     const isFigure = kind === 'figure'
     const isEditing = this.editor.getEditingShapeId() === shape.id
+    // The draft-exclude affordance is only meaningful on PROSE cards (the linear
+    // draft is prose-only in v1). Show it when the card is the sole selection (so
+    // you can opt it out) or whenever it's already excluded (so it's always
+    // visible WHY that card isn't compiling into the draft).
+    const isProse = kind === 'prose'
+    const selected = this.editor.getOnlySelectedShapeId() === shape.id
+    const showExcludeToggle = isProse && (selected || draftExcluded)
     // Zoomed far out, a summarized card shows its gist so the piece reads at a
     // glance. getZoomLevel is reactive, so this re-renders as the user zooms;
     // the gist font counter-scales with zoom to stay a readable on-screen size.
@@ -311,6 +348,30 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
               opacity transition, not a hard cut); the halo itself is driven by
               the wrap's data-presence attribute. aria-hidden — it's ambient. */}
           <div className="elves-presence" aria-hidden="true" data-testid="presence-glow" />
+          {/* Draft-exclude toggle: keep this prose aside out of the linear draft
+              (and read_draft). The button carries its own state — an eye when in
+              the draft, struck-through when excluded — and stays visible while
+              excluded so the marker explains itself. */}
+          {showExcludeToggle && (
+            <button
+              type="button"
+              className="elves-draft-exclude"
+              data-testid="draft-exclude-toggle"
+              data-excluded={draftExcluded}
+              aria-pressed={draftExcluded}
+              title={draftExcluded ? 'Excluded from the draft — click to include' : 'Exclude from the draft'}
+              onPointerDown={stopEventPropagation}
+              onClick={(e) => {
+                stopEventPropagation(e)
+                this.editor.updateShape<CardShape>({
+                  id: shape.id, type: 'card', props: { draftExcluded: !draftExcluded },
+                })
+              }}
+            >
+              <EyeIcon off={draftExcluded} />
+              {draftExcluded && <span className="elves-draft-exclude__label">Not in draft</span>}
+            </button>
+          )}
           {/* A short paper stack peeking out behind the representative signals
               "there's more collapsed here". Fixed 1–2 edges, quiet until the
               badge is engaged; hidden while fanned out or zoomed to gist. */}
@@ -326,7 +387,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
             </div>
           )}
           <div
-            className={`elves-card elves-card--${kind}${isImage ? ' elves-card--image' : ''}${isReference ? ' elves-card--reference' : ''}${showGist ? ' elves-card--gist' : ''}`}
+            className={`elves-card elves-card--${kind}${isImage ? ' elves-card--image' : ''}${isReference ? ' elves-card--reference' : ''}${showGist ? ' elves-card--gist' : ''}${draftExcluded ? ' elves-card--excluded' : ''}`}
             // In gist mode a short card's box (sized to its full text at 15px) may
             // be shorter than the gist at the uniform gist size, so let the card
             // grow to fit rather than clip. Long cards keep min-height 100% and

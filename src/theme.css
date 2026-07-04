@@ -226,10 +226,80 @@ body {
 }
 .elves-tools-toggle svg { width: 15px; height: 15px; display: block; }
 
+/* ---- Split layout: canvas pane | divider | draft pane ------------------- */
+/* The stage fills #app-root; the fixed overlays float above it. tldraw lives in
+   the canvas pane and stays mounted in every view — draft-only just animates the
+   pane to 0 width. */
+.elves-stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  overflow: hidden;
+}
+.elves-canvas-pane {
+  position: relative;
+  height: 100%;
+  /* min-width:0 defeats flexbox's default min-width:auto, so the pane can
+     actually collapse to the width we set (0 in draft-only) instead of being
+     held open by its content's min size. */
+  min-width: 0;
+  overflow: hidden;
+  transition: width 320ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.elves-draft-pane {
+  position: relative;
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--elves-surface);
+  border-left: 1px solid var(--elves-border);
+  transition: width 320ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* A collapsed canvas pane keeps no border seam. */
+.elves-canvas-pane[data-collapsed="true"] + .elves-draft-pane,
+.elves-canvas-pane[data-collapsed="true"] ~ .elves-draft-pane { border-left: none; }
+/* While dragging the divider the panes track the cursor 1:1 (no easing lag). */
+.elves-stage[data-dragging="true"] .elves-canvas-pane,
+.elves-stage[data-dragging="true"] .elves-draft-pane { transition: none; }
+
+.elves-divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 11px;
+  margin-left: -5.5px;
+  z-index: 350;
+  cursor: col-resize;
+  touch-action: none;
+}
+.elves-divider::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  margin-left: -0.5px;
+  background: var(--elves-border);
+  transition: background-color 100ms ease, width 100ms ease;
+}
+.elves-divider:hover::after,
+.elves-stage[data-dragging="true"] .elves-divider::after {
+  background: var(--elves-primary);
+  width: 2px;
+  margin-left: -1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .elves-canvas-pane,
+  .elves-draft-pane { transition: none; }
+}
+
 /* ---- Creation toolbar (top-center) as an elevated action cluster -------- */
+/* Sits just below the centered view toggle. */
 .elves-toolbar {
   position: fixed;
-  top: 12px;
+  top: 56px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 300;

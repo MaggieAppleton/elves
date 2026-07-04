@@ -86,6 +86,11 @@ describe('isChangeSet', () => {
     }
     expect(isChangeSet(cs)).toBe(true)
   })
+
+  test('accepts create_question and rejects it without coords', () => {
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'create_question', text: 'why?', x: 0, y: 0 }] })).toBe(true)
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'create_question', text: 'why?' }] })).toBe(false) // missing x/y
+  })
 })
 
 describe('isReference', () => {

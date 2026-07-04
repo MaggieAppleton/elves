@@ -1,0 +1,144 @@
+/* ---- Linear draft pane -------------------------------------------------- */
+/* The canvas read as a piece: a quiet reading column beside the board. */
+
+.elves-draft {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--elves-surface);
+  color: var(--elves-ink);
+  font-family: var(--elves-card-font);
+}
+
+.elves-draft__bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  /* Left-aligned: the top-right corner of the pane is where the fixed project
+     switcher overlays it, so nothing interactive lives out there. */
+  justify-content: flex-start;
+  gap: 12px;
+  height: 46px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--elves-border-subtle);
+  background: var(--elves-surface);
+}
+
+.elves-draft__label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--elves-ink-faint);
+}
+
+.elves-draft__copy {
+  font-family: var(--elves-card-font);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--elves-border);
+  background: var(--elves-surface);
+  color: var(--elves-ink-soft);
+  cursor: pointer;
+  transition: background-color 100ms ease, color 100ms ease;
+}
+.elves-draft__copy:hover:not(:disabled) {
+  background: var(--elves-tertiary);
+  color: var(--elves-ink);
+}
+.elves-draft__copy:disabled { opacity: 0.45; cursor: default; }
+.elves-draft__copy:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring);
+}
+
+.elves-draft__scroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.elves-draft__body {
+  max-width: 64ch;
+  margin: 0 auto;
+  padding: 40px 40px 30vh;
+}
+
+.elves-draft__section + .elves-draft__section { margin-top: 4px; }
+
+.elves-draft__heading {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--elves-ink);
+  margin: 34px 0 14px;
+  padding-bottom: 0;
+}
+.elves-draft__section:first-child .elves-draft__heading { margin-top: 4px; }
+/* Claude-authored labels carry the same warm orange as on the canvas. */
+.elves-draft__heading[data-authored-by="claude"] { color: var(--elves-claude-accent); }
+
+.elves-draft__para {
+  position: relative;
+  font-size: 16px;
+  line-height: 1.72;
+  color: var(--elves-ink);
+  margin: 0 0 15px;
+  padding: 3px 10px 3px 12px;
+  margin-left: -12px;
+  border-radius: 7px;
+  border-left: 2px solid transparent;
+  cursor: pointer;
+  transition: background-color 90ms ease, border-color 90ms ease;
+}
+.elves-draft__para:hover {
+  background: var(--elves-tertiary);
+  border-left-color: var(--elves-border-strong);
+}
+.elves-draft__para:focus-visible {
+  outline: none;
+  background: var(--elves-tertiary);
+  box-shadow: 0 0 0 2px var(--elves-focus-ring);
+}
+.elves-draft__para--empty {
+  color: var(--elves-ink-faint);
+  font-style: italic;
+}
+
+/* Unresolved-comment marker: a small count, no bodies (v1). */
+.elves-draft__comments {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 7px;
+  padding: 0 4px;
+  vertical-align: middle;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  border-radius: 8px;
+  color: var(--elves-cc-weak-label);
+  background: var(--elves-cc-weak-bg);
+  border: 1px solid var(--elves-cc-weak-border);
+  translate: 0 -1px;
+}
+
+.elves-draft__blank {
+  max-width: 40ch;
+  margin: 22vh auto 0;
+  padding: 0 32px;
+  text-align: center;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--elves-ink-faint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .elves-draft__copy,
+  .elves-draft__para { transition: none; }
+}

@@ -31,6 +31,49 @@
 /* Image cards are just the image: no padding, no label — edge-to-edge media. */
 .elves-card--image { padding: 0; }
 
+/* A card the user has kept OUT of the linear draft: a quiet dashed border and
+   faded content say "this aside isn't part of the piece as read". */
+.elves-card--excluded {
+  border-style: dashed;
+  border-color: var(--elves-border-strong);
+  background: var(--elves-surface-muted);
+}
+.elves-card--excluded .elves-card__text { opacity: 0.6; }
+
+/* Draft-exclude toggle — top-right of the card. Icon-only when the card is in
+   the draft (shown on selection); grows a "Not in draft" label when excluded so
+   the marker reads on its own. pointer-events:all because the card container is
+   pointer-events:none (clicks otherwise fall through to the canvas). */
+.elves-draft-exclude {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 5px;
+  border: none;
+  border-radius: 5px;
+  background: var(--elves-tertiary);
+  color: var(--elves-ink-faint);
+  cursor: pointer;
+  pointer-events: all;
+  transition: background-color 100ms ease, color 100ms ease;
+}
+.elves-draft-exclude svg { width: 13px; height: 13px; display: block; }
+.elves-draft-exclude:hover { color: var(--elves-ink); background: var(--elves-border); }
+.elves-draft-exclude[data-excluded="true"] {
+  color: var(--elves-ink-soft);
+  background: var(--elves-surface);
+  border: 1px dashed var(--elves-border-strong);
+  padding: 2px 6px 2px 5px;
+}
+.elves-draft-exclude__label { letter-spacing: 0.02em; line-height: 1; }
+
 /* "NOTE" label — plain small-caps text, no container, tucked toward the
    top-left corner of the card. */
 .elves-badge {
