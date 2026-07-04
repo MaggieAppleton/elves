@@ -7,6 +7,7 @@ import {
   snapshotToCardsById,
   snapshotToSummarizableCards,
   snapshotToGroups,
+  snapshotToDraft,
   resolvePageXY,
 } from '../../server/digest'
 import { resolveAssetPath } from '../../server/assets'
@@ -250,6 +251,35 @@ test('snapshotToGroups drops a group with no card members', () => {
   snap.document.store['shape:a'].parentId = 'page:p'
   snap.document.store['shape:b'].parentId = 'page:p'
   expect(snapshotToGroups(snap)).toEqual([])
+})
+
+test('snapshotToDraft compiles ordered blocks, skips merged/excluded, and uses PAGE coords', () => {
+  const c = (id: string, x: number, y: number, text: string, extra: Record<string, unknown> = {}) => ({
+    id, typeName: 'shape', type: 'card', x, y, parentId: 'page:p',
+    props: { w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text, comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference: null, summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null, ...extra },
+  })
+  const snap = {
+    document: {
+      store: {
+        'page:p': { id: 'page:p', typeName: 'page' },
+        // A grouped card: its stored x is group-local, so band assignment must use
+        // the resolved PAGE x (group origin 1000 + local 20 = 1020 → Turn band).
+        'shape:g': { id: 'shape:g', typeName: 'shape', type: 'group', x: 1000, y: 0, parentId: 'page:p', props: {} },
+        't1': { ...c('t1', 20, 0, 'The turn.'), parentId: 'shape:g' },
+        'o1': c('o1', 60, 300, 'Origins lower.'),
+        'o2': c('o2', 60, 0, 'Origins upper.'),
+        'gone': c('gone', 60, 0, 'merged away', { mergedInto: 'o2' }),
+        'hid': c('hid', 60, 0, 'excluded', { draftExcluded: true }),
+        'sOrigins': { id: 'sOrigins', typeName: 'shape', type: 'section', x: 0, y: -100, parentId: 'page:p', props: { w: 320, h: 72, text: 'Origins', authoredBy: 'user' } },
+        'sTurn': { id: 'sTurn', typeName: 'shape', type: 'section', x: 1000, y: -100, parentId: 'page:p', props: { w: 320, h: 72, text: 'The turn', authoredBy: 'claude' } },
+      },
+    },
+    session: null,
+  }
+  expect(snapshotToDraft(snap)).toEqual([
+    { section: 'Origins', cards: [{ id: 'o2', text: 'Origins upper.' }, { id: 'o1', text: 'Origins lower.' }] },
+    { section: 'The turn', cards: [{ id: 't1', text: 'The turn.' }] },
+  ])
 })
 
 test('snapshotToCanvasDigest combines cards and sections', () => {

@@ -9,7 +9,9 @@ import {
   referencedSectionIds,
 } from '../src/model/changeset'
 import type { PresenceMessage } from '../src/model/presence'
-import { snapshotToCards, snapshotToSections, snapshotToCardMap, snapshotToCardsById } from './digest'
+import {
+  snapshotToCards, snapshotToSections, snapshotToCardMap, snapshotToCardsById, snapshotToDraft,
+} from './digest'
 import { applyChangeSetToSnapshot } from './applyChangeSet'
 import { reconcileCanvasFile, type Summarizer } from './summarize'
 import { extForMime, saveAsset, resolveAssetPath } from './assets'
@@ -242,6 +244,18 @@ export function createServer(
       const paths = await requireProject(req.params.id, res)
       if (!paths) return
       res.json(snapshotToCardMap(await readCanvas(paths.canvasPath)))
+    }),
+  )
+
+  // The linear draft: the canvas compiled into ordered blocks
+  // ({ section, cards: [{ id, text }] }) in true narrative order — sections
+  // left→right, cards top→bottom within each. Read-only; powers `read_draft`.
+  app.get(
+    '/projects/:id/draft',
+    wrap(async (req, res) => {
+      const paths = await requireProject(req.params.id, res)
+      if (!paths) return
+      res.json({ blocks: snapshotToDraft(await readCanvas(paths.canvasPath)) })
     }),
   )
 

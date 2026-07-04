@@ -70,6 +70,14 @@ export interface CardProps {
   comments: Comment[]
   /** If set, this note card was merged into the referenced representative card (hidden, recoverable). */
   mergedInto: string | null
+  /**
+   * Keep this card out of the linear draft compile (the reading pane and
+   * `read_draft`). Default false. The canvas is still the one place prose is
+   * written; this only says "this aside isn't part of the piece as read
+   * top-to-bottom". Excluded cards show a subtle marker on the canvas so it's
+   * visible why they don't compile. See src/model/draft.ts.
+   */
+  draftExcluded: boolean
   /** For image note cards: the stored asset id (a filename under data/assets/). null otherwise. */
   assetId: string | null
   /** For reference note cards (noteKind === 'reference'): structured metadata; null otherwise. */

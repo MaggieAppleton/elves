@@ -14,6 +14,7 @@ import {
   addCommentTool,
   readMapTool,
   readCardsTool,
+  readDraftTool,
   createNoteCardTool,
   createReferenceTool,
   createSectionTool,
@@ -131,6 +132,13 @@ test('readCardsTool reads full digests for the requested card ids', async () => 
   expect(cards).toEqual([
     { id: 'shape:a', kind: 'prose', noteKind: null, origin: null, text: 'hi', x: 1, y: 2, comments: [], mergedInto: null, assetPath: null, reference: null, summary: null },
   ])
+})
+
+test('readDraftTool compiles the canvas into ordered narrative blocks', async () => {
+  const { base } = await liveElves()
+  await seedCard(base, 'shape:a') // one prose card, no section → one opening block
+  const blocks = await readDraftTool(base, 'essay')
+  expect(blocks).toEqual([{ section: null, cards: [{ id: 'shape:a', text: 'hi' }] }])
 })
 
 test('createReferenceTool unfurls a url and posts a create_reference change-set, Claude fields winning', async () => {

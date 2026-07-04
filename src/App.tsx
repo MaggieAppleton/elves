@@ -24,6 +24,8 @@ import { applyChangeSet } from './apply/applyChangeSet'
 import { connectRealtime } from './client/realtime'
 import { markDoing, markLooking, clearPresence } from './client/presence'
 import { ProjectSwitcher } from './components/ProjectSwitcher'
+import { DraftPane } from './components/DraftPane'
+import { ViewToggle, type ViewState, VIEW_ORDER } from './components/ViewToggle'
 
 const shapeUtils = [CardShapeUtil, SectionShapeUtil]
 
@@ -34,6 +36,13 @@ const shapeUtils = [CardShapeUtil, SectionShapeUtil]
 const getShapeVisibility = (shape: Parameters<typeof cardIsHidden>[0]) =>
   cardIsHidden(shape) ? ('hidden' as const) : ('inherit' as const)
 const LAST_PROJECT_KEY = 'elves:lastProject'
+// View state (canvas / split / draft) and the split divider ratio persist PER
+// project, so each piece reopens the way you left it reading it.
+const viewKey = (id: string) => `elves:view:${id}`
+const splitKey = (id: string) => `elves:split:${id}`
+const DEFAULT_SPLIT = 0.6 // canvas gets 60% in split by default
+const MIN_SPLIT = 0.18
+const MAX_SPLIT = 0.82
 
 // Phosphor "Plus" (regular weight), inlined to avoid pulling in the whole icon package.
 function PlusIcon() {
@@ -56,6 +65,15 @@ export default function App() {
   // checks this so a failed (or not-yet-finished) load can't serialize an empty
   // store over real on-disk data.
   const canvasLoadedRef = useRef(false)
+
+  // Three view states — canvas only, split, draft only — plus the split ratio
+  // (canvas fraction). tldraw stays MOUNTED in all three; draft-only just
+  // collapses its pane width to 0, so the store, persistence, and realtime never
+  // tear down. Both persist per project (loaded on switch, below).
+  const [view, setView] = useState<ViewState>('canvas')
+  const [split, setSplit] = useState(DEFAULT_SPLIT)
+  const [dragging, setDragging] = useState(false)
+  const stageRef = useRef<HTMLDivElement>(null)
 
   // Keep the refs + the asset base in sync during render so they are correct the
   // instant tldraw's onMount fires and whenever a card image renders.
@@ -119,6 +137,89 @@ export default function App() {
   useEffect(() => {
     clearPresence()
   }, [currentProjectId])
+
+  // Restore this project's saved view + split ratio when it opens.
+  useEffect(() => {
+    if (!currentProjectId) return
+    const savedView = localStorage.getItem(viewKey(currentProjectId))
+    setView(savedView === 'split' || savedView === 'draft' ? savedView : 'canvas')
+    const savedSplit = parseFloat(localStorage.getItem(splitKey(currentProjectId)) ?? '')
+    setSplit(
+      Number.isFinite(savedSplit) && savedSplit >= MIN_SPLIT && savedSplit <= MAX_SPLIT
+        ? savedSplit
+        : DEFAULT_SPLIT,
+    )
+  }, [currentProjectId])
+
+  const changeView = (next: ViewState) => {
+    setView(next)
+    if (projectIdRef.current) localStorage.setItem(viewKey(projectIdRef.current), next)
+  }
+
+  // Persist the split ratio as it changes (also harmlessly re-writes the restored
+  // value on open — same key, same number).
+  useEffect(() => {
+    if (currentProjectId) localStorage.setItem(splitKey(currentProjectId), String(split))
+  }, [split, currentProjectId])
+
+  // Keyboard shortcut: ⌘/Ctrl + \ cycles canvas → split → draft → canvas. A
+  // modifier is required so it never fights typing in a card.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key === '\\') {
+        e.preventDefault()
+        changeView(VIEW_ORDER[(VIEW_ORDER.indexOf(view) + 1) % VIEW_ORDER.length])
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [view])
+
+  // Drag the split divider to set the canvas/draft ratio. Pointer events are
+  // captured on window so a fast drag off the handle keeps tracking; transitions
+  // are suspended (via the stage's data-dragging flag) so the panes follow the
+  // cursor 1:1 instead of easing behind it.
+  const onDividerDown = (e: React.PointerEvent) => {
+    e.preventDefault()
+    const stage = stageRef.current
+    if (!stage) return
+    setDragging(true)
+    const onMove = (ev: PointerEvent) => {
+      const rect = stage.getBoundingClientRect()
+      if (rect.width === 0) return
+      const r = (ev.clientX - rect.left) / rect.width
+      setSplit(Math.min(MAX_SPLIT, Math.max(MIN_SPLIT, r)))
+    }
+    const onUp = () => {
+      setDragging(false)
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  // Draft → canvas navigation: pan (keeping zoom) to a clicked paragraph's card
+  // and select it. From draft-only we first open split so the canvas is visible,
+  // then pan once the pane has finished widening.
+  const focusCard = (cardId: string) => {
+    const ed = editorRef.current
+    if (!ed) return
+    const id = cardId as CardShape['id']
+    const bounds = ed.getShapePageBounds(id)
+    if (!bounds) return
+    ed.select(id)
+    ed.centerOnPoint(bounds.center, { animation: { duration: 300 } })
+  }
+
+  const onSelectCard = (cardId: string) => {
+    if (view === 'draft') {
+      changeView('split')
+      setTimeout(() => focusCard(cardId), 340) // after the width transition settles
+    } else {
+      focusCard(cardId)
+    }
+  }
 
   const addImageCard = async (ed: Editor, file: File, point?: { x: number; y: number }) => {
     const pid = projectIdRef.current
@@ -311,26 +412,36 @@ export default function App() {
     )
   }
 
+  // Pane widths for the three states. tldraw stays mounted; draft-only just
+  // collapses the canvas pane to 0 (and vice-versa), and CSS transitions the
+  // width so moving between states feels continuous rather than modal.
+  const canvasWidth = view === 'canvas' ? '100%' : view === 'draft' ? '0%' : `${split * 100}%`
+  const draftWidth = view === 'canvas' ? '0%' : view === 'draft' ? '100%' : `${(1 - split) * 100}%`
+
   return (
     <div id="app-root" className={showTools ? undefined : 'elves-hide-tools'}>
-      <button
-        className="elves-tools-toggle"
-        data-active={showTools}
-        title="Show/hide drawing tools"
-        onClick={() => setShowTools((v) => !v)}
-      >
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
+      <ViewToggle view={view} onChange={changeView} />
+      {/* Canvas-editing chrome is only meaningful when the canvas is visible. */}
+      {view !== 'draft' && (
+        <button
+          className="elves-tools-toggle"
+          data-active={showTools}
+          title="Show/hide drawing tools"
+          onClick={() => setShowTools((v) => !v)}
         >
-          <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
-        </svg>
-      </button>
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+          </svg>
+        </button>
+      )}
       <ProjectSwitcher
         projects={projects}
         currentId={currentProjectId}
@@ -338,31 +449,55 @@ export default function App() {
         onCreate={createFlow}
         onRename={renameFlow}
       />
-      <div className="elves-toolbar">
-        <button data-testid="new-prose" onClick={() => addCard('prose')}><PlusIcon />Prose</button>
-        <button data-testid="new-note" onClick={() => addCard('note')}><PlusIcon />Notes</button>
-        <button data-testid="new-image" onClick={() => fileInputRef.current?.click()}><PlusIcon />Image</button>
-        <button data-testid="new-reference" onClick={addReferenceFlow}><PlusIcon />Link</button>
-        <button data-testid="new-section" onClick={addSection}><PlusIcon />Section</button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          style={{ display: 'none' }}
-          data-testid="image-input"
-          onChange={(e) => {
-            const file = e.target.files?.[0]
-            if (file && editor) addImageCard(editor, file)
-            e.target.value = ''
-          }}
-        />
+      {view !== 'draft' && (
+        <div className="elves-toolbar">
+          <button data-testid="new-prose" onClick={() => addCard('prose')}><PlusIcon />Prose</button>
+          <button data-testid="new-note" onClick={() => addCard('note')}><PlusIcon />Notes</button>
+          <button data-testid="new-image" onClick={() => fileInputRef.current?.click()}><PlusIcon />Image</button>
+          <button data-testid="new-reference" onClick={addReferenceFlow}><PlusIcon />Link</button>
+          <button data-testid="new-section" onClick={addSection}><PlusIcon />Section</button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            style={{ display: 'none' }}
+            data-testid="image-input"
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file && editor) addImageCard(editor, file)
+              e.target.value = ''
+            }}
+          />
+        </div>
+      )}
+      <div className="elves-stage" ref={stageRef} data-dragging={dragging}>
+        <div className="elves-canvas-pane" style={{ width: canvasWidth }} data-collapsed={view === 'draft'}>
+          <Tldraw
+            key={currentProjectId ?? 'none'}
+            shapeUtils={shapeUtils}
+            getShapeVisibility={getShapeVisibility}
+            onMount={handleMount}
+          />
+        </div>
+        {view === 'split' && (
+          <div
+            className="elves-divider"
+            style={{ left: `${split * 100}%` }}
+            onPointerDown={onDividerDown}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize draft pane"
+            data-testid="draft-divider"
+          />
+        )}
+        <div
+          className="elves-draft-pane"
+          style={{ width: draftWidth }}
+          aria-hidden={view === 'canvas'}
+        >
+          <DraftPane editor={editor} onSelectCard={onSelectCard} />
+        </div>
       </div>
-      <Tldraw
-        key={currentProjectId ?? 'none'}
-        shapeUtils={shapeUtils}
-        getShapeVisibility={getShapeVisibility}
-        onMount={handleMount}
-      />
     </div>
   )
 }
