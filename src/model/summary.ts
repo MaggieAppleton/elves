@@ -16,6 +16,9 @@ export interface SummarizableCard {
   text: string
   summary: string | null
   summaryOfHash: string | null
+  /** A figure card's working title. For a figure the title IS the gist, so it
+   * never needs a model summary; optional so non-figure callers can omit it. */
+  figureTitle?: string
 }
 
 /** A small, stable, non-cryptographic hash (FNV-1a) rendered in base36. */
@@ -73,7 +76,13 @@ export function mechanicalGist(text: string, max = 120): string {
   return (lastSpace > 40 ? cut.slice(0, lastSpace) : cut).trimEnd() + '…'
 }
 
-/** The gist to display: the model summary if present, else a mechanical one. */
+/**
+ * The gist to display: the model summary if present, else a mechanical one.
+ * For a figure card the TITLE is the gist — a figure is a planned visual, its
+ * title names it, and it never gets (or needs) a model summary — so we show the
+ * title, falling back to a mechanical gist of the description when it's untitled.
+ */
 export function cardGist(card: SummarizableCard): string {
+  if (card.kind === 'figure') return card.figureTitle?.trim() ? card.figureTitle : mechanicalGist(card.text)
   return card.summary ?? mechanicalGist(card.text)
 }

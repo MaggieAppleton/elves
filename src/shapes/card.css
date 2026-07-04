@@ -178,6 +178,122 @@
 }
 
 /* =========================================================================
+   Figure cards — a placeholder for a planned visual, sitting in narrative
+   position. A dashed sketch-frame (so it reads as "a visual goes here", not a
+   finished card), an image glyph + FIGURE label, a prominent title over a
+   smaller description, and a status chip cycling idea → sketched → final.
+   ========================================================================= */
+.elves-card--figure {
+  color: var(--elves-ink);
+  background: var(--elves-surface);
+  border: 1.5px dashed var(--elves-figure-frame);
+  padding: 14px 16px;
+  gap: 6px;
+}
+/* A Claude-suggested figure tints its frame with the warm authorship accent, so
+   the "its suggestion, my call" placeholder reads at a glance — reinforcing the
+   agent mark in the eyebrow. A figure I drew keeps the neutral ink dash. */
+.elves-card--figure:has(.elves-agent-mark) {
+  border-color: var(--elves-figure-frame-agent);
+}
+
+/* Eyebrow: image glyph + FIGURE label + (for a suggestion) the agent mark. */
+.elves-figure__eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  align-self: flex-start;
+  margin: -2px 0 0 -2px;
+}
+.elves-figure__glyph { display: inline-flex; align-items: center; color: var(--elves-ink-faint); }
+.elves-figure__glyph svg { width: 15px; height: 15px; display: block; }
+
+.elves-figure__title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--elves-ink);
+  padding-right: 66px; /* clear the absolutely-positioned status chip */
+  overflow-wrap: anywhere;
+}
+/* The stand-in shown when a figure has no title yet — muted, so it reads as a
+   prompt to name the visual rather than as the title itself. */
+.elves-figure__title[data-empty="true"] { color: var(--elves-ink-faint); font-weight: 500; }
+
+.elves-figure__desc {
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--elves-ink-soft);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  flex: 1;
+}
+
+/* Title and description editors: transparent, borderless, inheriting the face's
+   type so editing looks identical to the rendered card. pointer-events:all opts
+   back in (the card container is click-through so tldraw can select/drag it). */
+.elves-figure__title-input,
+.elves-figure__desc-input {
+  border: none;
+  outline: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  padding: 0;
+  width: 100%;
+  box-sizing: border-box;
+  pointer-events: all;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+.elves-figure__title-input {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  padding-right: 66px;
+}
+.elves-figure__desc-input {
+  font-size: 13.5px;
+  line-height: 1.45;
+  resize: none;
+  flex: 1;
+  min-height: 3.2em;
+}
+
+/* Status chip — a pill button in the top-right corner that cycles the figure's
+   status. Colour firms up with the status: neutral for idea, a green wash for
+   sketched, solid primary for final. */
+.elves-figure__status {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  z-index: 2;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  pointer-events: all;
+  transition: background-color 120ms ease, color 120ms ease, filter 120ms ease;
+}
+.elves-figure__status[data-status="idea"]     { background: var(--elves-tertiary);        color: var(--elves-ink-soft); }
+.elves-figure__status[data-status="sketched"] { background: var(--elves-primary-tint-2);   color: var(--elves-primary-strong); }
+.elves-figure__status[data-status="final"]    { background: var(--elves-primary);          color: var(--elves-on-primary); }
+.elves-figure__status:hover { filter: brightness(0.97); }
+.elves-figure__status:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring);
+}
+@media (prefers-reduced-motion: reduce) {
+  .elves-figure__status { transition: none; }
+}
+
+/* =========================================================================
    Reference cards — a note card whose face adapts to what it points at
    (paper / article / social / book / software / wiki / video / link). The face
    manages its own padding, so the card padding is zeroed; overflow is visible
@@ -369,6 +485,7 @@
 .elves-comment[data-type="needs-evidence"] { background: var(--elves-cc-evidence-bg); border-color: var(--elves-cc-evidence-border); }
 .elves-comment[data-type="weak-argument"]  { background: var(--elves-cc-weak-bg);     border-color: var(--elves-cc-weak-border); }
 .elves-comment[data-type="needs-citation"] { background: var(--elves-cc-citation-bg); border-color: var(--elves-cc-citation-border); }
+.elves-comment[data-type="wants-figure"]   { background: var(--elves-cc-figure-bg);   border-color: var(--elves-cc-figure-border); }
 
 .elves-comment__body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .elves-comment__type {
@@ -381,6 +498,7 @@
 .elves-comment[data-type="needs-evidence"] .elves-comment__type { color: var(--elves-cc-evidence-label); }
 .elves-comment[data-type="weak-argument"]  .elves-comment__type { color: var(--elves-cc-weak-label); }
 .elves-comment[data-type="needs-citation"] .elves-comment__type { color: var(--elves-cc-citation-label); }
+.elves-comment[data-type="wants-figure"]   .elves-comment__type { color: var(--elves-cc-figure-label); }
 
 .elves-comment__text { overflow-wrap: anywhere; white-space: pre-wrap; color: var(--elves-ink); }
 .elves-comment__resolve {
@@ -406,6 +524,7 @@
 .elves-comment[data-type="needs-evidence"] .elves-comment__resolve:hover { background: var(--elves-cc-evidence-border); }
 .elves-comment[data-type="weak-argument"]  .elves-comment__resolve:hover { background: var(--elves-cc-weak-border); }
 .elves-comment[data-type="needs-citation"] .elves-comment__resolve:hover { background: var(--elves-cc-citation-border); }
+.elves-comment[data-type="wants-figure"]   .elves-comment__resolve:hover { background: var(--elves-cc-figure-border); }
 
 @media (prefers-reduced-motion: reduce) {
   .elves-comment__resolve { transition: none; }

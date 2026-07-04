@@ -7,6 +7,7 @@ import { cardIsHidden, collapseAll } from './shapes/mergeView'
 import { SectionShapeUtil, SectionShape } from './shapes/SectionShapeUtil'
 import {
   makeProseCardProps, makeNoteCardProps, makeImageNoteCardProps, makeReferenceCardProps,
+  makeFigureCardProps,
 } from './model/cards'
 import { makeSectionProps } from './model/sections'
 import { requestUnfurl } from './client/references'
@@ -209,10 +210,13 @@ export default function App() {
       )
   }
 
-  const addCard = (kind: 'prose' | 'note') => {
+  const addCard = (kind: 'prose' | 'note' | 'figure') => {
     if (!editor) return
     const center = editor.getViewportPageBounds().center
-    const props = kind === 'prose' ? makeProseCardProps() : makeNoteCardProps()
+    const props =
+      kind === 'prose' ? makeProseCardProps()
+      : kind === 'figure' ? makeFigureCardProps()
+      : makeNoteCardProps()
     const id = createShapeId()
     editor.createShape<CardShape>({
       id,
@@ -222,6 +226,9 @@ export default function App() {
       props,
     })
     editor.select(id)
+    // A figure is born blank — drop straight into editing so the title/description
+    // fields are ready to type, the way a new section opens its editor.
+    if (kind === 'figure') editor.setEditingShape(id)
   }
 
   const addSection = () => {
@@ -343,6 +350,7 @@ export default function App() {
         <button data-testid="new-note" onClick={() => addCard('note')}><PlusIcon />Notes</button>
         <button data-testid="new-image" onClick={() => fileInputRef.current?.click()}><PlusIcon />Image</button>
         <button data-testid="new-reference" onClick={addReferenceFlow}><PlusIcon />Link</button>
+        <button data-testid="new-figure" onClick={() => addCard('figure')}><PlusIcon />Figure</button>
         <button data-testid="new-section" onClick={addSection}><PlusIcon />Section</button>
         <input
           ref={fileInputRef}

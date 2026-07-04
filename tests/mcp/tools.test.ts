@@ -17,6 +17,7 @@ import {
   createNoteCardTool,
   createReferenceTool,
   createSectionTool,
+  createFigureCardTool,
   moveSectionsTool,
   editSectionTextTool,
   listProjectsTool,
@@ -113,6 +114,22 @@ test('createNoteCardTool posts a create_note_card change-set', async () => {
   ws.close()
 })
 
+test('createFigureCardTool posts a create_figure_card change-set', async () => {
+  const { base } = await liveElves()
+  const ws = new WebSocket(base.replace('http', 'ws') + '/ws')
+  const received = new Promise<any>((res) => ws.on('message', (d) => res(JSON.parse(d.toString()))))
+  await new Promise<void>((r) => ws.on('open', () => r()))
+
+  await createFigureCardTool(base, 'essay', { title: 'Spectrum', description: 'rigid → malleable axis', x: 5, y: 6 })
+
+  const { projectId, changeSet } = await received
+  expect(projectId).toBe('essay')
+  expect(changeSet.ops).toEqual([
+    { kind: 'create_figure_card', title: 'Spectrum', description: 'rigid → malleable axis', x: 5, y: 6 },
+  ])
+  ws.close()
+})
+
 test('readMapTool reads the cheap map (gist, no full text) for the project', async () => {
   const { base } = await liveElves()
   await seedCard(base, 'shape:a')
@@ -129,7 +146,7 @@ test('readCardsTool reads full digests for the requested card ids', async () => 
   await seedCard(base, 'shape:a')
   const cards = await readCardsTool(base, 'essay', ['shape:a'])
   expect(cards).toEqual([
-    { id: 'shape:a', kind: 'prose', noteKind: null, origin: null, text: 'hi', x: 1, y: 2, comments: [], mergedInto: null, assetPath: null, reference: null, summary: null },
+    { id: 'shape:a', kind: 'prose', noteKind: null, origin: null, text: 'hi', x: 1, y: 2, comments: [], mergedInto: null, assetPath: null, reference: null, figureTitle: '', figureStatus: null, summary: null },
   ])
 })
 

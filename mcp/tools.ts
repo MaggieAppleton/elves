@@ -137,6 +137,25 @@ export function createSectionTool(
   ]))
 }
 
+/**
+ * Create a figure card — a placeholder for a planned visual (illustration,
+ * diagram, interactive animation) at its narrative position. `title` is a short
+ * working title; `description` says what the visual needs to show, in words. The
+ * card is born at status `idea` and carries this process's agent authorship mark,
+ * since Claude is suggesting a placeholder the user refines or rejects. A figure
+ * is a plan/annotation, never the user's prose — the safe side of the boundary,
+ * like a section label.
+ */
+export function createFigureCardTool(
+  baseUrl: string,
+  projectId: string,
+  args: { title: string; description: string; x: number; y: number },
+): Promise<void> {
+  return postChangeSet(baseUrl, projectId, makeChangeSet([
+    { kind: 'create_figure_card', title: args.title, description: args.description, x: args.x, y: args.y },
+  ]))
+}
+
 export function moveSectionsTool(
   baseUrl: string,
   projectId: string,

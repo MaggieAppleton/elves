@@ -3,7 +3,7 @@ import { ChangeSet, Op, planMerge } from '../model/changeset'
 import { CardShape } from '../shapes/CardShapeUtil'
 import { SectionShape } from '../shapes/SectionShapeUtil'
 import { makeComment, addComment } from '../model/comments'
-import { makeNoteCardProps, makeReferenceCardProps } from '../model/cards'
+import { makeNoteCardProps, makeReferenceCardProps, makeFigureCardProps } from '../model/cards'
 import { makeSectionProps } from '../model/sections'
 
 function newId(prefix: string): string {
@@ -108,6 +108,20 @@ function applyCreateReference(editor: Editor, op: Extract<Op, { kind: 'create_re
   return [id]
 }
 
+function applyCreateFigureCard(
+  editor: Editor,
+  op: Extract<Op, { kind: 'create_figure_card' }>,
+  author: string,
+): TLShapeId[] {
+  // Stamp the change-set's author onto the figure so a Claude-suggested one
+  // carries its authorship mark ("its suggestion, my call").
+  const props = makeFigureCardProps(op.title, op.description, author)
+  const at = placeClearOf(editor, op.x, op.y, props.w, props.h)
+  const id = createShapeId()
+  editor.createShape<CardShape>({ id, type: 'card', x: at.x, y: at.y, props })
+  return [id]
+}
+
 function applyCreateSection(editor: Editor, op: Extract<Op, { kind: 'create_section' }>): TLShapeId[] {
   const id = createShapeId()
   editor.createShape<SectionShape>({
@@ -188,6 +202,8 @@ function applyOp(editor: Editor, op: Op, author: string): TLShapeId[] {
       return applyCreateNoteCard(editor, op, author)
     case 'create_reference':
       return applyCreateReference(editor, op)
+    case 'create_figure_card':
+      return applyCreateFigureCard(editor, op, author)
     case 'create_section':
       return applyCreateSection(editor, op)
     case 'move_sections':

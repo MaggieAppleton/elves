@@ -27,6 +27,8 @@ test('isSummarizable: any non-empty prose/text-note card yes; empty/image/refere
   expect(isSummarizable(card({ text: '   ' }))).toBe(false) // empty/whitespace: nothing to summarize
   expect(isSummarizable(card({ noteKind: 'image', kind: 'note' }))).toBe(false)
   expect(isSummarizable(card({ noteKind: 'reference', kind: 'note' }))).toBe(false)
+  // A figure card is never summarized — its title is its gist (see cardGist).
+  expect(isSummarizable(card({ kind: 'figure', figureTitle: 'A diagram' }))).toBe(false)
 })
 
 test('summaryState: generate when text-bearing and missing a summary, at any length', () => {
@@ -68,4 +70,13 @@ test('mechanicalGist prefers a first-sentence cut when there is one', () => {
 test('cardGist uses the model summary when present, else a mechanical gist', () => {
   expect(cardGist(card({ summary: 'model gist' }))).toBe('model gist')
   expect(cardGist(card({ text: SHORT }))).toBe(SHORT)
+})
+
+test('cardGist for a figure is its title — never a summary of the description', () => {
+  // The description (text) is long, but the map should read the figure's title.
+  expect(cardGist(card({ kind: 'figure', figureTitle: 'Malleable software spectrum', text: LONG }))).toBe(
+    'Malleable software spectrum',
+  )
+  // An untitled figure falls back to a mechanical gist of its description.
+  expect(cardGist(card({ kind: 'figure', figureTitle: '', text: SHORT }))).toBe(SHORT)
 })

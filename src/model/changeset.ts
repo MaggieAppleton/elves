@@ -7,6 +7,7 @@ export type Op =
   | { kind: 'create_note_card'; text: string; x: number; y: number }
   | { kind: 'create_reference'; reference: Reference; x: number; y: number }
   | { kind: 'create_section'; text: string; x: number; y: number }
+  | { kind: 'create_figure_card'; title: string; description: string; x: number; y: number }
   | { kind: 'move_sections'; moves: { sectionId: string; x: number; y: number }[] }
   | { kind: 'edit_section_text'; sectionId: string; text: string }
   | { kind: 'group_cards'; cardIds: string[] }
@@ -64,7 +65,7 @@ export interface ChangeSet {
 }
 
 const COMMENT_TYPES: readonly (CommentType | null)[] = [
-  'needs-evidence', 'weak-argument', 'needs-citation', null,
+  'needs-evidence', 'weak-argument', 'needs-citation', 'wants-figure', null,
 ]
 
 function isOp(v: unknown): v is Op {
@@ -89,6 +90,9 @@ function isOp(v: unknown): v is Op {
       return isReference(op.reference) && typeof op.x === 'number' && typeof op.y === 'number'
     case 'create_section':
       return typeof op.text === 'string' && typeof op.x === 'number' && typeof op.y === 'number'
+    case 'create_figure_card':
+      return typeof op.title === 'string' && typeof op.description === 'string' &&
+        typeof op.x === 'number' && typeof op.y === 'number'
     case 'move_sections':
       return Array.isArray(op.moves) && op.moves.every((m) => {
         const mm = m as Record<string, unknown>
@@ -142,6 +146,15 @@ export function isChangeSet(value: unknown): value is ChangeSet {
  * group_cards / ungroup_cards are purely structural — they bind cards to travel
  * together (a tldraw group) and never touch any card's `text`. Same safety class
  * as move_cards.
+ *
+ * create_figure_card is a deliberate, conscious exception in the same class as
+ * create_section: a figure card is a PLACEHOLDER PLAN for a visual — a working
+ * title and a description of what the visual needs to show. That description is
+ * an annotation about a planned illustration, not the user's prose or reference
+ * material — a figure card holds no prose the user is writing. Claude may suggest
+ * one as a placeholder the user refines or rejects (it renders with the agent
+ * authorship mark), the same way it may write a section label. Scoped to this one
+ * op; it never touches an existing card's `text`.
  */
 export function changeSetWritesText(cs: ChangeSet): boolean {
   return cs.ops.some((op) => {
@@ -152,6 +165,7 @@ export function changeSetWritesText(cs: ChangeSet): boolean {
       case 'create_note_card':
       case 'create_reference':
       case 'create_section':
+      case 'create_figure_card':
       case 'move_sections':
       case 'edit_section_text':
       case 'group_cards':

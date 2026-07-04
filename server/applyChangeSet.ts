@@ -3,7 +3,9 @@ import { getIndexAbove, IndexKey } from '@tldraw/utils'
 import type { CanvasSnapshot } from './store'
 import { ChangeSet, planMerge } from '../src/model/changeset'
 import { makeComment, addComment } from '../src/model/comments'
-import { makeNoteCardProps, makeReferenceCardProps, CARD_DEFAULT_W, CARD_DEFAULT_H } from '../src/model/cards'
+import {
+  makeNoteCardProps, makeReferenceCardProps, makeFigureCardProps, CARD_DEFAULT_W, CARD_DEFAULT_H,
+} from '../src/model/cards'
 import { makeSectionProps } from '../src/model/sections'
 import { resolvePageXY } from './digest'
 
@@ -162,6 +164,27 @@ export function applyChangeSetToSnapshot(
       case 'create_reference': {
         const id = createShapeId()
         const props = makeReferenceCardProps(op.reference)
+        const at = placeClearOf(store, op.x, op.y, props.w, props.h)
+        store[id] = {
+          id,
+          typeName: 'shape',
+          type: 'card',
+          x: at.x,
+          y: at.y,
+          rotation: 0,
+          isLocked: false,
+          opacity: 1,
+          meta: {},
+          parentId: defaultPageId(store),
+          index: getIndexAbove(topIndex(store)),
+          props,
+        }
+        break
+      }
+      case 'create_figure_card': {
+        const id = createShapeId()
+        // Stamp the change-set's author so the persisted figure keeps its mark.
+        const props = makeFigureCardProps(op.title, op.description, cs.author)
         const at = placeClearOf(store, op.x, op.y, props.w, props.h)
         store[id] = {
           id,

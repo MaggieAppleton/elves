@@ -5,12 +5,13 @@ import {
   type Editor, type Geometry2d, type TLResizeInfo,
 } from 'tldraw'
 import { useLayoutEffect, type CSSProperties, type ReactNode } from 'react'
-import type { CardKind, NoteKind, Origin, Comment, Reference } from '../model/types'
+import type { CardKind, NoteKind, Origin, Comment, Reference, FigureStatus } from '../model/types'
 import { makeProseCardProps } from '../model/cards'
+import { nextFigureStatus } from '../model/figures'
 import { cardGist } from '../model/summary'
 import { visibleComments, resolveComment } from '../model/comments'
 import { assetUrl } from '../client/assets'
-import { measuredCardHeight, measuredReferenceHeight } from './autosize'
+import { measuredCardHeight, measuredReferenceHeight, measuredFigureHeight } from './autosize'
 import { shouldShowGist, gistFontSize } from './summaryView'
 import { mergedMembers, isExpanded, toggleExpanded } from './mergeView'
 import { ReferenceCardFace } from './ReferenceCardFace'
@@ -30,6 +31,8 @@ export type CardShape = TLBaseShape<'card', {
   mergedInto: string | null
   assetId: string | null
   reference: Reference | null
+  figureTitle: string
+  figureStatus: FigureStatus | null
   summary: string | null
   summaryOfHash: string | null
   summaryBy: string | null
@@ -81,6 +84,14 @@ export function addAuthoredByUp(props: Record<string, unknown>): void {
   props.authoredBy = null
 }
 
+// The figure-card fields (a third card kind). Existing cards are notes or prose,
+// never figures, so default them to the "not a figure" shape: an empty title and
+// no status. A figure card is only ever born via makeFigureCardProps.
+export function addFigureUp(props: Record<string, unknown>): void {
+  props.figureTitle = ''
+  props.figureStatus = null
+}
+
 // Card kind 'source' was renamed to 'note', and its sub-kind prop `sourceKind`
 // to `noteKind`, when "note" became the canonical word for these cards. Idempotent
 // on purpose: the server pre-converts canvas.json on disk before serving, so this
@@ -104,7 +115,7 @@ export function renameSourceToNoteDown(props: Record<string, unknown>): void {
 
 const cardVersions = createShapePropsMigrationIds('card', {
   AddComments: 1, AddAssetId: 2, AddReference: 3, AddSummary: 4, RenameSourceToNote: 5,
-  AddAuthoredBy: 6,
+  AddAuthoredBy: 6, AddFigure: 7,
 })
 
 export const cardMigrations = createShapePropsMigrationSequence({
@@ -155,6 +166,15 @@ export const cardMigrations = createShapePropsMigrationSequence({
         delete (props as Record<string, unknown>).authoredBy
       },
     },
+    {
+      id: cardVersions.AddFigure,
+      up: (props) => addFigureUp(props as Record<string, unknown>),
+      down: (props) => {
+        const p = props as Record<string, unknown>
+        delete p.figureTitle
+        delete p.figureStatus
+      },
+    },
   ],
 })
 
@@ -168,14 +188,16 @@ export const cardMigrations = createShapePropsMigrationSequence({
 function AutosizeCard({
   editor, shape, children,
 }: { editor: Editor; shape: CardShape; children: ReactNode }) {
-  const { text, w, h, kind, noteKind, reference } = shape.props
+  const { text, w, h, kind, noteKind, reference, figureTitle } = shape.props
   useLayoutEffect(() => {
     let cancelled = false
     const fit = () => {
       if (cancelled) return
       const cur = editor.getShape<CardShape>(shape.id)
       if (!cur || cur.props.mergedInto || cur.props.noteKind === 'image') return
-      const want = cur.props.noteKind === 'reference' && cur.props.reference
+      const want = cur.props.kind === 'figure'
+        ? measuredFigureHeight(editor, cur.props.figureTitle, cur.props.text, cur.props.w)
+        : cur.props.noteKind === 'reference' && cur.props.reference
         ? measuredReferenceHeight(editor, cur.props.reference, cur.props.w)
         : measuredCardHeight(editor, cur.props.text, cur.props.w, cur.props.kind === 'note')
       if (Math.abs(want - cur.props.h) > 1) {
@@ -185,7 +207,7 @@ function AutosizeCard({
     fit()
     document.fonts?.ready?.then(fit)
     return () => { cancelled = true }
-  }, [editor, shape.id, text, w, h, kind, noteKind, reference])
+  }, [editor, shape.id, text, w, h, kind, noteKind, reference, figureTitle])
   return <>{children}</>
 }
 
@@ -195,7 +217,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
   static override props: RecordProps<CardShape> = {
     w: T.number,
     h: T.number,
-    kind: T.literalEnum('note', 'prose'),
+    kind: T.literalEnum('note', 'prose', 'figure'),
     noteKind: T.nullable(T.literalEnum('text', 'image', 'reference')),
     origin: T.nullable(T.literalEnum('tana', 'image', 'typed', 'transcribed', 'reference')),
     text: T.string,
@@ -203,7 +225,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     comments: T.arrayOf(
       T.object({
         id: T.string,
-        type: T.nullable(T.literalEnum('needs-evidence', 'weak-argument', 'needs-citation')),
+        type: T.nullable(T.literalEnum('needs-evidence', 'weak-argument', 'needs-citation', 'wants-figure')),
         text: T.string,
         resolved: T.boolean,
         author: T.literalEnum('claude'),
@@ -212,6 +234,8 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     mergedInto: T.nullable(T.string),
     assetId: T.nullable(T.string),
     reference: T.nullable(referenceValidator),
+    figureTitle: T.string,
+    figureStatus: T.nullable(T.literalEnum('idea', 'sketched', 'final')),
     summary: T.nullable(T.string),
     summaryOfHash: T.nullable(T.string),
     summaryBy: T.nullable(T.string),
@@ -235,9 +259,10 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     const members = mergedMembers(this.editor.getCurrentPageShapes(), shape.id)
     const mergedCount = members.length
     const expanded = mergedCount > 0 && isExpanded(shape.id)
-    const { kind, text, noteKind, assetId, reference } = shape.props
+    const { kind, text, noteKind, assetId, reference, figureTitle, figureStatus } = shape.props
     const isImage = noteKind === 'image' && !!assetId
     const isReference = noteKind === 'reference' && !!reference
+    const isFigure = kind === 'figure'
     const isEditing = this.editor.getEditingShapeId() === shape.id
     // Zoomed far out, a summarized card shows its gist so the piece reads at a
     // glance. getZoomLevel is reactive, so this re-renders as the user zooms;
@@ -327,6 +352,95 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
               <>
                 {mergedBadge}
                 <ReferenceCardFace reference={reference} />
+              </>
+            ) : isFigure ? (
+              // Figure cards plan a visual: a dashed sketch-frame with an image
+              // glyph, a prominent title over a smaller description, and a status
+              // chip that cycles idea → sketched → final. Title and description
+              // are both editable; editing either claims authorship (clears any
+              // agent mark), the way renaming a section flips its authoredBy.
+              <>
+                <div className="elves-figure__eyebrow">
+                  <span className="elves-figure__glyph" aria-hidden="true">
+                    <svg viewBox="0 0 256 256" fill="currentColor">
+                      <path d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40Zm0,16V158.75l-26.07-26.06a16,16,0,0,0-22.63,0l-20,20-44-44a16,16,0,0,0-22.62,0L40,149.37V56ZM40,172l52-52,80,80H40Zm176,28H194.63l-36-36,20-20L216,181.38V200ZM144,100a12,12,0,1,1,12,12A12,12,0,0,1,144,100Z" />
+                    </svg>
+                  </span>
+                  <span className="elves-badge" data-testid="card-badge">Figure</span>
+                  {agent && (
+                    <span
+                      className="elves-agent-mark"
+                      data-testid="card-agent-mark"
+                      data-agent={agent.id}
+                      title={`Suggested by ${agent.name}`}
+                      style={{ color: agent.accent }}
+                    >
+                      <agent.Logo aria-hidden="true" focusable="false" />
+                    </span>
+                  )}
+                </div>
+                {/* Status chip — a button that cycles the figure's status. Tucked
+                    into the top-right corner (absolute), pointer-events:all so the
+                    click lands on it and not the canvas underneath. */}
+                <button
+                  type="button"
+                  className="elves-figure__status"
+                  data-testid="figure-status"
+                  data-status={figureStatus ?? 'idea'}
+                  title="Cycle status: idea → sketched → final"
+                  onPointerDown={stopEventPropagation}
+                  onClick={(e) => {
+                    stopEventPropagation(e)
+                    this.editor.updateShape<CardShape>({
+                      id: shape.id, type: 'card',
+                      props: { figureStatus: nextFigureStatus(figureStatus ?? 'idea') },
+                    })
+                  }}
+                >
+                  {figureStatus ?? 'idea'}
+                </button>
+                {isEditing ? (
+                  <>
+                    <input
+                      className="elves-figure__title-input"
+                      data-testid="figure-title-input"
+                      autoFocus
+                      defaultValue={figureTitle}
+                      placeholder="Figure title"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onChange={(e) =>
+                        this.editor.updateShape<CardShape>({
+                          id: shape.id, type: 'card',
+                          props: { figureTitle: e.currentTarget.value, authoredBy: null },
+                        })
+                      }
+                    />
+                    <textarea
+                      className="elves-figure__desc-input"
+                      data-testid="figure-desc-input"
+                      defaultValue={text}
+                      placeholder="What should this visual show?"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onChange={(e) =>
+                        this.editor.updateShape<CardShape>({
+                          id: shape.id, type: 'card',
+                          props: { text: e.currentTarget.value, authoredBy: null },
+                        })
+                      }
+                    />
+                  </>
+                ) : (
+                  <>
+                    <div
+                      className="elves-figure__title"
+                      data-testid="figure-title"
+                      data-empty={figureTitle ? undefined : 'true'}
+                    >
+                      {figureTitle || 'Untitled figure'}
+                    </div>
+                    <div className="elves-figure__desc" data-testid="figure-desc">{text}</div>
+                  </>
+                )}
               </>
             ) : (
               <>
@@ -443,7 +557,9 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     const next = resizeBox(shape, info)
     if (shape.props.noteKind === 'image') return next
     const w = next.props?.w ?? shape.props.w
-    const h = shape.props.noteKind === 'reference' && shape.props.reference
+    const h = shape.props.kind === 'figure'
+      ? measuredFigureHeight(this.editor, shape.props.figureTitle, shape.props.text, w)
+      : shape.props.noteKind === 'reference' && shape.props.reference
       ? measuredReferenceHeight(this.editor, shape.props.reference, w)
       : measuredCardHeight(this.editor, shape.props.text, w, shape.props.kind === 'note')
     return { ...next, props: { ...next.props, h } }

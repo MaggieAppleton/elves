@@ -1,8 +1,15 @@
-export type CardKind = 'note' | 'prose'
+export type CardKind = 'note' | 'prose' | 'figure'
 export type NoteKind = 'text' | 'image' | 'reference'
 export type Origin = 'tana' | 'image' | 'typed' | 'transcribed' | 'reference'
 
-export type CommentType = 'needs-evidence' | 'weak-argument' | 'needs-citation'
+/**
+ * A figure card's lifecycle, cycled by clicking its status chip. A planned
+ * visual moves `idea → sketched → final` as it firms up. See src/model/figures.ts
+ * for the cycle order and the FIGURE_STATUSES runtime list this type mirrors.
+ */
+export type FigureStatus = 'idea' | 'sketched' | 'final'
+
+export type CommentType = 'needs-evidence' | 'weak-argument' | 'needs-citation' | 'wants-figure'
 
 /** The kind of external thing a reference points at — drives its card face. */
 export type RefType =
@@ -75,6 +82,20 @@ export interface CardProps {
   /** For reference note cards (noteKind === 'reference'): structured metadata; null otherwise. */
   reference: Reference | null
   /**
+   * A figure card's short working title — the name of the planned visual. Its
+   * `text` holds the description (what the visual needs to show), so the title is
+   * a separate field, like a heading above the body. Empty '' for non-figure
+   * cards. Like a section label, a figure's title + description are a *plan/
+   * annotation*, never the user's prose — so Claude may author them (see
+   * changeSetWritesText's create_figure_card exception).
+   */
+  figureTitle: string
+  /**
+   * A figure card's lifecycle status (idea → sketched → final), cycled by
+   * clicking its status chip. null for non-figure cards.
+   */
+  figureStatus: FigureStatus | null
+  /**
    * A model-authored one-phrase gist of a long card's `text`, shown on the
    * navigation map and when the canvas is zoomed out. It is a LABEL about the
    * card — like a comment or a section header — never the card's own words, so
@@ -97,3 +118,10 @@ export const CARD_DEFAULT_H = 120
 // comfortably; height is measured to fit the type-adaptive face.
 export const REFERENCE_DEFAULT_W = 260
 export const REFERENCE_DEFAULT_H = 116
+
+// Figure cards hold a prominent title over a smaller description inside a dashed
+// sketch-frame; a touch wider than a note, and taller by default so the empty
+// frame reads as "a visual goes here" before anything is written. Height is
+// measured to fit the title + description (see measuredFigureHeight).
+export const FIGURE_DEFAULT_W = 260
+export const FIGURE_DEFAULT_H = 148

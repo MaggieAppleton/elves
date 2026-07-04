@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'vitest'
 import {
   makeProseCardProps, makeNoteCardProps, makeImageNoteCardProps, makeReferenceCardProps,
-  isProseCard, isNoteCard, claudeMayEditCardText, CARD_DEFAULT_W, CARD_DEFAULT_H,
+  makeFigureCardProps, isProseCard, isNoteCard, isFigureCard, claudeMayEditCardText,
+  CARD_DEFAULT_W, CARD_DEFAULT_H, FIGURE_DEFAULT_W, FIGURE_DEFAULT_H,
 } from '../../src/model/cards'
 import { blankReference } from '../../src/model/references'
 
@@ -12,10 +13,12 @@ describe('card factories', () => {
       w: CARD_DEFAULT_W, h: CARD_DEFAULT_H, kind: 'prose',
       noteKind: null, origin: null, text: 'a point I wrote', authoredBy: null,
       comments: [], mergedInto: null, assetId: null, reference: null,
+      figureTitle: '', figureStatus: null,
       summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
     })
     expect(isProseCard(p)).toBe(true)
     expect(isNoteCard(p)).toBe(false)
+    expect(isFigureCard(p)).toBe(false)
   })
 
   test('note card is typed reference material by default', () => {
@@ -48,8 +51,38 @@ describe('card factories', () => {
     expect(p).toEqual({
       w: 280, h: 200, kind: 'note', noteKind: 'image', origin: 'image',
       text: '', authoredBy: null, comments: [], mergedInto: null, assetId: 'abc.png', reference: null,
+      figureTitle: '', figureStatus: null,
       summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
     })
+  })
+
+  test('figure card holds a title, description-as-text, and an idea status', () => {
+    const p = makeFigureCardProps('Malleable software spectrum', 'A horizontal axis from rigid to malleable, with tools placed along it')
+    expect(p).toEqual({
+      w: FIGURE_DEFAULT_W, h: FIGURE_DEFAULT_H, kind: 'figure',
+      noteKind: null, origin: null,
+      // The description lives in `text`; the title is its own field.
+      text: 'A horizontal axis from rigid to malleable, with tools placed along it',
+      figureTitle: 'Malleable software spectrum', figureStatus: 'idea',
+      authoredBy: null, comments: [], mergedInto: null, assetId: null, reference: null,
+      summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+    })
+    expect(isFigureCard(p)).toBe(true)
+    expect(isProseCard(p)).toBe(false)
+    expect(isNoteCard(p)).toBe(false)
+  })
+
+  test('figure card can be stamped with an agent id (Claude suggests, I decide)', () => {
+    // A human-drawn figure carries no mark; a Claude-suggested one carries its id.
+    expect(makeFigureCardProps('t', 'd').authoredBy).toBeNull()
+    expect(makeFigureCardProps('t', 'd', 'claude').authoredBy).toBe('claude')
+  })
+
+  test('figure defaults are blank but well-formed', () => {
+    const p = makeFigureCardProps()
+    expect(p.figureTitle).toBe('')
+    expect(p.text).toBe('')
+    expect(p.figureStatus).toBe('idea')
   })
 
   test('makeReferenceCardProps builds a reference note card with empty annotation', () => {
@@ -68,5 +101,6 @@ describe('core invariant: Claude never authors card text', () => {
   test('Claude may not edit the text of any existing card', () => {
     expect(claudeMayEditCardText('prose')).toBe(false)
     expect(claudeMayEditCardText('note')).toBe(false)
+    expect(claudeMayEditCardText('figure')).toBe(false)
   })
 })

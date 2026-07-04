@@ -76,6 +76,19 @@
   --elves-cc-citation-bg:     oklch(0.966 0.022 152);
   --elves-cc-citation-border: oklch(0.892 0.034 152);
 
+  /* wants-figure = violet: a distinct, non-warning hue that reads as "this wants
+     a visual" rather than "this is wrong" — the four above flag prose weaknesses;
+     this one is a creative nudge, so it sits apart on the colour wheel. */
+  --elves-cc-figure-label:  oklch(0.520 0.110 300);
+  --elves-cc-figure-bg:     oklch(0.966 0.030 300);
+  --elves-cc-figure-border: oklch(0.892 0.048 300);
+
+  /* Figure card sketch-frame: a soft ink dash for a human-planned figure. A
+     Claude-suggested figure tints its frame with the warm authorship accent
+     (see .elves-card--figure:has(.elves-agent-mark) in card.css). */
+  --elves-figure-frame:       oklch(0.62 0.016 72 / 0.55);
+  --elves-figure-frame-agent: oklch(0.62 0.17 45 / 0.5);
+
   /* ---- Typography — one clean, dense sans across the whole app ---- */
   --elves-card-font: 'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif;
 

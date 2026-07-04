@@ -84,6 +84,38 @@ export function measuredReferenceHeight(editor: Editor, reference: Reference, wi
   return Math.ceil(h)
 }
 
+// --- Figure cards --------------------------------------------------------
+// card.css .elves-card--figure: a dashed sketch-frame with padding 14px/16px, an
+// eyebrow row (image glyph + optional agent mark), a prominent title (15px/600,
+// 1.3, clamped to 2 lines) over a smaller description (13.5px, 1.45) that grows
+// to fit. The status chip sits absolutely in a corner, so it adds no height.
+const FIG_PAD_X = 32 // 16 left + 16 right
+const FIG_PAD_Y = 28 // 14 top + 14 bottom
+const FIG_EYEBROW = 20 // image-glyph row + its gap
+const FIG_GAP = 6
+
+export function measuredFigureHeight(
+  editor: Editor,
+  title: string,
+  description: string,
+  width: number,
+): number {
+  const textWidth = Math.max(60, width - FIG_PAD_X)
+  const t = editor.textMeasure.measureText(title || ' ', {
+    fontFamily: FONT_FAMILY, fontSize: 15, lineHeight: 1.3, fontWeight: '600', fontStyle: 'normal',
+    maxWidth: textWidth, padding: '0px',
+  })
+  let h = FIG_EYEBROW + FIG_GAP + clampLines(t.h, 15, 1.3, 2)
+  // A figure needs a description to plan the visual; reserve room even when empty
+  // so the frame reads as "a visual goes here" rather than collapsing to a line.
+  const d = editor.textMeasure.measureText(description || ' ', {
+    fontFamily: FONT_FAMILY, fontSize: 13.5, lineHeight: 1.45, fontWeight: '400', fontStyle: 'normal',
+    maxWidth: textWidth, padding: '0px',
+  })
+  h += FIG_GAP + d.h
+  return Math.ceil(h + FIG_PAD_Y)
+}
+
 // --- Section headers -----------------------------------------------------
 // section.css: font 56px bold / line-height 1.15; no padding. A long label
 // should wrap to about two lines, never three.
