@@ -115,3 +115,24 @@ export function measuredSectionSize(
   const { h } = editor.textMeasure.measureText(text || ' ', { ...base, maxWidth: width })
   return { w: Math.ceil(width), h: Math.ceil(h) + 8 }
 }
+
+// --- Question cards ------------------------------------------------------
+// question.css: font 14px / line-height 1.4; padding 12px; a header row (the "?"
+// glyph + agent mark, ~18px + 6px gap) sits above the text. Width is fixed (a
+// small sticky note), so only height follows the text.
+const QUESTION_PAD_X = 24 // 12 left + 12 right
+const QUESTION_PAD_Y = 24 // 12 top + 12 bottom
+const QUESTION_HEADER_ROW = 24 // "?" + agent mark row + its gap
+
+export function measuredQuestionHeight(editor: Editor, text: string, width: number): number {
+  const { h } = editor.textMeasure.measureText(text || ' ', {
+    fontFamily: FONT_FAMILY,
+    fontSize: 14,
+    lineHeight: 1.4,
+    fontWeight: '400',
+    fontStyle: 'normal',
+    maxWidth: Math.max(40, width - QUESTION_PAD_X),
+    padding: '0px',
+  })
+  return Math.ceil(h + QUESTION_PAD_Y + QUESTION_HEADER_ROW)
+}

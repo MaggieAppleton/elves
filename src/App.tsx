@@ -5,6 +5,7 @@ import './theme.css'
 import { CardShapeUtil, CardShape } from './shapes/CardShapeUtil'
 import { cardIsHidden, collapseAll } from './shapes/mergeView'
 import { SectionShapeUtil, SectionShape } from './shapes/SectionShapeUtil'
+import { QuestionShapeUtil } from './shapes/QuestionShapeUtil'
 import {
   makeProseCardProps, makeNoteCardProps, makeImageNoteCardProps, makeReferenceCardProps,
 } from './model/cards'
@@ -25,14 +26,22 @@ import { connectRealtime } from './client/realtime'
 import { markDoing, markLooking, clearPresence } from './client/presence'
 import { ProjectSwitcher } from './components/ProjectSwitcher'
 
-const shapeUtils = [CardShapeUtil, SectionShapeUtil]
+const shapeUtils = [CardShapeUtil, SectionShapeUtil, QuestionShapeUtil]
+
+// A dismissed question is answered/waved off: hidden from render AND hit-testing
+// (so it can't linger as an invisible-yet-selectable ghost), but kept in the
+// file so it stays recoverable and Claude still sees it in read_map.
+const questionIsHidden = (shape: { type: string; props: { dismissed?: boolean } }) =>
+  shape.type === 'question' && !!shape.props.dismissed
 
 // Cards merged away into a representative are kept for recovery but must not
 // render as their own shape — hidden here from BOTH rendering and hit-testing so
 // they can't become invisible-yet-selectable "ghosts". The representative shows
-// them (a stack + an on-demand fan-out).
+// them (a stack + an on-demand fan-out). Dismissed questions hide the same way.
 const getShapeVisibility = (shape: Parameters<typeof cardIsHidden>[0]) =>
-  cardIsHidden(shape) ? ('hidden' as const) : ('inherit' as const)
+  cardIsHidden(shape) || questionIsHidden(shape as { type: string; props: { dismissed?: boolean } })
+    ? ('hidden' as const)
+    : ('inherit' as const)
 const LAST_PROJECT_KEY = 'elves:lastProject'
 
 // Phosphor "Plus" (regular weight), inlined to avoid pulling in the whole icon package.
