@@ -25,6 +25,7 @@ test('the MCP server exposes the scoped tools plus list_projects, and no text-ed
     'move_cards',
     'move_sections',
     'read_cards',
+    'read_draft',
     'read_map',
     'ungroup_cards',
   ])

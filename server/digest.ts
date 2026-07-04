@@ -2,6 +2,9 @@ import type { CanvasSnapshot } from './store'
 import type { CardKind, NoteKind, Origin, Comment, Reference, RefType } from '../src/model/types'
 import type { SectionAuthor } from '../src/model/sections'
 import { SummarizableCard, cardGist } from '../src/model/summary'
+import {
+  compileDraft, toReadDraftBlocks, type DraftCardInput, type DraftSectionInput, type ReadDraftBlock,
+} from '../src/model/draft'
 import { resolveAssetPath } from './assets'
 
 export interface CardDigest {
@@ -282,4 +285,32 @@ export function snapshotToCanvasDigest(snapshot: CanvasSnapshot, assetsDir?: str
     sections: snapshotToSections(snapshot),
     questions: snapshotToQuestions(snapshot),
   }
+}
+
+/**
+ * Compile the canvas into the LINEAR DRAFT — ordered blocks of `{ section,
+ * cards: [{ id, text }] }`, reusing the same pure `compileDraft` the client pane
+ * uses so `read_draft` and the pane can never disagree about reading order. This
+ * is what surfaces the top-to-bottom-within-sections convention to Claude, which
+ * the position-only map can't. Read-only: no prose-boundary implications.
+ */
+export function snapshotToDraft(snapshot: CanvasSnapshot): ReadDraftBlock[] {
+  const store = storeOf(snapshot)
+  const cards: DraftCardInput[] = cardShapes(snapshot).map((r: any) => ({
+    id: r.id,
+    kind: r.props.kind,
+    ...resolvePageXY(store, r),
+    w: r.props.w ?? 0,
+    h: r.props.h ?? 0,
+    text: r.props.text ?? '',
+    mergedInto: r.props.mergedInto ?? null,
+    draftExcluded: r.props.draftExcluded ?? false,
+  }))
+  const sections: DraftSectionInput[] = snapshotToSections(snapshot).map((s) => ({
+    id: s.id,
+    x: s.x,
+    text: s.text,
+    authoredBy: s.authoredBy,
+  }))
+  return toReadDraftBlocks(compileDraft(cards, sections))
 }

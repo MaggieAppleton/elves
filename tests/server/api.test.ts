@@ -16,6 +16,21 @@ afterEach(async () => {
   dirs = []
 })
 
+// A minimal card shape record for canvas fixtures; override props as needed.
+function mk(
+  id: string, kind: 'prose' | 'note', x: number, y: number, text: string,
+  props: Record<string, unknown> = {},
+) {
+  return {
+    id, typeName: 'shape', type: 'card', x, y,
+    props: {
+      w: 240, h: 120, kind, noteKind: null, origin: null, text,
+      comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference: null,
+      summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null, ...props,
+    },
+  }
+}
+
 test('projects start empty, then create + list', async () => {
   const app = await appWithTmp()
   expect((await request(app).get('/projects')).body).toEqual([])
@@ -72,8 +87,44 @@ test('scoped routes on an unknown project → 404', async () => {
   const app = await appWithTmp()
   expect((await request(app).get('/projects/ghost/canvas')).status).toBe(404)
   expect((await request(app).get('/projects/ghost/map')).status).toBe(404)
+  expect((await request(app).get('/projects/ghost/draft')).status).toBe(404)
   expect((await request(app).post('/projects/ghost/cards').send({ ids: [] })).status).toBe(404)
   expect((await request(app).post('/projects/ghost/canvas').send({ document: null })).status).toBe(404)
+})
+
+test('GET /draft compiles the canvas into ordered narrative blocks', async () => {
+  const app = await appWithTmp()
+  await request(app).post('/projects').send({ name: 'Essay' })
+  // Two sections (Origins left, Turn right) with a card each, plus an opening
+  // card left of both. Cards are placed so that reading order can only be right
+  // if bands + within-band y ordering are honored (not a raw x scan).
+  const snap = {
+    document: {
+      store: {
+        'shape:intro': mk('shape:intro', 'prose', -400, 0, 'An opening thought.'),
+        'shape:o1': mk('shape:o1', 'prose', 60, 300, 'Origins, lower.'),
+        'shape:o2': mk('shape:o2', 'prose', 200, 0, 'Origins, upper.'),
+        'shape:t1': mk('shape:t1', 'prose', 1060, 0, 'The turn.'),
+        'shape:excluded': mk('shape:excluded', 'prose', 60, 600, 'left out', { draftExcluded: true }),
+        'shape:sOrigins': { id: 'shape:sOrigins', typeName: 'shape', type: 'section', x: 0, y: -100, props: { w: 320, h: 72, text: 'Origins', authoredBy: 'user' } },
+        'shape:sTurn': { id: 'shape:sTurn', typeName: 'shape', type: 'section', x: 1000, y: -100, props: { w: 320, h: 72, text: 'The turn', authoredBy: 'claude' } },
+      },
+    },
+    session: null,
+  }
+  await request(app).post('/projects/essay/canvas').send(snap)
+  const res = await request(app).get('/projects/essay/draft')
+  expect(res.status).toBe(200)
+  expect(res.body).toEqual({
+    blocks: [
+      { section: null, cards: [{ id: 'shape:intro', text: 'An opening thought.' }] },
+      { section: 'Origins', cards: [
+        { id: 'shape:o2', text: 'Origins, upper.' }, // upper first, though further right
+        { id: 'shape:o1', text: 'Origins, lower.' },
+      ] },
+      { section: 'The turn', cards: [{ id: 'shape:t1', text: 'The turn.' }] },
+    ],
+  })
 })
 
 test('a traversal-shaped id is rejected as unknown (404)', async () => {

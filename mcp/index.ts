@@ -4,6 +4,7 @@ import { z } from 'zod'
 import {
   readMapTool,
   readCardsTool,
+  readDraftTool,
   addCommentTool,
   mergeNotesTool,
   moveCardsTool,
@@ -56,6 +57,15 @@ export function createMcpServer(baseUrl: string): McpServer {
     { project: PROJECT, cardIds: z.array(z.string()).min(1) },
     async ({ project, cardIds }) => ({
       content: [{ type: 'text', text: JSON.stringify({ cards: await readCardsTool(baseUrl, project, cardIds) }) }],
+    }),
+  )
+
+  server.tool(
+    'read_draft',
+    "Read the project's canvas as a LINEAR DRAFT — the piece in true narrative order. Returns { blocks: [{ section, cards: [{ id, text }] }] }: sections run left→right as the order of the piece, and WITHIN each section cards run top→bottom. `section` is the heading text, or null for the opening block of cards that sit before the first section. Only PROSE cards compile (notes/images/references are excluded in v1); merged-away and draft-excluded cards are skipped. Prefer this over read_map when you are critiquing FLOW or narrative order: read_map gives positions and makes you re-derive the reading order yourself (and it can't tell you that top-to-bottom-within-a-section is the load-bearing convention) — read_draft hands you the order directly, with full card text. Use read_map/read_cards instead when you need positions, sizes, notes, references, or comments. Read-only.",
+    { project: PROJECT },
+    async ({ project }) => ({
+      content: [{ type: 'text', text: JSON.stringify({ blocks: await readDraftTool(baseUrl, project) }) }],
     }),
   )
 

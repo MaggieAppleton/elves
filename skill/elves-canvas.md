@@ -35,7 +35,12 @@ required `project` id, and you must know which project before doing anything.**
   `read_cards(project, cardIds)` for the few cards you actually need in full. Don't
   pull every card's text when the map already tells you the shape of the piece.
 - **x = narrative order: left is earlier, right is later.** A card's horizontal
-  position is its place in the piece.
+  position is its place in the piece. More precisely, the reading order is:
+  **sections run left → right**, and **within a section, cards run top → bottom**.
+  So a card that's further right but higher in a section comes *before* one further
+  left but lower in the same section — it is not a single left-to-right scan of card
+  x. Don't re-derive this by hand when you can call **`read_draft`**, which returns
+  the piece already in this order.
 - **Placement: use the map's `w`/`h`.** Each map entry carries the card's real
   size (`w`, `h`) as well as its top-left (`x`, `y`) — a text note is often much
   taller than it looks, so `(x, y)`..`(x + w, y + h)` is the box it occupies. Aim
@@ -68,6 +73,13 @@ required `project` id, and you must know which project before doing anything.**
   `gist`, and `textLen` (no full text). The shape of the piece at a glance.
 - **`read_cards(project, cardIds)`** — full text/comments/reference for specific cards,
   by id (from the map). Drill into the handful you need instead of reading everything.
+- **`read_draft(project)`** — the canvas compiled into a **linear draft**: ordered
+  `{ section, cards: [{ id, text }] }` blocks in true narrative order. **Prefer this
+  whenever you're critiquing flow, structure, or narrative order.** `read_map` only
+  gives you positions — you'd have to re-derive the reading order yourself, and it
+  can't tell you that *top-to-bottom within a section* is the load-bearing convention.
+  `read_draft` hands you that order directly, with full prose text. Only prose cards
+  compile (notes/images/references don't); merged and draft-excluded cards are skipped.
 - **`add_comment(project, cardId, text, type?)`** — flag a weakness in a PROSE card. Use a type:
   - `needs-evidence` — a claim with nothing backing it.
   - `weak-argument` — reasoning that doesn't hold up or has an obvious counter.
