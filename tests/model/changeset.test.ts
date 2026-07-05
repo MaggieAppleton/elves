@@ -227,3 +227,39 @@ describe('group ops', () => {
     expect(referencedCardIds(cs).sort()).toEqual(['shape:a', 'shape:b'])
   })
 })
+
+describe('edit_card & delete_card ops', () => {
+  test('isChangeSet accepts edit_card with any subset of text / title', () => {
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'edit_card', cardId: 'shape:a', text: 't', title: 'T' }] })).toBe(true)
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'edit_card', cardId: 'shape:a', text: 'just the body' }] })).toBe(true)
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'edit_card', cardId: 'shape:a' }] })).toBe(true)
+  })
+
+  test('rejects a malformed edit_card', () => {
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'edit_card' }] })).toBe(false) // missing cardId
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'edit_card', cardId: 5 }] })).toBe(false)
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'edit_card', cardId: 'shape:a', text: 42 }] })).toBe(false)
+  })
+
+  test('isChangeSet accepts delete_card and rejects it without a cardId', () => {
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'delete_card', cardId: 'shape:a' }] })).toBe(true)
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'delete_card' }] })).toBe(false)
+  })
+
+  test('neither op is a PROSE write — edit is gated on kind at apply time, delete writes nothing', () => {
+    // The guard can't see the target's kind, so it permits edit_card and relies on
+    // the apply handler (claudeMayEditCardText) to refuse a prose target.
+    expect(changeSetWritesText({ id: 'x', author: 'claude', ops: [{ kind: 'edit_card', cardId: 'shape:a', text: 'd' }] })).toBe(false)
+    expect(changeSetWritesText({ id: 'x', author: 'claude', ops: [{ kind: 'delete_card', cardId: 'shape:a' }] })).toBe(false)
+  })
+
+  test('referencedCardIds includes both targets so the project cross-check applies', () => {
+    const cs = {
+      id: 'x', author: 'claude' as const, ops: [
+        { kind: 'edit_card' as const, cardId: 'shape:a', text: 'd' },
+        { kind: 'delete_card' as const, cardId: 'shape:b' },
+      ],
+    }
+    expect(referencedCardIds(cs).sort()).toEqual(['shape:a', 'shape:b'])
+  })
+})

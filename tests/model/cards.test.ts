@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   makeProseCardProps, makeNoteCardProps, makeImageNoteCardProps, makeReferenceCardProps,
   makeFigureCardProps, isProseCard, isNoteCard, isFigureCard, claudeMayEditCardText,
-  CARD_DEFAULT_W, CARD_DEFAULT_H, FIGURE_DEFAULT_W, FIGURE_DEFAULT_H,
+  CARD_DEFAULT_W, CARD_DEFAULT_H, FIGURE_DEFAULT_W, FIGURE_DEFAULT_H, AGENT_CARD_DEFAULT_W,
 } from '../../src/model/cards'
 import { blankReference } from '../../src/model/references'
 
@@ -44,6 +44,15 @@ describe('card factories', () => {
     // Prose, image, and reference cards are never agent-authored.
     expect(makeProseCardProps('x').authoredBy).toBeNull()
     expect(makeImageNoteCardProps('a.png').authoredBy).toBeNull()
+  })
+
+  test('agent-added cards are born wide; hand-made ones stay small', () => {
+    // A human drags out a small box and grows it as they type.
+    expect(makeNoteCardProps('x').w).toBe(CARD_DEFAULT_W)
+    expect(makeFigureCardProps('t', 'd').w).toBe(FIGURE_DEFAULT_W)
+    // A Claude-written note or figure arrives at a comfortable reading width.
+    expect(makeNoteCardProps('x', 'transcribed', 'claude').w).toBe(AGENT_CARD_DEFAULT_W)
+    expect(makeFigureCardProps('t', 'd', 'claude').w).toBe(AGENT_CARD_DEFAULT_W)
   })
 
   test('makeImageNoteCardProps builds an image note card', () => {
@@ -97,10 +106,15 @@ describe('card factories', () => {
   })
 })
 
-describe('core invariant: Claude never authors card text', () => {
-  test('Claude may not edit the text of any existing card', () => {
+describe('core invariant: Claude never edits the user\'s prose', () => {
+  test('a prose card holds the user\'s own draft — never Claude\'s to edit', () => {
     expect(claudeMayEditCardText('prose')).toBe(false)
-    expect(claudeMayEditCardText('note')).toBe(false)
-    expect(claudeMayEditCardText('figure')).toBe(false)
+  })
+
+  test('notes and figures are working material Claude may edit', () => {
+    // Notes, references (a note kind), and figures are scaffolding Claude helps
+    // maintain — only the prose draft above is off limits.
+    expect(claudeMayEditCardText('note')).toBe(true)
+    expect(claudeMayEditCardText('figure')).toBe(true)
   })
 })

@@ -12,6 +12,8 @@ import {
   createReferenceTool,
   createSectionTool,
   createFigureCardTool,
+  editCardTool,
+  deleteCardTool,
   moveSectionsTool,
   editSectionTextTool,
   createQuestionTool,
@@ -148,11 +150,31 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'create_figure_card',
-    "Drop a FIGURE CARD — a placeholder for a planned visual (illustration, diagram, interactive animation) — at its narrative position among the prose and notes. `title` is a short working title; `description` says, in words, what the visual needs to show. Suggest one where the prose would carry more as a picture: a spatial relationship described in words, a process or sequence, a comparison across more than two dimensions, or anything the text is straining to say linearly. It lands at status `idea` and renders with your authorship mark — your suggestion, the user's call to refine, keep, or delete (they own the actual illustration; you only plan it, never generate it). x is narrative order like other cards; place it beside the prose it would illustrate. First check read_map: if a figure is already planned there, don't add a duplicate. This writes a placeholder plan, never the user's prose.",
+    "Drop a FIGURE CARD — a placeholder for a planned visual (illustration, diagram, interactive animation) — at its narrative position among the prose and notes. `title` is a short working title; `description` says, in a sentence or two, what the visual shows and the one contrast or structure that matters. Keep it SHORT and suggestive, not a spec — name the idea, don't storyboard it (avoid 'draw X on the left, label Y, then Z'); the user designs the actual figure, so over-prescribing just gets deleted. Suggest one where the prose would carry more as a picture: a spatial relationship described in words, a process or sequence, a comparison across more than two dimensions, or anything the text is straining to say linearly. It lands at status `idea` and renders with your authorship mark — your suggestion, the user's call to refine, keep, or delete (they own the actual illustration; you only plan it, never generate it). x is narrative order like other cards; place it beside the prose it would illustrate. First check read_map: if a figure is already planned there, don't add a duplicate. This writes a placeholder plan, never the user's prose.",
     { project: PROJECT, title: z.string(), description: z.string(), x: z.number(), y: z.number() },
     async ({ project, title, description, x, y }) => {
       await createFigureCardTool(baseUrl, project, { title, description, x, y })
       return { content: [{ type: 'text', text: 'figure card created' }] }
+    },
+  )
+
+  server.tool(
+    'edit_card',
+    "Edit an existing WORKING-MATERIAL card in place — a note's body, a reference card's annotation, or a figure's description, all via `text`; plus a figure's working `title` (figures only). Pass only the field(s) you want to change; omit the rest to leave them untouched. Get the cardId from read_map. This edits everything EXCEPT a PROSE card — that holds the user's own draft, which is theirs alone to write, and the server refuses to edit it. Notes, references, and figures are working material Claude helps maintain. Prefer this over delete + recreate — it keeps the card's id, position, and authorship mark. (To change a reference card's bibliographic metadata rather than its annotation, that's not editable here; recreate it.)",
+    { project: PROJECT, cardId: z.string(), text: z.string().optional(), title: z.string().optional() },
+    async ({ project, cardId, text, title }) => {
+      await editCardTool(baseUrl, project, { cardId, text, title })
+      return { content: [{ type: 'text', text: 'card updated' }] }
+    },
+  )
+
+  server.tool(
+    'delete_card',
+    "Delete a card CLAUDE authored — a suggestion you dropped that the user wants gone: a figure placeholder, a note you transcribed, or one you're about to replace. Get the cardId from read_map. Scoped for safety: the server deletes a card only if it was agent-authored, so this can NEVER remove the user's own prose or notes — those stay theirs to delete by hand. Deletion is not reversible through the tools, so make sure the card is really yours to remove (check read_map/read_cards first). To fix a card's wording, prefer edit_card over delete + recreate.",
+    { project: PROJECT, cardId: z.string() },
+    async ({ project, cardId }) => {
+      await deleteCardTool(baseUrl, project, { cardId })
+      return { content: [{ type: 'text', text: 'card deleted' }] }
     },
   )
 

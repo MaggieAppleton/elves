@@ -4,7 +4,8 @@ import type { CanvasSnapshot } from './store'
 import { ChangeSet, planMerge } from '../src/model/changeset'
 import { makeComment, addComment } from '../src/model/comments'
 import {
-  makeNoteCardProps, makeReferenceCardProps, makeFigureCardProps, CARD_DEFAULT_W, CARD_DEFAULT_H,
+  makeNoteCardProps, makeReferenceCardProps, makeFigureCardProps, claudeMayEditCardText,
+  CARD_DEFAULT_W, CARD_DEFAULT_H,
 } from '../src/model/cards'
 import { makeSectionProps } from '../src/model/sections'
 import { makeQuestionProps } from '../src/model/questions'
@@ -201,6 +202,24 @@ export function applyChangeSetToSnapshot(
           index: getIndexAbove(topIndex(store)),
           props,
         }
+        break
+      }
+      case 'edit_card': {
+        const shape = findCardShape(store, op.cardId)
+        // Working material (note / reference / figure) is Claude's to edit; a prose
+        // card holds the user's own draft and is never editable (claudeMayEditCardText).
+        if (!shape || !claudeMayEditCardText(shape.props.kind)) break
+        // `text` is the card's body (note body, reference annotation, figure
+        // description); `title` is a figure's working title and applies to figures only.
+        if (op.text !== undefined) shape.props.text = op.text
+        if (op.title !== undefined && shape.props.kind === 'figure') shape.props.figureTitle = op.title
+        break
+      }
+      case 'delete_card': {
+        const shape = findCardShape(store, op.cardId)
+        // Claude may retract only its OWN suggestions — cards it authored. The
+        // user's own prose and notes (authoredBy null) are protected.
+        if (shape && shape.props.authoredBy) delete store[op.cardId]
         break
       }
       case 'create_section': {

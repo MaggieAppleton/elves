@@ -8,6 +8,8 @@ export type Op =
   | { kind: 'create_reference'; reference: Reference; x: number; y: number }
   | { kind: 'create_section'; text: string; x: number; y: number }
   | { kind: 'create_figure_card'; title: string; description: string; x: number; y: number }
+  | { kind: 'edit_card'; cardId: string; text?: string; title?: string }
+  | { kind: 'delete_card'; cardId: string }
   | { kind: 'move_sections'; moves: { sectionId: string; x: number; y: number }[] }
   | { kind: 'edit_section_text'; sectionId: string; text: string }
   | { kind: 'create_question'; text: string; x: number; y: number }
@@ -94,6 +96,12 @@ function isOp(v: unknown): v is Op {
     case 'create_figure_card':
       return typeof op.title === 'string' && typeof op.description === 'string' &&
         typeof op.x === 'number' && typeof op.y === 'number'
+    case 'edit_card':
+      return typeof op.cardId === 'string' &&
+        (op.text === undefined || typeof op.text === 'string') &&
+        (op.title === undefined || typeof op.title === 'string')
+    case 'delete_card':
+      return typeof op.cardId === 'string'
     case 'move_sections':
       return Array.isArray(op.moves) && op.moves.every((m) => {
         const mm = m as Record<string, unknown>
@@ -125,11 +133,13 @@ export function isChangeSet(value: unknown): value is ChangeSet {
 }
 
 /**
- * Defense-in-depth for the core rule "Claude never writes prose". Returns true
- * iff any op in the change-set would write prose text or edit an existing card's text.
- * create_note_card creates a new note card (allowed), so it returns false for it.
- * The server calls this before applying, so if a text-writing op is ever added it must
- * be added here consciously.
+ * Defense-in-depth for the core rule "Claude never writes the user's PROSE".
+ * Returns true iff any op in the change-set would write into a prose card — the
+ * one place the user's own draft lives. Everything else (notes, references,
+ * figures) is working material Claude may create and edit. create_note_card
+ * creates a new note card (allowed), so it returns false for it. The server calls
+ * this before applying, so if a prose-writing op is ever added it must be added
+ * here consciously.
  *
  * edit_section_text is a deliberate, conscious exception: section labels are
  * organizational headings, not prose or reference material, so Claude is
@@ -165,6 +175,20 @@ export function isChangeSet(value: unknown): value is ChangeSet {
  * never the user's prose or any card's `text`. A question card by construction
  * holds only a question, never draft prose, so it sits squarely on the safe side
  * of the boundary. Scoped to this one op.
+ *
+ * edit_card revises the text of an existing WORKING-MATERIAL card — a note's
+ * body, a figure's title/description, a reference's annotation. The one card the
+ * user's prose lives in — a prose card — is off limits, and the server handler
+ * enforces that via claudeMayEditCardText (which permits every kind except
+ * prose). This guard can't see the canvas, so it can't tell an edit_card's target
+ * kind on its own; it permits the op shape and RELIES on the handler to refuse a
+ * prose target. That's why the prose boundary is a per-kind check at apply time,
+ * not here. Scoped to this one op.
+ *
+ * delete_card removes a card wholesale; it writes no text at all. The server
+ * handler restricts it to agent-authored cards (the suggestions Claude itself
+ * dropped), so it can never delete the user's own prose or notes. Same structural
+ * safety class as move_cards / group_cards.
  */
 export function changeSetWritesText(cs: ChangeSet): boolean {
   return cs.ops.some((op) => {
@@ -176,6 +200,8 @@ export function changeSetWritesText(cs: ChangeSet): boolean {
       case 'create_reference':
       case 'create_section':
       case 'create_figure_card':
+      case 'edit_card':
+      case 'delete_card':
       case 'move_sections':
       case 'edit_section_text':
       case 'create_question':
@@ -214,6 +240,8 @@ export function referencedCardIds(cs: ChangeSet): string[] {
     else if (op.kind === 'move_cards') ids.push(...op.moves.map((m) => m.cardId))
     else if (op.kind === 'group_cards') ids.push(...op.cardIds)
     else if (op.kind === 'set_summary') ids.push(op.cardId)
+    else if (op.kind === 'edit_card') ids.push(op.cardId)
+    else if (op.kind === 'delete_card') ids.push(op.cardId)
   }
   return ids
 }

@@ -1,9 +1,10 @@
 import {
   CardKind, CardProps, Origin, Reference, CARD_DEFAULT_W, CARD_DEFAULT_H,
   REFERENCE_DEFAULT_W, REFERENCE_DEFAULT_H, FIGURE_DEFAULT_W, FIGURE_DEFAULT_H,
+  AGENT_CARD_DEFAULT_W,
 } from './types'
 
-export { CARD_DEFAULT_W, CARD_DEFAULT_H, FIGURE_DEFAULT_W, FIGURE_DEFAULT_H }
+export { CARD_DEFAULT_W, CARD_DEFAULT_H, FIGURE_DEFAULT_W, FIGURE_DEFAULT_H, AGENT_CARD_DEFAULT_W }
 
 // A summary is generated later (server-side, for long cards); a card is born
 // without one. Keeping the four fields together keeps every factory honest.
@@ -26,7 +27,8 @@ export function makeProseCardProps(text = ''): CardProps {
 // the MCP; null when a human made it. Renders as that agent's small logo mark.
 export function makeNoteCardProps(text = '', origin: Origin = 'typed', authoredBy: string | null = null): CardProps {
   return {
-    w: CARD_DEFAULT_W, h: CARD_DEFAULT_H,
+    // Agent-added cards arrive wide (see AGENT_CARD_DEFAULT_W); hand-made ones stay small.
+    w: authoredBy ? AGENT_CARD_DEFAULT_W : CARD_DEFAULT_W, h: CARD_DEFAULT_H,
     kind: 'note', noteKind: 'text', origin, text, authoredBy,
     comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference: null, ...NO_FIGURE, ...NO_SUMMARY,
   }
@@ -67,7 +69,8 @@ export function makeFigureCardProps(
   title = '', description = '', authoredBy: string | null = null,
 ): CardProps {
   return {
-    w: FIGURE_DEFAULT_W, h: FIGURE_DEFAULT_H,
+    // Agent-suggested figures arrive wide (see AGENT_CARD_DEFAULT_W); hand-made ones stay small.
+    w: authoredBy ? AGENT_CARD_DEFAULT_W : FIGURE_DEFAULT_W, h: FIGURE_DEFAULT_H,
     kind: 'figure', noteKind: null, origin: null, text: description, authoredBy,
     comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference: null,
     figureTitle: title, figureStatus: 'idea', ...NO_SUMMARY,
@@ -87,12 +90,16 @@ export function isFigureCard(p: { kind: CardKind }): boolean {
 }
 
 /**
- * Elves' core rule, as testable code. Claude never edits the text of an
- * existing card — note or prose. (Claude *creating* new note cards is a
- * separate, dedicated capability added in Phase 2's tool layer; it is not
- * text-editing.) Phase 2's server tool API MUST consult this before applying
- * any text mutation attributed to Claude.
+ * Elves' core rule, as testable code. The one card the user's OWN DRAFT lives in
+ * — a prose card — is Claude's to organize, comment on, and question, but never
+ * to write or edit. Everything else on the canvas is working material Claude
+ * helps maintain: a note's body, a reference's annotation, a figure's
+ * title/description. Claude may edit those (and the model already lets it *create*
+ * them — see makeNoteCardProps / makeReferenceCardProps / makeFigureCardProps).
+ * So the boundary is exactly one kind: prose is protected, the rest are editable.
+ * The server tool API MUST consult this before applying any text edit attributed
+ * to Claude (see edit_card in applyChangeSet).
  */
-export function claudeMayEditCardText(_kind: CardKind): boolean {
-  return false
+export function claudeMayEditCardText(kind: CardKind): boolean {
+  return kind !== 'prose'
 }

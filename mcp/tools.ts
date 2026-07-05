@@ -161,6 +161,36 @@ export function createFigureCardTool(
   ]))
 }
 
+/**
+ * Edit the text of an existing WORKING-MATERIAL card — a note's body, a
+ * reference's annotation, or a figure's description (via `text`), plus a figure's
+ * working `title`. A prose card holds the user's own draft and the server refuses
+ * to edit it (claudeMayEditCardText). `title` applies to figure cards only. Pass
+ * only the field(s) you want to change.
+ */
+export function editCardTool(
+  baseUrl: string,
+  projectId: string,
+  args: { cardId: string; text?: string; title?: string },
+): Promise<void> {
+  return postChangeSet(baseUrl, projectId, makeChangeSet([
+    { kind: 'edit_card', cardId: args.cardId, text: args.text, title: args.title },
+  ]))
+}
+
+/**
+ * Delete a card Claude authored — a suggestion it dropped (a figure, a note it
+ * transcribed). The server restricts this to agent-authored cards, so it can
+ * never remove the user's own prose or notes; those stay the user's to delete.
+ */
+export function deleteCardTool(
+  baseUrl: string,
+  projectId: string,
+  args: { cardId: string },
+): Promise<void> {
+  return postChangeSet(baseUrl, projectId, makeChangeSet([{ kind: 'delete_card', cardId: args.cardId }]))
+}
+
 export function moveSectionsTool(
   baseUrl: string,
   projectId: string,
