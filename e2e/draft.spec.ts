@@ -36,8 +36,8 @@ test('a prose card shows up live in the draft pane in split view', async ({ page
   const pane = page.locator('.elves-draft-pane')
   await expect.poll(async () => (await pane.boundingBox())?.width ?? -1).toBeLessThan(2)
 
-  await page.getByTestId('view-split').click()
-  await expect(page.getByTestId('view-split')).toHaveAttribute('data-active', 'true')
+  await page.getByTestId('draft-open').click()
+  await expect(page.locator('.elves-stage')).toHaveAttribute('data-view', 'split')
 
   // Split: the pane has real width and the paragraph is on screen.
   await expect.poll(async () => (await pane.boundingBox())?.width ?? 0).toBeGreaterThan(200)
@@ -51,7 +51,7 @@ test('excluding a prose card drops it from the draft and marks it on the canvas'
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
 
   const card = await addProse(page, 'an aside, not the piece')
-  await page.getByTestId('view-split').click()
+  await page.getByTestId('draft-open').click()
   await expect(page.getByTestId('draft-para')).toHaveText('an aside, not the piece')
 
   // Select the card so its draft-exclude toggle appears, then exclude it.
@@ -71,12 +71,13 @@ test('clicking a draft paragraph in draft-only view opens split (draft → canva
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
 
   await addProse(page, 'jump to me')
-  await page.getByTestId('view-draft').click()
-  await expect(page.getByTestId('view-draft')).toHaveAttribute('data-active', 'true')
+  await page.getByTestId('draft-open').click() // canvas → split
+  await page.getByTestId('draft-expand').click() // split → draft (full)
+  await expect(page.locator('.elves-stage')).toHaveAttribute('data-view', 'draft')
 
   await page.getByTestId('draft-para').click()
   // Navigation drops draft-only into split so the canvas is visible again.
-  await expect(page.getByTestId('view-split')).toHaveAttribute('data-active', 'true')
+  await expect(page.locator('.elves-stage')).toHaveAttribute('data-view', 'split')
 })
 
 test('copy as markdown writes the draft to the clipboard', async ({ page }) => {
@@ -84,10 +85,31 @@ test('copy as markdown writes the draft to the clipboard', async ({ page }) => {
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
 
   await addProse(page, 'a sentence to copy')
-  await page.getByTestId('view-split').click()
+  await page.getByTestId('draft-open').click()
 
   await page.getByTestId('draft-copy').click()
   await expect(page.getByTestId('draft-copy')).toHaveText('Copied')
   const clip = await page.evaluate(() => navigator.clipboard.readText())
   expect(clip).toContain('a sentence to copy')
+})
+
+test('the drawer chevrons step canvas → split → draft and back', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await addProse(page, 'round trip')
+
+  const stage = page.locator('.elves-stage')
+  await expect(stage).toHaveAttribute('data-view', 'canvas')
+
+  await page.getByTestId('draft-open').click()
+  await expect(stage).toHaveAttribute('data-view', 'split')
+
+  await page.getByTestId('draft-expand').click()
+  await expect(stage).toHaveAttribute('data-view', 'draft')
+
+  await page.getByTestId('draft-collapse').click()
+  await expect(stage).toHaveAttribute('data-view', 'split')
+
+  await page.getByTestId('draft-collapse').click()
+  await expect(stage).toHaveAttribute('data-view', 'canvas')
 })
