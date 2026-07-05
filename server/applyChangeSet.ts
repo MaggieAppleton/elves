@@ -4,7 +4,8 @@ import type { CanvasSnapshot } from './store'
 import { ChangeSet, planMerge } from '../src/model/changeset'
 import { makeComment, addComment } from '../src/model/comments'
 import {
-  makeNoteCardProps, makeReferenceCardProps, makeFigureCardProps, CARD_DEFAULT_W, CARD_DEFAULT_H,
+  makeNoteCardProps, makeReferenceCardProps, makeFigureCardProps, claudeMayEditCardText,
+  CARD_DEFAULT_W, CARD_DEFAULT_H,
 } from '../src/model/cards'
 import { makeSectionProps } from '../src/model/sections'
 import { makeQuestionProps } from '../src/model/questions'
@@ -201,6 +202,22 @@ export function applyChangeSetToSnapshot(
           index: getIndexAbove(topIndex(store)),
           props,
         }
+        break
+      }
+      case 'edit_figure_card': {
+        const shape = findCardShape(store, op.cardId)
+        // Only a figure card's plan is Claude's to revise; a note or prose card
+        // holds the user's words and is never editable (claudeMayEditCardText).
+        if (!shape || !claudeMayEditCardText(shape.props.kind)) break
+        if (op.title !== undefined) shape.props.figureTitle = op.title
+        if (op.description !== undefined) shape.props.text = op.description
+        break
+      }
+      case 'delete_card': {
+        const shape = findCardShape(store, op.cardId)
+        // Claude may retract only its OWN suggestions — cards it authored. The
+        // user's own prose and notes (authoredBy null) are protected.
+        if (shape && shape.props.authoredBy) delete store[op.cardId]
         break
       }
       case 'create_section': {

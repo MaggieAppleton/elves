@@ -231,6 +231,59 @@ test('applyChangeSetToSnapshot persists a figure card with title, description-as
   expect(created.props.authoredBy).toBe('openai')
 })
 
+// A canvas holding a Claude-authored figure card and a user-authored prose card,
+// so the edit/delete guards can be exercised against both sides of the boundary.
+function figureAndProseSnapshot() {
+  return {
+    document: {
+      store: {
+        'page:page': { id: 'page:page', typeName: 'page' },
+        'shape:fig': {
+          id: 'shape:fig', typeName: 'shape', type: 'card', x: 0, y: 0,
+          props: { w: 500, h: 148, kind: 'figure', noteKind: null, origin: null, text: 'old description', figureTitle: 'Old title', figureStatus: 'idea', authoredBy: 'claude', comments: [], mergedInto: null },
+        },
+        'shape:prose': {
+          id: 'shape:prose', typeName: 'shape', type: 'card', x: 0, y: 300,
+          props: { w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text: 'my own words', figureTitle: '', figureStatus: null, authoredBy: null, comments: [], mergedInto: null },
+        },
+      },
+    },
+    session: null,
+  } as any
+}
+
+test('edit_figure_card revises a figure card title and description in place', () => {
+  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'edit_figure_card' as const, cardId: 'shape:fig', title: 'New title', description: 'tighter description' }] }
+  const next = applyChangeSetToSnapshot(figureAndProseSnapshot(), cs) as any
+  expect(next.document.store['shape:fig'].props.figureTitle).toBe('New title')
+  expect(next.document.store['shape:fig'].props.text).toBe('tighter description')
+})
+
+test('edit_figure_card updates only the field provided, leaving the other untouched', () => {
+  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'edit_figure_card' as const, cardId: 'shape:fig', description: 'only the description changed' }] }
+  const next = applyChangeSetToSnapshot(figureAndProseSnapshot(), cs) as any
+  expect(next.document.store['shape:fig'].props.figureTitle).toBe('Old title')
+  expect(next.document.store['shape:fig'].props.text).toBe('only the description changed')
+})
+
+test('edit_figure_card REFUSES to touch a prose card — the user\'s text is protected', () => {
+  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'edit_figure_card' as const, cardId: 'shape:prose', description: 'agent trying to rewrite prose' }] }
+  const next = applyChangeSetToSnapshot(figureAndProseSnapshot(), cs) as any
+  expect(next.document.store['shape:prose'].props.text).toBe('my own words')
+})
+
+test('delete_card removes a Claude-authored card', () => {
+  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'delete_card' as const, cardId: 'shape:fig' }] }
+  const next = applyChangeSetToSnapshot(figureAndProseSnapshot(), cs) as any
+  expect(next.document.store['shape:fig']).toBeUndefined()
+})
+
+test('delete_card PROTECTS a user-authored card — it stays on the canvas', () => {
+  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'delete_card' as const, cardId: 'shape:prose' }] }
+  const next = applyChangeSetToSnapshot(figureAndProseSnapshot(), cs) as any
+  expect(next.document.store['shape:prose']).toBeDefined()
+})
+
 test('a create_figure_card change-set persists a figure and the map shows its title + status', async () => {
   const d = await rootWithProject()
   const app = createServer(d)
@@ -244,6 +297,31 @@ test('a create_figure_card change-set persists a figure and the map shows its ti
   const map = await request(app).get('/projects/essay/map')
   const figure = map.body.cards.find((c: any) => c.kind === 'figure')
   expect(figure).toMatchObject({ kind: 'figure', gist: 'Timeline', figureStatus: 'idea' })
+})
+
+test('edit_figure_card then delete_card round-trip through the HTTP pipeline (guard + cross-check pass)', async () => {
+  const d = await rootWithProject()
+  const app = createServer(d)
+  await request(app).post('/projects/essay/canvas').send(cardSnapshot('shape:a'))
+  // Seed a Claude-authored figure so both ops have a valid, agent-owned target.
+  await request(app).post('/projects/essay/changeset').send({
+    id: 'x', author: 'claude',
+    ops: [{ kind: 'create_figure_card', title: 'Draft title', description: 'draft description', x: 400, y: 0 }],
+  })
+  const figId = (await request(app).get('/projects/essay/map')).body.cards.find((c: any) => c.kind === 'figure').id
+
+  // Edit is not blocked by the "may not write card text" guard (returns 200, not 403).
+  const edited = await request(app).post('/projects/essay/changeset').send({
+    id: 'y', author: 'claude', ops: [{ kind: 'edit_figure_card', cardId: figId, title: 'Tightened title' }],
+  })
+  expect(edited.status).toBe(200)
+  expect((await request(app).get('/projects/essay/map')).body.cards.find((c: any) => c.id === figId).gist).toBe('Tightened title')
+
+  // Delete removes it.
+  expect((await request(app).post('/projects/essay/changeset').send({
+    id: 'z', author: 'claude', ops: [{ kind: 'delete_card', cardId: figId }],
+  })).status).toBe(200)
+  expect((await request(app).get('/projects/essay/map')).body.cards.find((c: any) => c.id === figId)).toBeUndefined()
 })
 
 test('a create_note_card change-set persists a new card when the project already has a canvas', async () => {

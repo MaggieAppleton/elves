@@ -4,7 +4,7 @@ import { CardShape } from '../shapes/CardShapeUtil'
 import { SectionShape } from '../shapes/SectionShapeUtil'
 import { QuestionShape } from '../shapes/QuestionShapeUtil'
 import { makeComment, addComment } from '../model/comments'
-import { makeNoteCardProps, makeReferenceCardProps, makeFigureCardProps } from '../model/cards'
+import { makeNoteCardProps, makeReferenceCardProps, makeFigureCardProps, claudeMayEditCardText } from '../model/cards'
 import { makeSectionProps } from '../model/sections'
 import { makeQuestionProps } from '../model/questions'
 
@@ -124,6 +124,26 @@ function applyCreateFigureCard(
   return [id]
 }
 
+function applyEditFigureCard(editor: Editor, op: Extract<Op, { kind: 'edit_figure_card' }>): TLShapeId[] {
+  const shape = editor.getShape(op.cardId as CardShape['id']) as CardShape | undefined
+  // Only a figure's plan is Claude's to revise; note/prose text stays the user's.
+  if (!shape || !claudeMayEditCardText(shape.props.kind)) return []
+  const props: Partial<CardShape['props']> = {}
+  if (op.title !== undefined) props.figureTitle = op.title
+  if (op.description !== undefined) props.text = op.description
+  editor.updateShape<CardShape>({ id: shape.id, type: 'card', props })
+  return [shape.id]
+}
+
+function applyDeleteCard(editor: Editor, op: Extract<Op, { kind: 'delete_card' }>): TLShapeId[] {
+  const shape = editor.getShape(op.cardId as CardShape['id']) as CardShape | undefined
+  // Claude may retract only cards it authored; the user's own cards are protected.
+  if (!shape || !shape.props.authoredBy) return []
+  editor.deleteShape(shape.id)
+  // The shape is gone, so there's nothing to glow — return nothing.
+  return []
+}
+
 function applyCreateSection(editor: Editor, op: Extract<Op, { kind: 'create_section' }>): TLShapeId[] {
   const id = createShapeId()
   editor.createShape<SectionShape>({
@@ -224,6 +244,10 @@ function applyOp(editor: Editor, op: Op, author: string): TLShapeId[] {
       return applyCreateReference(editor, op)
     case 'create_figure_card':
       return applyCreateFigureCard(editor, op, author)
+    case 'edit_figure_card':
+      return applyEditFigureCard(editor, op)
+    case 'delete_card':
+      return applyDeleteCard(editor, op)
     case 'create_section':
       return applyCreateSection(editor, op)
     case 'move_sections':

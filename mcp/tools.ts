@@ -161,6 +161,35 @@ export function createFigureCardTool(
   ]))
 }
 
+/**
+ * Revise an existing FIGURE card's working title and/or description — Claude's
+ * plan for the visual, never the user's prose (the server refuses anything but a
+ * figure card). Pass only the fields you want to change. Same safe side of the
+ * boundary as create_figure_card.
+ */
+export function editFigureCardTool(
+  baseUrl: string,
+  projectId: string,
+  args: { cardId: string; title?: string; description?: string },
+): Promise<void> {
+  return postChangeSet(baseUrl, projectId, makeChangeSet([
+    { kind: 'edit_figure_card', cardId: args.cardId, title: args.title, description: args.description },
+  ]))
+}
+
+/**
+ * Delete a card Claude authored — a suggestion it dropped (a figure, a note it
+ * transcribed). The server restricts this to agent-authored cards, so it can
+ * never remove the user's own prose or notes; those stay the user's to delete.
+ */
+export function deleteCardTool(
+  baseUrl: string,
+  projectId: string,
+  args: { cardId: string },
+): Promise<void> {
+  return postChangeSet(baseUrl, projectId, makeChangeSet([{ kind: 'delete_card', cardId: args.cardId }]))
+}
+
 export function moveSectionsTool(
   baseUrl: string,
   projectId: string,

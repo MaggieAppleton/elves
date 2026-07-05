@@ -90,12 +90,19 @@ export function isFigureCard(p: { kind: CardKind }): boolean {
 }
 
 /**
- * Elves' core rule, as testable code. Claude never edits the text of an
- * existing card — note or prose. (Claude *creating* new note cards is a
- * separate, dedicated capability added in Phase 2's tool layer; it is not
- * text-editing.) Phase 2's server tool API MUST consult this before applying
- * any text mutation attributed to Claude.
+ * Elves' core rule, as testable code. Claude never edits the text of a card that
+ * holds the USER's words — a note or a prose card. (Claude *creating* new note
+ * cards is a separate, dedicated capability; it is not text-editing.) The server
+ * tool API MUST consult this before applying any text mutation attributed to
+ * Claude.
+ *
+ * A FIGURE card is the one exception, and it's the same distinction the rest of
+ * the model already draws: a figure's title/description is Claude's PLAN for a
+ * visual, not the user's prose (see makeFigureCardProps and changeSetWritesText's
+ * create_figure_card note — that's why Claude may *write* one in the first place).
+ * So Claude may also revise a figure it planned. The boundary protects prose and
+ * reference material, never plans.
  */
-export function claudeMayEditCardText(_kind: CardKind): boolean {
-  return false
+export function claudeMayEditCardText(kind: CardKind): boolean {
+  return kind === 'figure'
 }

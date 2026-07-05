@@ -8,6 +8,8 @@ export type Op =
   | { kind: 'create_reference'; reference: Reference; x: number; y: number }
   | { kind: 'create_section'; text: string; x: number; y: number }
   | { kind: 'create_figure_card'; title: string; description: string; x: number; y: number }
+  | { kind: 'edit_figure_card'; cardId: string; title?: string; description?: string }
+  | { kind: 'delete_card'; cardId: string }
   | { kind: 'move_sections'; moves: { sectionId: string; x: number; y: number }[] }
   | { kind: 'edit_section_text'; sectionId: string; text: string }
   | { kind: 'create_question'; text: string; x: number; y: number }
@@ -94,6 +96,12 @@ function isOp(v: unknown): v is Op {
     case 'create_figure_card':
       return typeof op.title === 'string' && typeof op.description === 'string' &&
         typeof op.x === 'number' && typeof op.y === 'number'
+    case 'edit_figure_card':
+      return typeof op.cardId === 'string' &&
+        (op.title === undefined || typeof op.title === 'string') &&
+        (op.description === undefined || typeof op.description === 'string')
+    case 'delete_card':
+      return typeof op.cardId === 'string'
     case 'move_sections':
       return Array.isArray(op.moves) && op.moves.every((m) => {
         const mm = m as Record<string, unknown>
@@ -165,6 +173,18 @@ export function isChangeSet(value: unknown): value is ChangeSet {
  * never the user's prose or any card's `text`. A question card by construction
  * holds only a question, never draft prose, so it sits squarely on the safe side
  * of the boundary. Scoped to this one op.
+ *
+ * edit_figure_card is a deliberate exception in the SAME class as
+ * create_figure_card: it revises the title/description of an existing FIGURE card
+ * — Claude's own plan for a visual, never the user's prose (see
+ * claudeMayEditCardText, which permits figure and forbids note/prose). The
+ * server handler enforces that the target is a figure card, so this can never
+ * touch a note's or prose card's `text`. Scoped to this one op.
+ *
+ * delete_card removes a card wholesale; it writes no text at all. The server
+ * handler restricts it to agent-authored cards (the suggestions Claude itself
+ * dropped), so it can never delete the user's own prose or notes. Same structural
+ * safety class as move_cards / group_cards.
  */
 export function changeSetWritesText(cs: ChangeSet): boolean {
   return cs.ops.some((op) => {
@@ -176,6 +196,8 @@ export function changeSetWritesText(cs: ChangeSet): boolean {
       case 'create_reference':
       case 'create_section':
       case 'create_figure_card':
+      case 'edit_figure_card':
+      case 'delete_card':
       case 'move_sections':
       case 'edit_section_text':
       case 'create_question':
@@ -214,6 +236,8 @@ export function referencedCardIds(cs: ChangeSet): string[] {
     else if (op.kind === 'move_cards') ids.push(...op.moves.map((m) => m.cardId))
     else if (op.kind === 'group_cards') ids.push(...op.cardIds)
     else if (op.kind === 'set_summary') ids.push(op.cardId)
+    else if (op.kind === 'edit_figure_card') ids.push(op.cardId)
+    else if (op.kind === 'delete_card') ids.push(op.cardId)
   }
   return ids
 }

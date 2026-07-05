@@ -12,6 +12,8 @@ import {
   createReferenceTool,
   createSectionTool,
   createFigureCardTool,
+  editFigureCardTool,
+  deleteCardTool,
   moveSectionsTool,
   editSectionTextTool,
   createQuestionTool,
@@ -153,6 +155,26 @@ export function createMcpServer(baseUrl: string): McpServer {
     async ({ project, title, description, x, y }) => {
       await createFigureCardTool(baseUrl, project, { title, description, x, y })
       return { content: [{ type: 'text', text: 'figure card created' }] }
+    },
+  )
+
+  server.tool(
+    'edit_figure_card',
+    "Revise an existing FIGURE card in place — tighten its working `title`, rewrite its `description`, or both. Pass only the field(s) you want to change; omit the other to leave it untouched. Get the cardId from read_map (a `figure` kind). This edits ONLY figure cards — a figure's title/description is a plan for a visual, Claude's to refine, the same safe side of the boundary as create_figure_card. It cannot touch a note or prose card's text (the server refuses anything but a figure); that text is the user's alone. Prefer this over delete + recreate when you're improving a figure you already planned — it keeps the card's id, position, and authorship mark.",
+    { project: PROJECT, cardId: z.string(), title: z.string().optional(), description: z.string().optional() },
+    async ({ project, cardId, title, description }) => {
+      await editFigureCardTool(baseUrl, project, { cardId, title, description })
+      return { content: [{ type: 'text', text: 'figure card updated' }] }
+    },
+  )
+
+  server.tool(
+    'delete_card',
+    "Delete a card CLAUDE authored — a suggestion you dropped that the user wants gone: a figure placeholder, a note you transcribed, or one you're about to replace. Get the cardId from read_map. Scoped for safety: the server deletes a card only if it was agent-authored, so this can NEVER remove the user's own prose or notes — those stay theirs to delete by hand. Deletion is not reversible through the tools, so make sure the card is really yours to remove (check read_map/read_cards first). To fix a figure's wording, prefer edit_figure_card over delete + recreate.",
+    { project: PROJECT, cardId: z.string() },
+    async ({ project, cardId }) => {
+      await deleteCardTool(baseUrl, project, { cardId })
+      return { content: [{ type: 'text', text: 'card deleted' }] }
     },
   )
 
