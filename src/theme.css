@@ -305,28 +305,31 @@ body {
   border: 1px solid var(--elves-border);
   box-shadow: var(--elves-shadow-md), var(--elves-highlight);
 }
-/* Split: rides the top of the divider; left is set inline to split * 100%. */
+/* All three are vertically-centered edge grips, clear of the top chrome (the
+   draft pane's DRAFT/Copy header and the top-right project switcher). */
+/* Split: centered on the divider line; left is set inline to split * 100%. */
 .elves-drawer-handle--split {
-  top: 10px;
-  transform: translateX(-50%);
+  top: 50%;
+  transform: translate(-50%, -50%);
 }
-/* Full draft: parks at the top-left corner. */
+/* Full draft: centered on the left edge. */
 .elves-drawer-handle--full {
-  top: 10px;
+  top: 50%;
   left: 10px;
+  transform: translateY(-50%);
 }
 /* Canvas: a half-hidden tab clinging to the right edge; slides in on hover. */
 .elves-drawer-tab {
-  top: 12px;
+  top: 50%;
   right: 0;
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
-  transform: translateX(42%);
+  transform: translateY(-50%) translateX(42%);
   transition: transform 160ms ease;
 }
 .elves-drawer-tab:hover,
 .elves-drawer-tab:focus-within {
-  transform: translateX(0);
+  transform: translateY(-50%) translateX(0);
 }
 .elves-drawer-handle button,
 .elves-drawer-tab button {
