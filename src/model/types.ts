@@ -119,17 +119,16 @@ export interface CardProps {
   summaryAt: string | null
 }
 
-export const CARD_DEFAULT_W = 240
+export const CARD_DEFAULT_W = 370
 export const CARD_DEFAULT_H = 120
 
 // Cards an agent adds through the MCP (any card whose `authoredBy` is stamped,
-// i.e. every Claude-written note and figure) are born wider than a hand-made
-// card. A human dragging out a card wants a small box they grow as they type; an
-// agent drops in a finished thought — a suggestion, a planned figure — that
-// reads better at a comfortable measure without the user having to widen it by
-// hand every time. Height still follows the text (measured client-side), so this
-// only sets how wide Claude's cards arrive.
-export const AGENT_CARD_DEFAULT_W = 500
+// i.e. every Claude-written note and figure) are born at a comfortable measure.
+// An agent drops in a finished thought — a suggestion, a planned figure — that
+// reads better at a settled width without the user having to size it by hand
+// every time. Height still follows the text (measured client-side), so this only
+// sets how wide Claude's cards arrive.
+export const AGENT_CARD_DEFAULT_W = 370
 
 // Reference cards are a touch wider than notes to hold a title + a metadata row
 // comfortably; height is measured to fit the type-adaptive face.
