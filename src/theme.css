@@ -290,9 +290,80 @@ body {
   margin-left: -1px;
 }
 
+/* ---- Draft drawer handle: directional chevrons on the drawer edge ------- */
+/* One control, mounted inside the stage, positioning itself by view. « widens
+   the drawer toward full draft, » narrows it toward canvas. */
+.elves-drawer-handle,
+.elves-drawer-tab {
+  position: absolute;
+  z-index: 360; /* above the divider (350) */
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--elves-surface);
+  border: 1px solid var(--elves-border);
+  box-shadow: var(--elves-shadow-md), var(--elves-highlight);
+}
+/* Split: rides the top of the divider; left is set inline to split * 100%. */
+.elves-drawer-handle--split {
+  top: 10px;
+  transform: translateX(-50%);
+}
+/* Full draft: parks at the top-left corner. */
+.elves-drawer-handle--full {
+  top: 10px;
+  left: 10px;
+}
+/* Canvas: a half-hidden tab clinging to the right edge; slides in on hover. */
+.elves-drawer-tab {
+  top: 12px;
+  right: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  transform: translateX(42%);
+  transition: transform 160ms ease;
+}
+.elves-drawer-tab:hover,
+.elves-drawer-tab:focus-within {
+  transform: translateX(0);
+}
+.elves-drawer-handle button,
+.elves-drawer-tab button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--elves-ink-soft);
+  cursor: pointer;
+  transition: background-color 100ms ease, color 100ms ease;
+}
+.elves-drawer-handle button:hover,
+.elves-drawer-tab button:hover {
+  background: var(--elves-tertiary);
+  color: var(--elves-ink);
+}
+.elves-drawer-handle button svg,
+.elves-drawer-tab button svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+.elves-drawer-handle button:focus-visible,
+.elves-drawer-tab button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .elves-canvas-pane,
   .elves-draft-pane { transition: none; }
+  .elves-drawer-tab { transition: none; }
 }
 
 /* ---- Creation toolbar (top-center) as an elevated action cluster -------- */
