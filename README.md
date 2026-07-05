@@ -6,19 +6,21 @@ A local-first, canvas-based writing studio for taking a piece from scattered not
 
 **The canvas.** An infinite [tldraw](https://tldraw.dev) canvas of **cards** you arrange spatially — a card's horizontal position is its place in the narrative (left = earlier, right = later). Everything autosaves locally, per project, and survives reload.
 
-**Two kinds of card — one hard rule.**
+**Kinds of card — one hard rule.** Everything on the canvas is a card, but only one kind holds your writing, and **only you** may write it.
 - **Prose cards** — your finished, your-own-voice writing (a point, sentence, or paragraph). **Only you** write these; Claude can never write or edit prose. Shown in your ink.
 - **Note cards** — raw material and reference notes (a *source* card's text). These can be **yours** (type them, or import) **or made by Claude** (it transcribes a photo of your handwriting into a note card — still *your* words, digitized). Shown muted with a small **Note** badge.
+- **Figure cards** — a placeholder for a planned *visual* — an illustration, diagram, or interactive animation — sitting at its narrative position among the prose. Each carries a working **title**, a description of what the visual needs to show, and a **status chip** you click to cycle `idea → sketched → final`, rendered inside a dashed sketch-frame that reads as "a visual goes here." You add them from the toolbar, or Claude proposes them; a figure is a *plan*, never your prose, so Claude may write and edit its title/description.
+- **Question cards** — an editor's sticky note. Claude drops a short, pointed **question** beside the cluster it's about; you answer by writing your *own* cards next to it, then **dismiss** it. Always agent-authored, never draft prose — so they stay on the safe side of the rule. A dismissed question is hidden but kept in-file (recoverable, and so Claude won't re-ask).
 
-**Anything Claude writes is orange.** Claude's own wording renders in a warm orange accent so you can always tell it from yours — this covers **comments**, **section headers** it writes or renames, and **summaries**. Your prose, and any notes/sections you wrote, stay in your ink.
+**Anything Claude writes is orange.** Claude's own wording renders in a warm orange accent so you can always tell it from yours — this covers **comments**, **section headers** it writes or renames, **figures** it proposes, **questions** it asks, and **summaries**. Your prose, and any notes/sections you wrote, stay in your ink.
 
 **Agent presence — see where Claude is working.** As Claude works the canvas through the MCP, the cards it touches glow a soft orange so you always know where its attention is. **Looking** (when it reads specific cards) is a calm, steady halo that lingers while it's active and fades once it goes idle; **doing** (a comment, merge, move, or a freshly-created card) is a brighter pulse that fades over ~10 seconds, drawing your eye to what just changed. Reading the whole-board map shows nothing (it's a scan, not a focus), and the glow is purely ephemeral — never saved, never in undo.
 
 **Section headers.** Big thematic labels that float above a cluster of cards so the shape of the piece reads at a glance when you zoom out. You or Claude can write and rename them (Claude's show orange).
 
-**Comments.** Claude flags weak spots in your prose — `needs-evidence`, `weak-argument`, `needs-citation`, or a freeform note — each individually resolvable. Always Claude-authored; it comments on your prose, never rewrites it.
+**Comments.** Claude flags weak spots in your prose — `needs-evidence`, `weak-argument`, `needs-citation`, `wants-figure`, or a freeform note — each individually resolvable. Always Claude-authored; it comments on your prose, never rewrites it.
 
-**Merge duplicates.** Near-identical note/source cards collapse under one representative (the rest hidden but recoverable) with an "N merged" badge.
+**Merge duplicates.** Near-identical note cards collapse under one representative (the rest hidden but recoverable) with an "N merged" badge.
 
 **Grouping.** Bind cards that belong together so they **travel as one** when you rearrange the piece — a note and the reference cards that annotate it, or a tight narrative cluster. Uses tldraw's native grouping (select cards → `Cmd+G` / right-click **Group**; `Cmd+Shift+G` to ungroup). Claude can group and ungroup cards too, and `read_map` shows a `groups` list (with each group's members and bounds) plus a `groupId` on every grouped card, so it can see what's bound before it moves anything.
 
@@ -28,9 +30,11 @@ A local-first, canvas-based writing studio for taking a piece from scattered not
 
 **Summaries & the zoom-out map.** Every note and prose card gets a one-line **summary** generated **locally by [Ollama](https://ollama.com)**. Zoom out past ~70% and each card shows its summary instead of its full text (orange, one uniform readable size, cards grow to fit so nothing is cut off) — so a big piece reads at a glance. No Ollama? Summaries just stay empty and nothing breaks.
 
+**Linear draft — read the canvas as a piece.** A **Canvas · Split · Draft** toggle (top-left, or cycle with `⌘/Ctrl + \`) slides in a reading pane that compiles your prose cards into one continuous draft, in true narrative order: **sections** run left → right as the order of the piece, and **within a section** cards run top → bottom. Click any paragraph to jump to its card on the canvas; **Copy as Markdown** exports the whole thing with `##` headings. Only prose compiles (notes, figures, and questions stay off the page), and you can opt any card out of the draft so an aside doesn't read as part of the piece. It's read-only — the canvas stays the one place prose is written — and Claude reads the very same compile through `read_draft`.
+
 **Projects.** Keep several pieces at once, each a self-contained, portable folder; create / switch / rename from the toolbar.
 
-**Claude via MCP.** With the app running, Claude works the canvas through a scoped [MCP](https://modelcontextprotocol.io) server: `list_projects`, `read_map` (a cheap, token-light map with a one-line gist per card, plus the section and group lists) / `read_cards` (full text on demand), `add_comment`, `merge_sources`, `move_cards`, `create_source_card` (transcribe), `create_reference`, the section tools, and `group_cards` / `ungroup_cards`. Every tool targets a specific project, and **none can write your prose**.
+**Claude via MCP.** With the app running, Claude works the canvas through a scoped [MCP](https://modelcontextprotocol.io) server. It **reads** with `list_projects`, `read_map` (a cheap, token-light map with a one-line gist per card, plus the section and group lists), `read_cards` (full text on demand), and `read_draft` (the piece as one linear draft). It **organizes and critiques** with `add_comment`, `merge_notes`, `move_cards`, `create_note_card` (transcribe), `create_reference`, `create_figure_card`, `create_question`, `create_section` / `edit_section_text` / `move_sections`, and `group_cards` / `ungroup_cards`. It can `edit_card` (a note's body, a reference's annotation, or a figure's title/description) and `delete_card` — but only for working-material cards it authored. Every tool targets a specific project, and **none can write your prose**. Cards Claude adds are born a little wider (500px) since it drops in a finished thought rather than a box you grow as you type.
 
 ## Requirements
 
@@ -74,11 +78,13 @@ npm run dev       # web app on :5173
 
 ## Using it
 
-- **+ Prose** / **+ Source** in the toolbar add a card at the centre of the view.
-- **+ Image** (or drag an image file onto the canvas) adds an image source card.
+- **+ Prose** / **+ Notes** in the toolbar add a card at the centre of the view.
+- **+ Image** (or drag an image file onto the canvas) adds an image note card.
 - **+ Link** (or paste/drop a url) unfurls it into a rich, clickable reference card.
+- **+ Figure** adds a figure card — a placeholder for a planned visual; click its **status chip** to cycle `idea → sketched → final`.
 - **Drag** cards to arrange them; use the canvas to group and lay out your argument spatially. Drag a card's corner to **resize** it.
 - **Double-click** a card to edit its text; click empty canvas to commit.
+- The **view toggle** (top-left) switches between **Canvas · Split · Draft**, or cycle with `⌘/Ctrl + \`.
 - The **project switcher** (top-right) creates / switches / renames projects.
 - Edits save automatically (debounced) to the current project's `canvas.json`.
 
@@ -87,15 +93,17 @@ npm run dev       # web app on :5173
 With the app running (`npm run dev:all`), Claude reaches the canvas through a scoped
 MCP server. In Claude Code, opening this project offers the `elves` MCP server
 (see `.mcp.json`); approve it. Then ask Claude things like *"read my canvas and flag
-weak spots"*, *"dedupe my source cards"*, *"transcribe this handwritten note"*, or
-*"reorder these points for flow"*. Claude's changes appear live and are undoable.
+weak spots"*, *"dedupe my note cards"*, *"transcribe this handwritten note"*,
+*"reorder these points for flow"*, *"read my draft top-to-bottom and tell me where it
+sags"*, *"suggest where a diagram would help"*, or *"ask me questions about the gaps"*.
+Claude's changes appear live and are undoable.
 
 Every canvas tool takes a **required `project` id**: Claude calls `list_projects` to
 discover them and confirms which one you mean before acting — it never guesses, and the
 server rejects an operation that targets a card outside the named project. There is
 deliberately no tool to write or edit your **prose**: Claude comments, dedupes, reorders,
-transcribes into *source* cards, and creates *reference* cards, but never writes your
-prose. See `skill/elves-canvas.md`.
+transcribes into *note* cards, creates *reference* and *figure* cards, and asks *questions*
+— but never writes your prose. See `skill/elves-canvas.md`.
 
 ## Configuration
 
@@ -159,26 +167,38 @@ The e2e suite runs its own server against a throwaway `.e2e/data` root, so it wo
 
 ```
 src/
-  App.tsx                 # tldraw canvas + projects + persistence + realtime + image upload
+  App.tsx                 # tldraw canvas + projects + persistence + realtime + image upload + view toggle
   main.tsx                # React entry
+  meta.ts                 # shared build/version metadata
   theme.css               # --elves-card-font and layout
   components/ProjectSwitcher.tsx # top-right project menu (list / switch / new / rename)
-  model/                  # pure data model: cards, comments, change-set ops
+  components/ViewToggle.tsx      # Canvas · Split · Draft switch (⌘/Ctrl + \)
+  components/DraftPane.tsx       # the linear draft: canvas compiled into a piece, read-only
+  model/                  # pure data model: cards, comments, sections, change-set ops
+  model/draft.ts          # compile the canvas into narrative reading order (shared by pane + server + MCP)
+  model/figures.ts        # figure-card status cycle (idea → sketched → final)
+  model/questions.ts      # question-card model (agent-authored, dismissable)
+  model/references.ts     # pure reference display helpers + guessRefType (type-adaptive faces)
+  model/presence.ts       # agent presence (where Claude is looking / working)
   apply/applyChangeSet.ts # applies a change-set as one undoable tldraw step
   client/persistence.ts   # projects API + load/save a project's canvas
   client/realtime.ts      # websocket client receiving {projectId, change-set}
   client/assets.ts        # upload images, build asset URLs (per project)
   client/references.ts    # unfurl a url into a Reference (paste / + Link)
-  model/references.ts     # pure reference display helpers + guessRefType (type-adaptive faces)
-  shapes/                 # custom tldraw "card" shape (text, image, reference, comments) + CSS
+  client/presence.ts      # receive + fade agent presence pulses
+  shapes/                 # custom tldraw shapes: "card" (text/image/reference/figure), "section", "question"
   shapes/ReferenceCardFace.tsx # the type-adaptive reference face + hover metadata
+  shapes/agents.tsx       # agent registry → accent + logomark (Claude's orange)
 server/
   store.ts                # atomic read/write of a canvas.json
+  digest.ts               # the token-light card map + per-card digests (read_map / read_cards)
   projects.ts             # project registry: create / list / rename, slug + path guards
   migrate.ts              # one-time legacy canvas -> projects/my-first-essay
+  migrateNotes.ts         # one-time "source" -> "note" card migration
   assets.ts               # image files on disk (path-traversal-safe)
   unfurl.ts               # fetch a url -> structured Reference (OG / oEmbed / citation_*)
-  app.ts                  # Express: /projects[/:id/{canvas,cards,changeset,assets,unfurl}]
+  summarize/              # local Ollama summaries (one-line gists, backfilled on startup)
+  app.ts                  # Express: /projects[/:id/{canvas,cards,draft,changeset,assets,unfurl}]
   realtime.ts             # websocket broadcast of change-sets (tagged by project)
   index.ts                # server entrypoint (http + ws + express)
 mcp/                      # scoped MCP server — Claude's tools (project-targeted)
