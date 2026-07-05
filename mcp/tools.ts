@@ -162,18 +162,19 @@ export function createFigureCardTool(
 }
 
 /**
- * Revise an existing FIGURE card's working title and/or description — Claude's
- * plan for the visual, never the user's prose (the server refuses anything but a
- * figure card). Pass only the fields you want to change. Same safe side of the
- * boundary as create_figure_card.
+ * Edit the text of an existing WORKING-MATERIAL card — a note's body, a
+ * reference's annotation, or a figure's description (via `text`), plus a figure's
+ * working `title`. A prose card holds the user's own draft and the server refuses
+ * to edit it (claudeMayEditCardText). `title` applies to figure cards only. Pass
+ * only the field(s) you want to change.
  */
-export function editFigureCardTool(
+export function editCardTool(
   baseUrl: string,
   projectId: string,
-  args: { cardId: string; title?: string; description?: string },
+  args: { cardId: string; text?: string; title?: string },
 ): Promise<void> {
   return postChangeSet(baseUrl, projectId, makeChangeSet([
-    { kind: 'edit_figure_card', cardId: args.cardId, title: args.title, description: args.description },
+    { kind: 'edit_card', cardId: args.cardId, text: args.text, title: args.title },
   ]))
 }
 

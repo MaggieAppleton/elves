@@ -20,7 +20,7 @@ test('the MCP server exposes the scoped tools plus list_projects, and no text-ed
     'create_reference',
     'create_section',
     'delete_card',
-    'edit_figure_card',
+    'edit_card',
     'edit_section_text',
     'group_cards',
     'list_projects',

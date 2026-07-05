@@ -90,19 +90,16 @@ export function isFigureCard(p: { kind: CardKind }): boolean {
 }
 
 /**
- * Elves' core rule, as testable code. Claude never edits the text of a card that
- * holds the USER's words — a note or a prose card. (Claude *creating* new note
- * cards is a separate, dedicated capability; it is not text-editing.) The server
- * tool API MUST consult this before applying any text mutation attributed to
- * Claude.
- *
- * A FIGURE card is the one exception, and it's the same distinction the rest of
- * the model already draws: a figure's title/description is Claude's PLAN for a
- * visual, not the user's prose (see makeFigureCardProps and changeSetWritesText's
- * create_figure_card note — that's why Claude may *write* one in the first place).
- * So Claude may also revise a figure it planned. The boundary protects prose and
- * reference material, never plans.
+ * Elves' core rule, as testable code. The one card the user's OWN DRAFT lives in
+ * — a prose card — is Claude's to organize, comment on, and question, but never
+ * to write or edit. Everything else on the canvas is working material Claude
+ * helps maintain: a note's body, a reference's annotation, a figure's
+ * title/description. Claude may edit those (and the model already lets it *create*
+ * them — see makeNoteCardProps / makeReferenceCardProps / makeFigureCardProps).
+ * So the boundary is exactly one kind: prose is protected, the rest are editable.
+ * The server tool API MUST consult this before applying any text edit attributed
+ * to Claude (see edit_card in applyChangeSet).
  */
 export function claudeMayEditCardText(kind: CardKind): boolean {
-  return kind === 'figure'
+  return kind !== 'prose'
 }

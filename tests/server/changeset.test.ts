@@ -231,9 +231,9 @@ test('applyChangeSetToSnapshot persists a figure card with title, description-as
   expect(created.props.authoredBy).toBe('openai')
 })
 
-// A canvas holding a Claude-authored figure card and a user-authored prose card,
-// so the edit/delete guards can be exercised against both sides of the boundary.
-function figureAndProseSnapshot() {
+// A canvas holding a Claude-authored figure and note, plus a user-authored prose
+// card, so the edit/delete guards can be exercised across the boundary.
+function mixedCardsSnapshot() {
   return {
     document: {
       store: {
@@ -242,8 +242,12 @@ function figureAndProseSnapshot() {
           id: 'shape:fig', typeName: 'shape', type: 'card', x: 0, y: 0,
           props: { w: 500, h: 148, kind: 'figure', noteKind: null, origin: null, text: 'old description', figureTitle: 'Old title', figureStatus: 'idea', authoredBy: 'claude', comments: [], mergedInto: null },
         },
+        'shape:note': {
+          id: 'shape:note', typeName: 'shape', type: 'card', x: 0, y: 200,
+          props: { w: 500, h: 120, kind: 'note', noteKind: 'text', origin: 'transcribed', text: 'old note body', figureTitle: '', figureStatus: null, authoredBy: 'claude', comments: [], mergedInto: null },
+        },
         'shape:prose': {
-          id: 'shape:prose', typeName: 'shape', type: 'card', x: 0, y: 300,
+          id: 'shape:prose', typeName: 'shape', type: 'card', x: 0, y: 400,
           props: { w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text: 'my own words', figureTitle: '', figureStatus: null, authoredBy: null, comments: [], mergedInto: null },
         },
       },
@@ -252,35 +256,48 @@ function figureAndProseSnapshot() {
   } as any
 }
 
-test('edit_figure_card revises a figure card title and description in place', () => {
-  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'edit_figure_card' as const, cardId: 'shape:fig', title: 'New title', description: 'tighter description' }] }
-  const next = applyChangeSetToSnapshot(figureAndProseSnapshot(), cs) as any
+test('edit_card revises a figure card title and description in place', () => {
+  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'edit_card' as const, cardId: 'shape:fig', title: 'New title', text: 'tighter description' }] }
+  const next = applyChangeSetToSnapshot(mixedCardsSnapshot(), cs) as any
   expect(next.document.store['shape:fig'].props.figureTitle).toBe('New title')
   expect(next.document.store['shape:fig'].props.text).toBe('tighter description')
 })
 
-test('edit_figure_card updates only the field provided, leaving the other untouched', () => {
-  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'edit_figure_card' as const, cardId: 'shape:fig', description: 'only the description changed' }] }
-  const next = applyChangeSetToSnapshot(figureAndProseSnapshot(), cs) as any
+test('edit_card updates only the field provided, leaving the other untouched', () => {
+  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'edit_card' as const, cardId: 'shape:fig', text: 'only the description changed' }] }
+  const next = applyChangeSetToSnapshot(mixedCardsSnapshot(), cs) as any
   expect(next.document.store['shape:fig'].props.figureTitle).toBe('Old title')
   expect(next.document.store['shape:fig'].props.text).toBe('only the description changed')
 })
 
-test('edit_figure_card REFUSES to touch a prose card — the user\'s text is protected', () => {
-  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'edit_figure_card' as const, cardId: 'shape:prose', description: 'agent trying to rewrite prose' }] }
-  const next = applyChangeSetToSnapshot(figureAndProseSnapshot(), cs) as any
+test('edit_card edits a note card\'s body — notes are working material', () => {
+  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'edit_card' as const, cardId: 'shape:note', text: 'cleaned-up note body' }] }
+  const next = applyChangeSetToSnapshot(mixedCardsSnapshot(), cs) as any
+  expect(next.document.store['shape:note'].props.text).toBe('cleaned-up note body')
+})
+
+test('edit_card ignores title on a non-figure card (title is figure-only)', () => {
+  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'edit_card' as const, cardId: 'shape:note', text: 'body', title: 'should not stick' }] }
+  const next = applyChangeSetToSnapshot(mixedCardsSnapshot(), cs) as any
+  expect(next.document.store['shape:note'].props.text).toBe('body')
+  expect(next.document.store['shape:note'].props.figureTitle).toBe('')
+})
+
+test('edit_card REFUSES to touch a prose card — the user\'s draft is protected', () => {
+  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'edit_card' as const, cardId: 'shape:prose', text: 'agent trying to rewrite prose' }] }
+  const next = applyChangeSetToSnapshot(mixedCardsSnapshot(), cs) as any
   expect(next.document.store['shape:prose'].props.text).toBe('my own words')
 })
 
 test('delete_card removes a Claude-authored card', () => {
   const cs = { id: 'x', author: 'claude', ops: [{ kind: 'delete_card' as const, cardId: 'shape:fig' }] }
-  const next = applyChangeSetToSnapshot(figureAndProseSnapshot(), cs) as any
+  const next = applyChangeSetToSnapshot(mixedCardsSnapshot(), cs) as any
   expect(next.document.store['shape:fig']).toBeUndefined()
 })
 
 test('delete_card PROTECTS a user-authored card — it stays on the canvas', () => {
   const cs = { id: 'x', author: 'claude', ops: [{ kind: 'delete_card' as const, cardId: 'shape:prose' }] }
-  const next = applyChangeSetToSnapshot(figureAndProseSnapshot(), cs) as any
+  const next = applyChangeSetToSnapshot(mixedCardsSnapshot(), cs) as any
   expect(next.document.store['shape:prose']).toBeDefined()
 })
 
@@ -299,7 +316,7 @@ test('a create_figure_card change-set persists a figure and the map shows its ti
   expect(figure).toMatchObject({ kind: 'figure', gist: 'Timeline', figureStatus: 'idea' })
 })
 
-test('edit_figure_card then delete_card round-trip through the HTTP pipeline (guard + cross-check pass)', async () => {
+test('edit_card then delete_card round-trip through the HTTP pipeline (guard + cross-check pass)', async () => {
   const d = await rootWithProject()
   const app = createServer(d)
   await request(app).post('/projects/essay/canvas').send(cardSnapshot('shape:a'))
@@ -310,9 +327,9 @@ test('edit_figure_card then delete_card round-trip through the HTTP pipeline (gu
   })
   const figId = (await request(app).get('/projects/essay/map')).body.cards.find((c: any) => c.kind === 'figure').id
 
-  // Edit is not blocked by the "may not write card text" guard (returns 200, not 403).
+  // Edit is not blocked by the prose guard (returns 200, not 403).
   const edited = await request(app).post('/projects/essay/changeset').send({
-    id: 'y', author: 'claude', ops: [{ kind: 'edit_figure_card', cardId: figId, title: 'Tightened title' }],
+    id: 'y', author: 'claude', ops: [{ kind: 'edit_card', cardId: figId, title: 'Tightened title' }],
   })
   expect(edited.status).toBe(200)
   expect((await request(app).get('/projects/essay/map')).body.cards.find((c: any) => c.id === figId).gist).toBe('Tightened title')

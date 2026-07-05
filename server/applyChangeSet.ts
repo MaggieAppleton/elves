@@ -204,13 +204,15 @@ export function applyChangeSetToSnapshot(
         }
         break
       }
-      case 'edit_figure_card': {
+      case 'edit_card': {
         const shape = findCardShape(store, op.cardId)
-        // Only a figure card's plan is Claude's to revise; a note or prose card
-        // holds the user's words and is never editable (claudeMayEditCardText).
+        // Working material (note / reference / figure) is Claude's to edit; a prose
+        // card holds the user's own draft and is never editable (claudeMayEditCardText).
         if (!shape || !claudeMayEditCardText(shape.props.kind)) break
-        if (op.title !== undefined) shape.props.figureTitle = op.title
-        if (op.description !== undefined) shape.props.text = op.description
+        // `text` is the card's body (note body, reference annotation, figure
+        // description); `title` is a figure's working title and applies to figures only.
+        if (op.text !== undefined) shape.props.text = op.text
+        if (op.title !== undefined && shape.props.kind === 'figure') shape.props.figureTitle = op.title
         break
       }
       case 'delete_card': {

@@ -106,15 +106,15 @@ describe('card factories', () => {
   })
 })
 
-describe('core invariant: Claude never authors the user\'s card text', () => {
-  test('Claude may not edit the text of a note or prose card — the user\'s words', () => {
+describe('core invariant: Claude never edits the user\'s prose', () => {
+  test('a prose card holds the user\'s own draft — never Claude\'s to edit', () => {
     expect(claudeMayEditCardText('prose')).toBe(false)
-    expect(claudeMayEditCardText('note')).toBe(false)
   })
 
-  test('a figure card is the exception: its title/description is Claude\'s plan to refine', () => {
-    // A figure holds no user prose — it's a plan for a visual (see changeSetWritesText),
-    // so Claude may revise a figure it planned. Prose and notes stay protected above.
+  test('notes and figures are working material Claude may edit', () => {
+    // Notes, references (a note kind), and figures are scaffolding Claude helps
+    // maintain — only the prose draft above is off limits.
+    expect(claudeMayEditCardText('note')).toBe(true)
     expect(claudeMayEditCardText('figure')).toBe(true)
   })
 })
