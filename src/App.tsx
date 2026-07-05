@@ -28,7 +28,8 @@ import { connectRealtime } from './client/realtime'
 import { markDoing, markLooking, clearPresence } from './client/presence'
 import { ProjectSwitcher } from './components/ProjectSwitcher'
 import { DraftPane } from './components/DraftPane'
-import { ViewToggle, type ViewState, VIEW_ORDER } from './components/ViewToggle'
+import { DraftDrawerControls } from './components/DraftDrawerControls'
+import { type ViewState, moreDraft, lessDraft } from './client/viewMachine'
 
 const shapeUtils = [CardShapeUtil, SectionShapeUtil, QuestionShapeUtil]
 
@@ -187,19 +188,24 @@ export default function App() {
     if (projectIdRef.current) localStorage.setItem(viewKey(projectIdRef.current), next)
   }
 
+  // The drawer moves one step at a time: « widens toward draft, » narrows
+  // toward canvas. Both clamp at the ends of the sequence.
+  const expandDraft = () => changeView(moreDraft(view))
+  const collapseDraft = () => changeView(lessDraft(view))
+
   // Persist the split ratio as it changes (also harmlessly re-writes the restored
   // value on open — same key, same number).
   useEffect(() => {
     if (currentProjectId) localStorage.setItem(splitKey(currentProjectId), String(split))
   }, [split, currentProjectId])
 
-  // Keyboard shortcut: ⌘/Ctrl + \ cycles canvas → split → draft → canvas. A
-  // modifier is required so it never fights typing in a card.
+  // Keyboard: ⌘/Ctrl + \ widens the drawer (more draft); add Shift to narrow it
+  // (less draft). A modifier is required so it never fights typing in a card.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key === '\\') {
         e.preventDefault()
-        changeView(VIEW_ORDER[(VIEW_ORDER.indexOf(view) + 1) % VIEW_ORDER.length])
+        changeView(e.shiftKey ? lessDraft(view) : moreDraft(view))
       }
     }
     window.addEventListener('keydown', onKey)
@@ -496,7 +502,6 @@ export default function App() {
 
   return (
     <div id="app-root" className={showTools ? undefined : 'elves-hide-tools'}>
-      <ViewToggle view={view} onChange={changeView} />
       {/* Canvas-editing chrome is only meaningful when the canvas is visible. */}
       {view !== 'draft' && (
         <button
@@ -547,7 +552,7 @@ export default function App() {
           />
         </div>
       )}
-      <div className="elves-stage" ref={stageRef} data-dragging={dragging}>
+      <div className="elves-stage" ref={stageRef} data-dragging={dragging} data-view={view}>
         <div className="elves-canvas-pane" style={{ width: canvasWidth }} data-collapsed={view === 'draft'}>
           <Tldraw
             key={currentProjectId ?? 'none'}
@@ -574,6 +579,12 @@ export default function App() {
         >
           <DraftPane editor={editor} onSelectCard={onSelectCard} />
         </div>
+        <DraftDrawerControls
+          view={view}
+          split={split}
+          onExpand={expandDraft}
+          onCollapse={collapseDraft}
+        />
       </div>
     </div>
   )
