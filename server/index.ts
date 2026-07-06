@@ -5,7 +5,7 @@ import { createServer } from './app'
 import { attachRealtime } from './realtime'
 import { migrateLegacyCanvas } from './migrate'
 import { migrateSourceCardsToNotes } from './migrateNotes'
-import { listProjects, canvasPathFor } from './projects'
+import { listProjects, canvasPathFor, resyncProjectIds } from './projects'
 import { OllamaSummarizer, reconcileCanvasFile, type Summarizer } from './summarize'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -18,6 +18,9 @@ async function main() {
   // Then rename any stored 'source' cards to 'note' so the server reads the same
   // shape the client writes (see migrateSourceCardsToNotes for why this is needed).
   await migrateSourceCardsToNotes(dataRoot)
+  // Bring any project whose id drifted from its display name back in sync (folder
+  // renamed to match slugify(name)). Idempotent; a no-op once everything matches.
+  await resyncProjectIds(dataRoot)
 
   const httpServer = http.createServer()
   const { broadcast, broadcastPresence } = attachRealtime(httpServer)

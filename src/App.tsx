@@ -52,6 +52,19 @@ const LAST_PROJECT_KEY = 'elves:lastProject'
 // project, so each piece reopens the way you left it reading it.
 const viewKey = (id: string) => `elves:view:${id}`
 const splitKey = (id: string) => `elves:split:${id}`
+
+// A rename can change a project's id (the server re-slugs the folder to match the
+// new name). Carry the per-project browser state over to the new id so view/split
+// survive the rename instead of resetting.
+function migrateProjectLocalStorage(oldId: string, newId: string) {
+  for (const key of [viewKey, splitKey]) {
+    const v = localStorage.getItem(key(oldId))
+    if (v !== null) {
+      localStorage.setItem(key(newId), v)
+      localStorage.removeItem(key(oldId))
+    }
+  }
+}
 const DEFAULT_SPLIT = 0.6 // canvas gets 60% in split by default
 const MIN_SPLIT = 0.18
 const MAX_SPLIT = 0.82
@@ -468,8 +481,28 @@ export default function App() {
     const name = window.prompt('Rename project', cur?.name ?? '')?.trim()
     if (!name) return
     try {
-      await renameProject(currentProjectId, name)
+      const oldId = currentProjectId
+      const updated = await renameProject(oldId, name)
       setProjects(await listProjects())
+      // The server re-slugs the folder to match the new name, so the id may have
+      // changed. Re-point the app at it: carry the browser state over, flush the
+      // live store to the new location (covering edits still inside the save
+      // debounce — the server already moved canvas.json there), and open the new
+      // id, which remounts the canvas and re-targets realtime via projectIdRef.
+      if (updated.id !== oldId) {
+        migrateProjectLocalStorage(oldId, updated.id)
+        const ed = editorRef.current
+        if (ed && canvasLoadedRef.current) {
+          try {
+            await saveCanvas(updated.id, getSnapshot(ed.store))
+          } catch (err) {
+            console.error('Elves: canvas save after rename failed', err)
+          }
+        }
+        canvasLoadedRef.current = false
+        localStorage.setItem(LAST_PROJECT_KEY, updated.id)
+        setCurrentProjectId(updated.id)
+      }
     } catch (err) {
       console.error('Elves: failed to rename project', err)
     }
