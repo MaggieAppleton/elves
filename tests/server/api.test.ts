@@ -144,6 +144,45 @@ test('POST canvas rejects a non-object body', async () => {
   expect((await request(app).post('/projects/essay/canvas').send([1, 2, 3])).status).toBe(400)
 })
 
+test('POST canvas refuses to blank a non-empty canvas (409), leaving it intact', async () => {
+  const app = await appWithTmp()
+  await request(app).post('/projects').send({ name: 'Essay' })
+  const snap = { document: { schema: 1, records: [] }, session: null }
+  await request(app).post('/projects/essay/canvas').send(snap)
+  // An empty save over a real document is refused...
+  const res = await request(app).post('/projects/essay/canvas').send({ document: null, session: null })
+  expect(res.status).toBe(409)
+  // ...and the real canvas is untouched.
+  expect((await request(app).get('/projects/essay/canvas')).body).toEqual(snap)
+})
+
+test('POST canvas allows an empty save when the canvas is still empty', async () => {
+  const app = await appWithTmp()
+  await request(app).post('/projects').send({ name: 'Essay' })
+  // Nothing saved yet → an empty snapshot is harmless and accepted.
+  const res = await request(app).post('/projects/essay/canvas').send({ document: null, session: null })
+  expect(res.status).toBe(200)
+  expect(res.body).toEqual({ ok: true })
+})
+
+test('DELETE canvas clears an existing canvas back to empty', async () => {
+  const app = await appWithTmp()
+  await request(app).post('/projects').send({ name: 'Essay' })
+  const snap = { document: { schema: 1, records: [] }, session: null }
+  await request(app).post('/projects/essay/canvas').send(snap)
+  const del = await request(app).delete('/projects/essay/canvas')
+  expect(del.status).toBe(200)
+  expect(del.body).toEqual({ ok: true })
+  // Cleared → reads back as empty; a fresh save is then accepted again.
+  expect((await request(app).get('/projects/essay/canvas')).body).toEqual({ document: null, session: null })
+  expect((await request(app).post('/projects/essay/canvas').send(snap)).status).toBe(200)
+})
+
+test('DELETE canvas on an unknown project → 404', async () => {
+  const app = await appWithTmp()
+  expect((await request(app).delete('/projects/ghost/canvas')).status).toBe(404)
+})
+
 test('unfurl requires a valid http(s) url', async () => {
   const app = await appWithTmp()
   await request(app).post('/projects').send({ name: 'Essay' })
