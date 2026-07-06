@@ -523,35 +523,37 @@ export default function App() {
           </svg>
         </button>
       )}
-      <ProjectSwitcher
-        projects={projects}
-        currentId={currentProjectId}
-        onSwitch={switchProject}
-        onCreate={createFlow}
-        onRename={renameFlow}
-      />
-      {view !== 'draft' && (
-        <div className="elves-toolbar">
-          <button data-testid="new-prose" onClick={() => addCard('prose')}><PlusIcon />Prose</button>
-          <button data-testid="new-note" onClick={() => addCard('note')}><PlusIcon />Notes</button>
-          <button data-testid="new-image" onClick={() => fileInputRef.current?.click()}><PlusIcon />Image</button>
-          <button data-testid="new-reference" onClick={addReferenceFlow}><PlusIcon />Link</button>
-          <button data-testid="new-figure" onClick={() => addCard('figure')}><PlusIcon />Figure</button>
-          <button data-testid="new-section" onClick={addSection}><PlusIcon />Section</button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            style={{ display: 'none' }}
-            data-testid="image-input"
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              if (file && editor) addImageCard(editor, file)
-              e.target.value = ''
-            }}
-          />
-        </div>
-      )}
+      <div className="elves-topbar">
+        {view !== 'draft' && (
+          <div className="elves-toolbar">
+            <button data-testid="new-prose" onClick={() => addCard('prose')}><PlusIcon />Prose</button>
+            <button data-testid="new-note" onClick={() => addCard('note')}><PlusIcon />Notes</button>
+            <button data-testid="new-image" onClick={() => fileInputRef.current?.click()}><PlusIcon />Image</button>
+            <button data-testid="new-reference" onClick={addReferenceFlow}><PlusIcon />Link</button>
+            <button data-testid="new-figure" onClick={() => addCard('figure')}><PlusIcon />Figure</button>
+            <button data-testid="new-section" onClick={addSection}><PlusIcon />Section</button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              style={{ display: 'none' }}
+              data-testid="image-input"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (file && editor) addImageCard(editor, file)
+                e.target.value = ''
+              }}
+            />
+          </div>
+        )}
+        <ProjectSwitcher
+          projects={projects}
+          currentId={currentProjectId}
+          onSwitch={switchProject}
+          onCreate={createFlow}
+          onRename={renameFlow}
+        />
+      </div>
       <div className="elves-stage" ref={stageRef} data-dragging={dragging} data-view={view}>
         <div className="elves-canvas-pane" style={{ width: canvasWidth }} data-collapsed={view === 'draft'}>
           <Tldraw
