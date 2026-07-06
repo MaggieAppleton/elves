@@ -371,12 +371,16 @@ body {
 
 /* ---- Creation toolbar (top-center) as an elevated action cluster -------- */
 /* Sits just below the centered view toggle. */
-.elves-toolbar {
+.elves-topbar {
   position: fixed;
-  top: 56px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 300;
+  top: 12px;
+  right: 12px;
+  z-index: 400;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.elves-toolbar {
   display: flex;
   gap: 2px;
   padding: 3px;
@@ -425,10 +429,7 @@ body {
 
 /* ---- Project switcher (top-right) -------------------------------------- */
 .elves-switcher {
-  position: fixed;
-  top: 12px;
-  right: 12px;
-  z-index: 400;
+  position: relative;
 }
 .elves-switcher__button {
   display: inline-flex;
