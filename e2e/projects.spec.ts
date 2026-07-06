@@ -37,9 +37,12 @@ test('create, switch between, and rename projects from the toolbar', async ({ pa
   await expect(page.getByTestId('project-switcher')).toContainText(alpha)
   await expect(page.locator('.elves-card--prose').first()).toBeVisible({ timeout: 15000 })
 
-  // Rename Alpha — the switcher label updates.
+  // Rename Alpha — the switcher label updates. The rename also re-slugs the
+  // project's id (the server moves its folder to match the new name), which
+  // remounts the canvas; its card must survive the move intact.
   page.once('dialog', (d) => d.accept(renamed))
   await page.getByTestId('project-switcher').click()
   await page.getByTestId('project-rename').click()
   await expect(page.getByTestId('project-switcher')).toContainText(renamed)
+  await expect(page.locator('.elves-card--prose').first()).toBeVisible({ timeout: 15000 })
 })

@@ -7,6 +7,7 @@ import {
   listProjects,
   getProject,
   renameProject,
+  resyncProjectIds,
   isValidId,
   slugify,
   projectDir,
@@ -67,12 +68,79 @@ test('getProject returns null for unknown id', async () => {
   expect(await getProject(d, 'nope')).toBeNull()
 })
 
-test('rename changes name, keeps id', async () => {
+test('rename re-slugs the id and moves the folder to match the new name', async () => {
   const d = await root()
   await createProject(d, 'Draft', '2026-07-02T10:00:00.000Z')
   const renamed = await renameProject(d, 'draft', 'Final Draft')
-  expect(renamed).toMatchObject({ id: 'draft', name: 'Final Draft' })
-  expect((await getProject(d, 'draft'))?.name).toBe('Final Draft')
+  expect(renamed).toMatchObject({ id: 'final-draft', name: 'Final Draft' })
+  // Old id is gone; new id resolves and carries the content.
+  expect(await getProject(d, 'draft')).toBeNull()
+  expect(await getProject(d, 'final-draft')).toMatchObject({ id: 'final-draft', name: 'Final Draft' })
+  expect((await listProjects(d)).map((p) => p.id)).toEqual(['final-draft'])
+})
+
+test('rename that only changes punctuation/case keeps the id (name-only write)', async () => {
+  const d = await root()
+  await createProject(d, 'Draft', '2026-07-02T10:00:00.000Z')
+  const renamed = await renameProject(d, 'draft', 'Draft!')
+  expect(renamed).toMatchObject({ id: 'draft', name: 'Draft!' })
+  expect((await getProject(d, 'draft'))?.name).toBe('Draft!')
+})
+
+test('rename into a slug taken by another project gets a suffix', async () => {
+  const d = await root()
+  await createProject(d, 'Report', '2026-07-02T10:00:00.000Z') // id: report
+  await createProject(d, 'Scratch', '2026-07-02T11:00:00.000Z') // id: scratch
+  const renamed = await renameProject(d, 'scratch', 'Report')
+  expect(renamed).toMatchObject({ id: 'report-2', name: 'Report' })
+  expect((await listProjects(d)).map((p) => p.id).sort()).toEqual(['report', 'report-2'])
+})
+
+test('rename preserves the project folder contents through the move', async () => {
+  const d = await root()
+  await createProject(d, 'Draft', '2026-07-02T10:00:00.000Z')
+  // Drop a canvas.json in the old folder, then rename and confirm it moved.
+  await fs.writeFile(join(d, 'projects', 'draft', 'canvas.json'), '{"kept":true}', 'utf8')
+  await renameProject(d, 'draft', 'Final')
+  const moved = await fs.readFile(join(d, 'projects', 'final', 'canvas.json'), 'utf8')
+  expect(JSON.parse(moved)).toEqual({ kept: true })
+})
+
+test('resyncProjectIds re-slugs a drifted project and is idempotent', async () => {
+  const d = await root()
+  // Simulate a project created under the old behaviour: folder id no longer
+  // matches the display name.
+  await fs.mkdir(join(d, 'projects', 'my-first-essay'), { recursive: true })
+  await fs.writeFile(
+    join(d, 'projects', 'my-first-essay', 'project.json'),
+    JSON.stringify({ id: 'my-first-essay', name: 'Augment', createdAt: '2026-07-02T10:00:00.000Z' }),
+    'utf8',
+  )
+  await resyncProjectIds(d)
+  expect((await listProjects(d)).map((p) => p.id)).toEqual(['augment'])
+  expect(await getProject(d, 'my-first-essay')).toBeNull()
+  // Idempotent: a second run leaves everything alone.
+  await resyncProjectIds(d)
+  expect((await listProjects(d)).map((p) => p.id)).toEqual(['augment'])
+})
+
+test('resyncProjectIds disambiguates two projects that want the same slug', async () => {
+  const d = await root()
+  // 'keep' already owns the slug 'report'; 'old-x' (also named "Report") must
+  // take report-2, and 'keep' must stay put.
+  for (const [id, name, createdAt] of [
+    ['report', 'Report', '2026-07-02T10:00:00.000Z'],
+    ['old-x', 'Report', '2026-07-02T11:00:00.000Z'],
+  ] as const) {
+    await fs.mkdir(join(d, 'projects', id), { recursive: true })
+    await fs.writeFile(
+      join(d, 'projects', id, 'project.json'),
+      JSON.stringify({ id, name, createdAt }),
+      'utf8',
+    )
+  }
+  await resyncProjectIds(d)
+  expect((await listProjects(d)).map((p) => p.id).sort()).toEqual(['report', 'report-2'])
 })
 
 test('rename of an unknown project throws 404', async () => {

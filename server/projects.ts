@@ -92,8 +92,13 @@ export async function getProject(dataRoot: string, id: string): Promise<Project 
   }
 }
 
-async function uniqueId(dataRoot: string, base: string): Promise<string> {
+// Find a free id for `base`, disambiguating a clash with an existing project by
+// appending -2, -3, … `exclude` drops one id (a project's own current id) from
+// the "taken" set, so re-slugging a project never collides with itself and can
+// reclaim its natural slug.
+async function uniqueId(dataRoot: string, base: string, exclude?: string): Promise<string> {
   const taken = new Set((await listProjects(dataRoot)).map((p) => p.id))
+  if (exclude) taken.delete(exclude)
   if (!taken.has(base)) return base
   for (let n = 2; ; n++) {
     const candidate = `${base}-${n}`
@@ -127,11 +132,50 @@ export async function renameProject(
   if (!trimmed) throw new ProjectError('name required', 400)
   const proj = await getProject(dataRoot, id)
   if (!proj) throw new ProjectError('unknown project', 404)
-  const updated: Project = { ...proj, name: trimmed }
+
+  // Keep the id in sync with the display name. If the new name slugs to a
+  // different id, move the project's folder to it (uniqueId disambiguates a
+  // clash with a *different* project, and excludes this project so it can
+  // reclaim its own natural slug). A name whose slug is unchanged — or only
+  // differs by punctuation/case — is a cheap name-only rewrite.
+  const desired = slugify(trimmed)
+  const newId = desired === id ? id : await uniqueId(dataRoot, desired, id)
+  const updated: Project = { ...proj, id: newId, name: trimmed }
+  if (newId !== id) {
+    await fs.rename(
+      join(projectsRoot(dataRoot), id),
+      join(projectsRoot(dataRoot), newId),
+    )
+  }
   await fs.writeFile(
-    join(projectsRoot(dataRoot), id, 'project.json'),
+    join(projectsRoot(dataRoot), newId, 'project.json'),
     JSON.stringify(updated, null, 2),
     'utf8',
   )
   return updated
+}
+
+// One-time, idempotent reconciliation run at startup: bring every project's id
+// back in line with its display name, the way renameProject now does on each
+// edit. Fixes projects created before ids tracked the name (or renamed under the
+// old behaviour). A second run finds every id already == slugify(name) and does
+// nothing. uniqueId re-reads the folder listing on each call and excludes the
+// project being moved, so a batch stays clash-safe and deterministic.
+export async function resyncProjectIds(dataRoot: string): Promise<void> {
+  for (const proj of await listProjects(dataRoot)) {
+    const desired = slugify(proj.name)
+    if (desired === proj.id) continue
+    const newId = await uniqueId(dataRoot, desired, proj.id)
+    if (newId === proj.id) continue
+    await fs.rename(
+      join(projectsRoot(dataRoot), proj.id),
+      join(projectsRoot(dataRoot), newId),
+    )
+    await fs.writeFile(
+      join(projectsRoot(dataRoot), newId, 'project.json'),
+      JSON.stringify({ ...proj, id: newId }, null, 2),
+      'utf8',
+    )
+    console.log(`[elves] project id resynced: ${proj.id} -> ${newId}`)
+  }
 }

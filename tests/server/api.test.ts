@@ -43,12 +43,16 @@ test('projects start empty, then create + list', async () => {
   expect(list.body[0]).toMatchObject({ id: 'essay', name: 'Essay' })
 })
 
-test('rename updates the display name, keeps the id', async () => {
+test('rename re-slugs the id to match the new name; the old id 404s', async () => {
   const app = await appWithTmp()
   await request(app).post('/projects').send({ name: 'Draft' })
   const r = await request(app).patch('/projects/draft').send({ name: 'Final' })
   expect(r.status).toBe(200)
-  expect(r.body).toMatchObject({ id: 'draft', name: 'Final' })
+  expect(r.body).toMatchObject({ id: 'final', name: 'Final' })
+  // The folder moved: the old id no longer resolves, the new one does.
+  expect((await request(app).get('/projects/draft/canvas')).status).toBe(404)
+  const list = await request(app).get('/projects')
+  expect(list.body.map((p: { id: string }) => p.id)).toEqual(['final'])
 })
 
 test('rename of an unknown project → 404', async () => {
