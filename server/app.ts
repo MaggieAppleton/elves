@@ -1,6 +1,6 @@
 import express, { Request, Response } from 'express'
 import cors from 'cors'
-import { readCanvas, writeCanvas, CanvasSnapshot } from './store'
+import { readCanvas, writeCanvas, clearCanvas, EmptyCanvasOverwriteError, CanvasSnapshot } from './store'
 import {
   isChangeSet,
   ChangeSet,
@@ -228,9 +228,31 @@ export function createServer(
         res.status(400).json({ error: 'canvas must be a JSON object' })
         return
       }
-      await writeCanvas(paths.canvasPath, body as CanvasSnapshot)
+      try {
+        await writeCanvas(paths.canvasPath, body as CanvasSnapshot)
+      } catch (err) {
+        // A save that would blank a canvas holding a real document is refused,
+        // never a silent data loss. To clear a canvas on purpose, use DELETE.
+        if (err instanceof EmptyCanvasOverwriteError) {
+          res.status(409).json({ error: 'refusing to blank a non-empty canvas; use DELETE to clear' })
+          return
+        }
+        throw err
+      }
       // A canvas save is where user text edits land — reconcile summaries after.
       scheduleSummaries(req.params.id)
+      res.json({ ok: true })
+    }),
+  )
+
+  // Explicitly clear a canvas back to empty (distinct from a save, which may
+  // never blank a real document). The current document is preserved as a .bak.
+  app.delete(
+    '/projects/:id/canvas',
+    wrap(async (req, res) => {
+      const paths = await requireProject(req.params.id, res)
+      if (!paths) return
+      await clearCanvas(paths.canvasPath)
       res.json({ ok: true })
     }),
   )
