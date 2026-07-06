@@ -5,6 +5,23 @@ export type CanvasSnapshot = Record<string, unknown>
 
 export const EMPTY_CANVAS: CanvasSnapshot = { document: null, session: null }
 
+/** Does this snapshot carry a real document (vs. the EMPTY_CANVAS sentinel)? */
+export function hasDocument(snap: CanvasSnapshot | null | undefined): boolean {
+  return !!snap && typeof snap === 'object' && (snap as { document?: unknown }).document != null
+}
+
+/**
+ * Thrown when a *save* would blank a canvas that currently holds a real document.
+ * Clearing a canvas is an explicit operation (clearCanvas) — it must never happen
+ * as a side effect of a save (a misconfigured client, a stray test, a load race).
+ */
+export class EmptyCanvasOverwriteError extends Error {
+  constructor() {
+    super('refusing to overwrite a non-empty canvas with an empty one')
+    this.name = 'EmptyCanvasOverwriteError'
+  }
+}
+
 export async function readCanvas(path: string): Promise<CanvasSnapshot> {
   let raw: string
   try {
@@ -47,10 +64,26 @@ export function writeCanvas(path: string, data: CanvasSnapshot): Promise<void> {
 
 async function doWrite(path: string, data: CanvasSnapshot): Promise<void> {
   await fs.mkdir(dirname(path), { recursive: true })
+  // A save must never blank a canvas that holds a real document. An incoming
+  // snapshot with no document (the EMPTY_CANVAS sentinel) may only land on a
+  // canvas that is itself empty or missing — overwriting a real document with
+  // nothing is the data-loss case, so we refuse it. Deliberately clearing a
+  // canvas is a separate, explicit operation (clearCanvas).
+  if (!hasDocument(data)) {
+    let existing: string | null = null
+    try {
+      existing = await fs.readFile(path, 'utf8')
+    } catch {
+      existing = null // no file yet (or unreadable): nothing to protect
+    }
+    if (existing !== null && worthBackingUp(existing)) {
+      throw new EmptyCanvasOverwriteError()
+    }
+  }
   // Preserve the current on-disk document before we overwrite it, so a
-  // bad-but-valid write (an empty store saved during a load race, a buggy
-  // change-set) is recoverable from `<path>.bak` instead of being permanent.
-  // Runs inside the serialized write chain, so no other write interleaves.
+  // bad-but-valid write (a lossy change-set) is recoverable from `<path>.bak`
+  // instead of being permanent. Runs inside the serialized write chain, so no
+  // other write interleaves.
   await backupExisting(path)
   const tmp = `${path}.${process.pid}.${tmpSeq++}.tmp`
   await fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf8')
@@ -93,4 +126,28 @@ async function backupExisting(path: string): Promise<void> {
   } catch {
     // A failed backup must never stop the write that follows it.
   }
+}
+
+/**
+ * Explicitly clear a canvas: preserve the current document as a `.bak`, then
+ * remove the file so a subsequent read returns EMPTY_CANVAS. This is the
+ * intentional counterpart to writeCanvas's guard — a *save* may never blank a
+ * real document, but a deliberate clear may. Serialized on the same write chain
+ * so it can never interleave with a write.
+ */
+export function clearCanvas(path: string): Promise<void> {
+  const run = writeChain.then(
+    () => doClear(path),
+    () => doClear(path),
+  )
+  writeChain = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  return run
+}
+
+async function doClear(path: string): Promise<void> {
+  await backupExisting(path)
+  await fs.rm(path, { force: true }) // force: a missing canvas is a no-op
 }

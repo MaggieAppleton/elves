@@ -2,7 +2,15 @@ import { afterEach, expect, test } from 'vitest'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { EMPTY_CANVAS, readCanvas, writeCanvas, worthBackingUp } from '../../server/store'
+import {
+  EMPTY_CANVAS,
+  readCanvas,
+  writeCanvas,
+  worthBackingUp,
+  hasDocument,
+  clearCanvas,
+  EmptyCanvasOverwriteError,
+} from '../../server/store'
 
 let dirs: string[] = []
 async function tmpDir() {
@@ -89,17 +97,56 @@ test('a second write preserves the previous document as a .bak', async () => {
   expect(await readCanvas(`${path}.bak`)).toEqual(DOC1)
 })
 
-test('a degenerate write cannot clobber a good backup with junk', async () => {
+test('a save cannot blank a canvas that holds a real document', async () => {
   const d = await tmpDir()
   const path = join(d, 'canvas.json')
   await writeCanvas(path, DOC1)
   await writeCanvas(path, DOC2) // .bak = DOC1
-  // A clobber (an empty store saved during a load race) lands on the main file...
-  await writeCanvas(path, EMPTY_CANVAS) // .bak becomes DOC2 — still recoverable
-  expect(await readCanvas(`${path}.bak`)).toEqual(DOC2)
-  // ...and a SECOND degenerate write must NOT push the empty state into .bak.
-  await writeCanvas(path, EMPTY_CANVAS)
-  expect(await readCanvas(`${path}.bak`)).toEqual(DOC2)
+  // An empty save (the EMPTY_CANVAS sentinel) over a real document is refused
+  // outright — a save must never blank a canvas that holds a document.
+  await expect(writeCanvas(path, EMPTY_CANVAS)).rejects.toBeInstanceOf(EmptyCanvasOverwriteError)
+  // Neither the live file nor the rolling backup is touched by the refused write.
+  expect(await readCanvas(path)).toEqual(DOC2)
+  expect(await readCanvas(`${path}.bak`)).toEqual(DOC1)
+})
+
+test('an empty save is allowed when the canvas is empty or missing', async () => {
+  const d = await tmpDir()
+  const path = join(d, 'canvas.json')
+  // Missing file: nothing to lose, so an empty write is fine (a fresh project).
+  await expect(writeCanvas(path, EMPTY_CANVAS)).resolves.toBeUndefined()
+  expect(await readCanvas(path)).toEqual(EMPTY_CANVAS)
+  // Already-empty file: still allowed (the guard only protects real documents).
+  await expect(writeCanvas(path, { document: null, session: 1 })).resolves.toBeUndefined()
+  expect((await readCanvas(path) as { session: unknown }).session).toBe(1)
+})
+
+test('hasDocument distinguishes real documents from the empty sentinel', () => {
+  expect(hasDocument(DOC1)).toBe(true)
+  expect(hasDocument(EMPTY_CANVAS)).toBe(false)
+  expect(hasDocument({ document: null, session: null })).toBe(false)
+  expect(hasDocument(null)).toBe(false)
+  expect(hasDocument(undefined)).toBe(false)
+})
+
+// --- clearCanvas: the explicit, intentional clear (distinct from a save) ------
+
+test('clearCanvas backs up the document, then removes the file', async () => {
+  const d = await tmpDir()
+  const path = join(d, 'canvas.json')
+  await writeCanvas(path, DOC1)
+  await clearCanvas(path)
+  // File gone → reads back as the empty sentinel; the cleared document survives in .bak.
+  expect(await exists(path)).toBe(false)
+  expect(await readCanvas(path)).toEqual(EMPTY_CANVAS)
+  expect(await readCanvas(`${path}.bak`)).toEqual(DOC1)
+})
+
+test('clearCanvas on a missing canvas is a no-op', async () => {
+  const d = await tmpDir()
+  const path = join(d, 'canvas.json')
+  await expect(clearCanvas(path)).resolves.toBeUndefined()
+  expect(await exists(path)).toBe(false)
 })
 
 test('worthBackingUp preserves real documents but rejects degenerate states', () => {
