@@ -1,8 +1,13 @@
 import type { APIRequestContext } from '@playwright/test'
 
-// Defaults to the standard dev server; ELVES_E2E_BASE lets a run target an
-// isolated server on another port (e.g. when the usual 5199 is already in use).
-export const BASE = process.env.ELVES_E2E_BASE ?? 'http://localhost:5199'
+// The API base MUST track the server Playwright actually started. Both this and
+// playwright.config.ts key off ELVES_E2E_SERVER_PORT, so overriding the port
+// moves the base to the same isolated server automatically — they can't diverge.
+// (A run that set the port but not a hardcoded base once pointed resetProject at
+// a real dev server on :5199 and blanked a real project.) ELVES_E2E_BASE still
+// wins if a run needs to target something else explicitly.
+const SERVER_PORT = process.env.ELVES_E2E_SERVER_PORT ?? '5199'
+export const BASE = process.env.ELVES_E2E_BASE ?? `http://localhost:${SERVER_PORT}`
 
 /**
  * Ensure a single writing project exists and hand back its id, with an empty
@@ -19,7 +24,10 @@ export async function resetProject(request: APIRequestContext): Promise<string> 
   } else {
     id = projects[0].id
   }
-  await request.post(`${BASE}/projects/${id}/canvas`, { data: { document: null, session: null } })
+  // Clear via the explicit DELETE endpoint. Posting the empty sentinel would now
+  // be refused (409) by the server's blank-canvas guard — clearing is a distinct,
+  // intentional operation, which is exactly what a between-tests reset wants.
+  await request.delete(`${BASE}/projects/${id}/canvas`)
   return id
 }
 
