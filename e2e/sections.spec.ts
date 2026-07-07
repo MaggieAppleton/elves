@@ -25,6 +25,20 @@ test('create a section header, type into it, and it survives reload', async ({ p
   await expect(page.locator('.elves-section').getByText('Origins')).toBeVisible({ timeout: 15000 })
 })
 
+test('a section left blank is discarded when editing ends', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  await page.getByTestId('new-section').click()
+  const editor = page.locator('.elves-section__editor')
+  // A brand-new header opens in edit mode showing the placeholder prompt.
+  await expect(editor).toHaveAttribute('placeholder', 'Section name')
+
+  // Ending edit on an untouched (blank) header removes it — no empty sliver left.
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.elves-section')).toHaveCount(0)
+})
+
 test('an MCP create_section tool call renders in the Claude accent color', async ({ page, request }) => {
   const projectId = await resetProject(request)
   await page.goto('/')

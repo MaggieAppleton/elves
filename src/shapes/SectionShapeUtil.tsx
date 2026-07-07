@@ -5,7 +5,7 @@ import {
 } from 'tldraw'
 import { useLayoutEffect, type ReactNode } from 'react'
 import type { SectionAuthor } from '../model/sections'
-import { makeSectionProps, SECTION_DEFAULT_W } from '../model/sections'
+import { makeSectionProps, SECTION_DEFAULT_W, SECTION_PLACEHOLDER } from '../model/sections'
 import { measuredSectionSize } from './autosize'
 import './section.css'
 
@@ -81,6 +81,7 @@ export class SectionShapeUtil extends ShapeUtil<SectionShape> {
               className="elves-section__editor"
               autoFocus
               defaultValue={text}
+              placeholder={SECTION_PLACEHOLDER}
               onPointerDown={(e) => e.stopPropagation()}
               onChange={(e) =>
                 this.editor.updateShape<SectionShape>({
@@ -105,6 +106,13 @@ export class SectionShapeUtil extends ShapeUtil<SectionShape> {
 
   override canResize() { return true }
   override canEdit() { return true }
+  // A section that never got a title is noise, not structure — so when editing
+  // ends on a blank label, drop the shape (mirrors tldraw's own TextShapeUtil,
+  // which deletes an empty text shape on edit-end). A section is only kept once
+  // it actually names a cluster of cards.
+  override onEditEnd(shape: SectionShape) {
+    if (shape.props.text.trim() === '') this.editor.deleteShape(shape.id)
+  }
   // See CardShapeUtil's onRotate for why: resolvePageXY (server/digest.ts)
   // assumes no ancestor is rotated, and tldraw has no canRotate() flag. Hiding
   // the handle blocks drag-rotate; vetoing onRotate blocks the rotate-90

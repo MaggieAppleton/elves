@@ -11,7 +11,7 @@ import { nextFigureStatus } from '../model/figures'
 import { cardGist } from '../model/summary'
 import { visibleComments, resolveComment } from '../model/comments'
 import { assetUrl } from '../client/assets'
-import { measuredCardHeight, measuredReferenceHeight, measuredFigureHeight } from './autosize'
+import { measuredCardHeight, measuredReferenceHeight, measuredFigureHeight, PROSE_TEXT_MIN } from './autosize'
 import { shouldShowGist, gistFontSize } from './summaryView'
 import { mergedMembers, isExpanded, toggleExpanded } from './mergeView'
 import { ReferenceCardFace } from './ReferenceCardFace'
@@ -214,7 +214,11 @@ function AutosizeCard({
         ? measuredFigureHeight(editor, cur.props.figureTitle, cur.props.text, cur.props.w)
         : cur.props.noteKind === 'reference' && cur.props.reference
         ? measuredReferenceHeight(editor, cur.props.reference, cur.props.text, cur.props.w)
-        : measuredCardHeight(editor, cur.props.text, cur.props.w, cur.props.kind === 'note')
+        : measuredCardHeight(
+            editor, cur.props.text, cur.props.w,
+            cur.props.kind === 'note' || cur.props.kind === 'prose',
+            cur.props.kind === 'prose' ? PROSE_TEXT_MIN : 0,
+          )
       if (Math.abs(want - cur.props.h) > 1) {
         editor.updateShape<CardShape>({ id: cur.id, type: 'card', props: { h: want } })
       }
@@ -527,11 +531,13 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
               </>
             ) : (
               <>
-                {/* Zoomed out, hide the Note/merged chrome so the gist owns the
-                    whole card and reads at a glance. */}
-                {!showGist && kind === 'note' && (
+                {/* Zoomed out, hide the label/merged chrome so the gist owns the
+                    whole card and reads at a glance. Both note and prose cards
+                    carry a small-caps label; prose is user-only so it never
+                    shows an agent mark. */}
+                {!showGist && (kind === 'note' || kind === 'prose') && (
                   <div className="elves-badge-row">
-                    <span className="elves-badge" data-testid="card-badge">Note</span>
+                    <span className="elves-badge" data-testid="card-badge">{kind === 'prose' ? 'Prose' : 'Note'}</span>
                     {/* Agent authorship: a small logo, tinted the agent's accent,
                         tucked right of the label so it reads "written by <agent>". */}
                     {agent && (
@@ -655,7 +661,11 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
       ? measuredFigureHeight(this.editor, shape.props.figureTitle, shape.props.text, w)
       : shape.props.noteKind === 'reference' && shape.props.reference
       ? measuredReferenceHeight(this.editor, shape.props.reference, shape.props.text, w)
-      : measuredCardHeight(this.editor, shape.props.text, w, shape.props.kind === 'note')
+      : measuredCardHeight(
+          this.editor, shape.props.text, w,
+          shape.props.kind === 'note' || shape.props.kind === 'prose',
+          shape.props.kind === 'prose' ? PROSE_TEXT_MIN : 0,
+        )
     return { ...next, props: { ...next.props, h } }
   }
 }

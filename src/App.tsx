@@ -31,6 +31,7 @@ import { connectRealtime, RealtimeStatus } from './client/realtime'
 import { markDoing, markLooking, clearPresence } from './client/presence'
 import { shapeRecordsById, diffChangedIds } from './client/resync'
 import { ProjectSwitcher } from './components/ProjectSwitcher'
+import { LinkPrompt } from './components/LinkPrompt'
 import { DraftPane } from './components/DraftPane'
 import { DraftDrawerControls } from './components/DraftDrawerControls'
 import { type ViewState, moreDraft, lessDraft } from './client/viewMachine'
@@ -105,6 +106,7 @@ export default function App() {
   const [editor, setEditor] = useState<Editor | null>(null)
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>('connecting')
   const [showTools, setShowTools] = useState(false)
+  const [linkPromptOpen, setLinkPromptOpen] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const editorRef = useRef<Editor | null>(null)
   const projectIdRef = useRef<string | null>(null)
@@ -579,12 +581,20 @@ export default function App() {
     editor.setEditingShape(id)
   }
 
-  const addReferenceFlow = async () => {
+  const addReferenceFlow = () => {
     if (!editor) return
-    const raw = window.prompt('Paste a link to add as a reference')?.trim()
-    if (!raw) return
-    const url = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`
+    setLinkPromptOpen(true)
+  }
+
+  // Resolve a pasted link into a reference card. Bare hostnames get an https://
+  // prefix so "example.com" unfurls as expected. Runs while the modal shows its
+  // "Adding…" state; closes it once the card lands.
+  const submitLink = async (raw: string) => {
+    const trimmed = raw.trim()
+    if (!editor || !trimmed) return
+    const url = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
     await addReferenceFromUrl(editor, url)
+    setLinkPromptOpen(false)
   }
 
   const switchProject = async (id: string) => {
@@ -678,6 +688,11 @@ export default function App() {
 
   return (
     <div id="app-root" className={showTools ? undefined : 'elves-hide-tools'}>
+      <LinkPrompt
+        open={linkPromptOpen}
+        onCancel={() => setLinkPromptOpen(false)}
+        onSubmit={submitLink}
+      />
       {/* Canvas-editing chrome is only meaningful when the canvas is visible. */}
       {view !== 'draft' && (
         <button

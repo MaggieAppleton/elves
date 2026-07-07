@@ -1,6 +1,7 @@
 import type { Editor } from 'tldraw'
 import type { Reference } from '../model/types'
 import { refMeta, refDescription, refTitle, hasLeftMedia } from '../model/references'
+import { SECTION_PLACEHOLDER } from '../model/sections'
 
 /**
  * Text auto-sizing for cards and section headers.
@@ -22,13 +23,14 @@ const FONT_FAMILY = "'Inter Variable', 'Inter', system-ui, -apple-system, sans-s
 // the text; prose cards don't.
 const CARD_PAD_X = 28 // 14 left + 14 right
 const CARD_PAD_Y = 24 // 12 top + 12 bottom
-const CARD_BADGE_ROW = 20 // NOTE badge line + gap (note cards only)
+const CARD_BADGE_ROW = 20 // NOTE/PROSE badge line + gap (labelled cards)
 
 export function measuredCardHeight(
   editor: Editor,
   text: string,
   width: number,
   hasBadge: boolean,
+  minTextH = 0,
 ): number {
   const { h } = editor.textMeasure.measureText(text || ' ', {
     fontFamily: FONT_FAMILY,
@@ -39,8 +41,14 @@ export function measuredCardHeight(
     maxWidth: Math.max(40, width - CARD_PAD_X),
     padding: '0px',
   })
-  return Math.ceil(h + CARD_PAD_Y + (hasBadge ? CARD_BADGE_ROW : 0))
+  // A prose card reserves a comfortable minimum writing area (minTextH) so a
+  // blank or short draft card reads as a place to write, not a thin sliver.
+  return Math.ceil(Math.max(h, minTextH) + CARD_PAD_Y + (hasBadge ? CARD_BADGE_ROW : 0))
 }
+
+// The blank writing area a prose card holds even when empty — roughly three
+// lines, so a fresh draft card lands taller than a note and invites typing.
+export const PROSE_TEXT_MIN = 66
 
 // --- Reference cards -----------------------------------------------------
 // card.css .elves-card--reference: padding 13px; a title (15px/600, 1.3,
@@ -117,6 +125,12 @@ const FIG_PAD_X = 32 // 16 left + 16 right
 const FIG_PAD_Y = 28 // 14 top + 14 bottom
 const FIG_EYEBROW = 20 // image-glyph row + its gap
 const FIG_GAP = 6
+// The description area never measures shorter than the editing textarea's
+// min-height (.elves-figure__desc-input min-height: 3.2em @ 13.5px ≈ 44px).
+// Without this floor a blank figure's box is measured to one line, the taller
+// textarea overflows it, and the clipped content pushes the eyebrow off the
+// top edge. Reserving it also lets an empty frame read as "a visual goes here".
+const FIG_DESC_MIN = 44
 
 export function measuredFigureHeight(
   editor: Editor,
@@ -136,7 +150,7 @@ export function measuredFigureHeight(
     fontFamily: FONT_FAMILY, fontSize: 13.5, lineHeight: 1.45, fontWeight: '400', fontStyle: 'normal',
     maxWidth: textWidth, padding: '0px',
   })
-  h += FIG_GAP + d.h
+  h += FIG_GAP + Math.max(d.h, FIG_DESC_MIN)
   return Math.ceil(h + FIG_PAD_Y)
 }
 
@@ -151,6 +165,9 @@ export function measuredSectionSize(
   currentWidth: number,
   fitWidth: boolean,
 ): { w: number; h: number } {
+  // A blank header is sized to its placeholder prompt, so "Section name" shows
+  // in full while typing the first character rather than clipping to a sliver.
+  const measured = text || SECTION_PLACEHOLDER
   const base = {
     fontFamily: FONT_FAMILY,
     fontSize: 56,
@@ -162,13 +179,13 @@ export function measuredSectionSize(
 
   let width = currentWidth
   if (fitWidth) {
-    const single = editor.textMeasure.measureText(text || ' ', { ...base, maxWidth: null })
+    const single = editor.textMeasure.measureText(measured, { ...base, maxWidth: null })
     width =
       single.w > SECTION_ONE_LINE_MAX
         ? Math.ceil(single.w / 2) + 40 // aim for ~two lines
         : Math.ceil(single.w) + 8
   }
-  const { h } = editor.textMeasure.measureText(text || ' ', { ...base, maxWidth: width })
+  const { h } = editor.textMeasure.measureText(measured, { ...base, maxWidth: width })
   return { w: Math.ceil(width), h: Math.ceil(h) + 8 }
 }
 
