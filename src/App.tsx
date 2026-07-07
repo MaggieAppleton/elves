@@ -30,6 +30,7 @@ import { ProjectSwitcher } from './components/ProjectSwitcher'
 import { DraftPane } from './components/DraftPane'
 import { DraftDrawerControls } from './components/DraftDrawerControls'
 import { type ViewState, moreDraft, lessDraft } from './client/viewMachine'
+import { prefersReducedMotion, isElementWidthTransitionEnd } from './client/motion'
 
 const shapeUtils = [CardShapeUtil, SectionShapeUtil, QuestionShapeUtil]
 
@@ -120,6 +121,7 @@ export default function App() {
   const [split, setSplit] = useState(DEFAULT_SPLIT)
   const [dragging, setDragging] = useState(false)
   const stageRef = useRef<HTMLDivElement>(null)
+  const canvasPaneRef = useRef<HTMLDivElement>(null)
 
   // Keep the refs + the asset base in sync during render so they are correct the
   // instant tldraw's onMount fires and whenever a card image renders.
@@ -259,13 +261,39 @@ export default function App() {
     const bounds = ed.getShapePageBounds(id)
     if (!bounds) return
     ed.select(id)
-    ed.centerOnPoint(bounds.center, { animation: { duration: 300 } })
+    const reduceMotion = prefersReducedMotion()
+    ed.centerOnPoint(bounds.center, reduceMotion ? undefined : { animation: { duration: 300 } })
   }
 
   const onSelectCard = (cardId: string) => {
     if (view === 'draft') {
       changeView('split')
-      setTimeout(() => focusCard(cardId), 340) // after the width transition settles
+      const pane = canvasPaneRef.current
+      // The canvas pane widens on a CSS transition (theme.css .elves-canvas-pane,
+      // 320ms); centering before it finishes measures a stale viewport. Wait for
+      // that exact transition to end rather than guessing its duration. Reduced
+      // motion disables the transition entirely (no transitionend will fire), so
+      // skip straight to focusing in that case. A fallback timeout covers any
+      // other case where transitionend never arrives (unmounted pane, interrupted
+      // transition, etc).
+      if (prefersReducedMotion() || !pane) {
+        focusCard(cardId)
+        return
+      }
+      let done = false
+      const finish = () => {
+        if (done) return
+        done = true
+        pane.removeEventListener('transitionend', onTransitionEnd)
+        clearTimeout(fallback)
+        focusCard(cardId)
+      }
+      const onTransitionEnd = (e: TransitionEvent) => {
+        if (!isElementWidthTransitionEnd(e, pane)) return
+        finish()
+      }
+      pane.addEventListener('transitionend', onTransitionEnd)
+      const fallback = setTimeout(finish, 340)
     } else {
       focusCard(cardId)
     }
@@ -588,7 +616,12 @@ export default function App() {
         />
       </div>
       <div className="elves-stage" ref={stageRef} data-dragging={dragging} data-view={view}>
-        <div className="elves-canvas-pane" style={{ width: canvasWidth }} data-collapsed={view === 'draft'}>
+        <div
+          className="elves-canvas-pane"
+          ref={canvasPaneRef}
+          style={{ width: canvasWidth }}
+          data-collapsed={view === 'draft'}
+        >
           <Tldraw
             key={currentProjectId ?? 'none'}
             shapeUtils={shapeUtils}
