@@ -700,28 +700,6 @@ export default function App() {
         </button>
       )}
       <div className="elves-topbar">
-        {view !== 'draft' && (
-          <div className="elves-toolbar">
-            <button data-testid="new-prose" onClick={() => addCard('prose')}><PlusIcon />Prose</button>
-            <button data-testid="new-note" onClick={() => addCard('note')}><PlusIcon />Notes</button>
-            <button data-testid="new-image" onClick={() => fileInputRef.current?.click()}><PlusIcon />Image</button>
-            <button data-testid="new-reference" onClick={addReferenceFlow}><PlusIcon />Link</button>
-            <button data-testid="new-figure" onClick={() => addCard('figure')}><PlusIcon />Figure</button>
-            <button data-testid="new-section" onClick={addSection}><PlusIcon />Section</button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              style={{ display: 'none' }}
-              data-testid="image-input"
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file && editor) addImageCard(editor, file)
-                e.target.value = ''
-              }}
-            />
-          </div>
-        )}
         {realtimeStatus !== 'connected' && (
           <div
             className="elves-realtime-status"
@@ -757,6 +735,31 @@ export default function App() {
             getShapeVisibility={getShapeVisibility}
             onMount={handleMount}
           />
+          {/* Creation toolbar lives inside the canvas pane so the draft pane
+              (a sibling) paints over it and the pane's overflow clips it — it
+              can never spill in front of the prose. */}
+          {view !== 'draft' && (
+            <div className="elves-toolbar">
+              <button data-testid="new-prose" onClick={() => addCard('prose')}><PlusIcon />Prose</button>
+              <button data-testid="new-note" onClick={() => addCard('note')}><PlusIcon />Notes</button>
+              <button data-testid="new-image" onClick={() => fileInputRef.current?.click()}><PlusIcon />Image</button>
+              <button data-testid="new-reference" onClick={addReferenceFlow}><PlusIcon />Link</button>
+              <button data-testid="new-figure" onClick={() => addCard('figure')}><PlusIcon />Figure</button>
+              <button data-testid="new-section" onClick={addSection}><PlusIcon />Section</button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                data-testid="image-input"
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (file && editor) addImageCard(editor, file)
+                  e.target.value = ''
+                }}
+              />
+            </div>
+          )}
         </div>
         {view === 'split' && (
           <div

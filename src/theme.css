@@ -324,7 +324,7 @@ body {
   right: 0;
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
-  transform: translateY(-50%) translateX(42%);
+  transform: translateY(-50%) translateX(20%);
   transition: transform 160ms ease;
 }
 .elves-drawer-tab:hover,
@@ -380,7 +380,14 @@ body {
   align-items: center;
   gap: 8px;
 }
+/* Absolutely positioned within the canvas pane (top-center). The pane's
+   overflow:hidden clips it, so it never overlaps the draft pane beside it. */
 .elves-toolbar {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 400;
   display: flex;
   gap: 2px;
   padding: 3px;
