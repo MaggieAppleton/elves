@@ -1,6 +1,6 @@
 import express, { Request, Response } from 'express'
 import cors from 'cors'
-import { readCanvas, writeCanvas, clearCanvas, EmptyCanvasOverwriteError, CanvasSnapshot } from './store'
+import { readCanvas, withCanvasLock, clearCanvas, EmptyCanvasOverwriteError, CanvasSnapshot } from './store'
 import {
   isChangeSet,
   ChangeSet,
@@ -97,12 +97,22 @@ export interface SummarizeConfig {
   debounceMs?: number
 }
 
+/**
+ * The Express app plus `runSummaries`, exposed so callers outside a request
+ * (e.g. server/index.ts's startup backfill) can reconcile a project through
+ * the SAME running/dirty single-flight guard as scheduled reconciles — a
+ * project's canvas is never reconciled by two summarizer runs at once.
+ */
+export interface CanvasServer extends express.Express {
+  runSummaries(projectId: string): Promise<void>
+}
+
 export function createServer(
   dataRoot: string,
   onChangeSet?: (projectId: string, cs: ChangeSet) => void,
   summarize?: SummarizeConfig,
   onPresence?: (projectId: string, presence: PresenceMessage) => void,
-) {
+): CanvasServer {
   const app = express()
   app.use(cors())
   app.use(express.json({ limit: '64mb' }))
@@ -229,7 +239,10 @@ export function createServer(
         return
       }
       try {
-        await writeCanvas(paths.canvasPath, body as CanvasSnapshot)
+        // Route through the per-path lock so a whole-snapshot save serializes
+        // against any in-flight change-set for the same canvas — otherwise a
+        // changeset's stale read could clobber this save (or vice versa).
+        await withCanvasLock(paths.canvasPath, () => body as CanvasSnapshot)
       } catch (err) {
         // A save that would blank a canvas holding a real document is refused,
         // never a silent data loss. To clear a canvas on purpose, use DELETE.
@@ -314,28 +327,35 @@ export function createServer(
         res.status(403).json({ error: 'change-set may not write card text' })
         return
       }
-      const canvas = await readCanvas(paths.canvasPath)
-      // Cross-check: every referenced existing card/section must live in THIS
-      // project, so a mistargeted operation fails loudly instead of silently
-      // landing nowhere.
-      const cardIds = new Set(snapshotToCards(canvas).map((c) => c.id))
-      const sectionIds = new Set(snapshotToSections(canvas).map((s) => s.id))
-      const missing = [
-        ...referencedCardIds(req.body).filter((cardId) => !cardIds.has(cardId)),
-        ...referencedSectionIds(req.body).filter((sectionId) => !sectionIds.has(sectionId)),
-      ]
+      // Validate and apply inside the SAME per-path lock as the read, so the
+      // referenced-id cross-check runs against the exact snapshot that gets
+      // written — a whole-snapshot save (or another change-set) landing
+      // between the read and the write can no longer invalidate this check or
+      // get silently clobbered by this write (the lost-update race, #27).
+      let missing: string[] = []
+      await withCanvasLock(paths.canvasPath, (canvas) => {
+        // Cross-check: every referenced existing card/section must live in
+        // THIS project, so a mistargeted operation fails loudly instead of
+        // silently landing nowhere.
+        const cardIds = new Set(snapshotToCards(canvas).map((c) => c.id))
+        const sectionIds = new Set(snapshotToSections(canvas).map((s) => s.id))
+        missing = [
+          ...referencedCardIds(req.body).filter((cardId) => !cardIds.has(cardId)),
+          ...referencedSectionIds(req.body).filter((sectionId) => !sectionIds.has(sectionId)),
+        ]
+        if (missing.length) return null
+        // Apply and persist here, on the server, rather than relying on some
+        // connected browser tab to have this project open and save it back —
+        // that dependency meant a change-set could report success while never
+        // landing on disk. A brand-new project with no canvas yet has no
+        // tldraw schema to write into, so it still falls back to broadcast-only
+        // until a browser bootstraps the document for the first time.
+        return applyChangeSetToSnapshot(canvas, req.body)
+      })
       if (missing.length) {
         res.status(409).json({ error: 'card not in project', missing })
         return
       }
-      // Apply and persist here, on the server, rather than relying on some
-      // connected browser tab to have this project open and save it back —
-      // that dependency meant a change-set could report success while never
-      // landing on disk. A brand-new project with no canvas yet has no
-      // tldraw schema to write into, so it still falls back to broadcast-only
-      // until a browser bootstraps the document for the first time.
-      const applied = applyChangeSetToSnapshot(canvas, req.body)
-      if (applied) await writeCanvas(paths.canvasPath, applied)
       onChangeSet?.(req.params.id, req.body)
       // A new note card (e.g. a long transcribed note) may need summarizing;
       // set_summary change-sets themselves settle to a no-op on the next pass.
@@ -398,5 +418,7 @@ export function createServer(
     }),
   )
 
-  return app
+  const server = app as CanvasServer
+  server.runSummaries = runSummaries
+  return server
 }

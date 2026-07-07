@@ -5,8 +5,9 @@ import { createServer } from './app'
 import { attachRealtime } from './realtime'
 import { migrateLegacyCanvas } from './migrate'
 import { migrateSourceCardsToNotes } from './migrateNotes'
-import { listProjects, canvasPathFor, resyncProjectIds } from './projects'
-import { OllamaSummarizer, reconcileCanvasFile, type Summarizer } from './summarize'
+import { listProjects, resyncProjectIds } from './projects'
+import { OllamaSummarizer } from './summarize'
+import type { CanvasServer } from './app'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const dataRoot = process.env.ELVES_DATA ?? join(here, '..', 'data')
@@ -36,22 +37,17 @@ async function main() {
   // Backfill summaries for cards that don't have a current one yet, so the
   // zoom-out view works on existing canvases without waiting for an edit. The
   // hash guard makes this a no-op after the first run, and it degrades to
-  // nothing (never throws) when the summarizer is unreachable.
-  void backfillSummaries(dataRoot, summarizer, now, broadcast)
+  // nothing (never throws) when the summarizer is unreachable. Goes through
+  // the app's own runSummaries so it shares the running/dirty single-flight
+  // guard with scheduled reconciles — this backfill can never run concurrently
+  // with a debounced reconcile for the same project.
+  void backfillSummaries(dataRoot, app)
 }
 
-async function backfillSummaries(
-  dataRoot: string,
-  summarizer: Summarizer,
-  now: () => string,
-  broadcast: (projectId: string, cs: import('../src/model/changeset').ChangeSet) => void,
-): Promise<void> {
+async function backfillSummaries(dataRoot: string, app: CanvasServer): Promise<void> {
   try {
     for (const project of await listProjects(dataRoot)) {
-      const canvasPath = canvasPathFor(dataRoot, project.id)
-      if (!canvasPath) continue
-      const cs = await reconcileCanvasFile(canvasPath, summarizer, now)
-      if (cs) broadcast(project.id, cs)
+      await app.runSummaries(project.id)
     }
   } catch (err) {
     console.error('[elves] summary backfill failed:', err)

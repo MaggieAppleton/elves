@@ -9,7 +9,8 @@ import { WebSocket } from 'ws'
 import request from 'supertest'
 import { createServer } from '../../server/app'
 import { attachRealtime } from '../../server/realtime'
-import { createProject, assetsDirFor } from '../../server/projects'
+import { createProject, assetsDirFor, canvasPathFor } from '../../server/projects'
+import { readCanvas, withCanvasLock } from '../../server/store'
 
 let dirs: string[] = []
 async function root() {
@@ -574,4 +575,103 @@ test('GET assets rejects a traversal id', async () => {
   const app = createServer(d)
   const res = await request(app).get('/projects/essay/assets/..%2fpackage.json')
   expect([400, 404]).toContain(res.status)
+})
+
+// --- Lost-update race (#27): a read-modify-write must never read a stale ----
+// --- base once another writer has already landed on disk. ------------------
+
+// Occupies the per-path lock for `canvasPath` until `release()` is called, so
+// any request that reaches its own withCanvasLock call in the meantime is
+// forced to queue up BEHIND this held slot — the natural serialization
+// mechanism itself, not a production-only test seam.
+function holdCanvasLock(canvasPath: string): { release: () => void; held: Promise<void> } {
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const held = withCanvasLock(canvasPath, async (current) => {
+    await gate
+    return null // a no-op "write": it only exists to occupy the queue slot
+  }).then(() => undefined)
+  return { release, held }
+}
+
+// Give an in-flight request's handler time to reach its own withCanvasLock
+// call (a couple of fs round-trips for getProject/readCanvas) before we enqueue
+// the next request, so the two land on the per-path queue in the intended order.
+async function letHandlerReachTheLock(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 20))
+}
+
+test('an interleaved whole-snapshot save and change-set never lose either write', async () => {
+  const d = await rootWithProject()
+  const app = createServer(d)
+  const canvasPath = canvasPathFor(d, 'essay')!
+  const base = cardSnapshot('shape:a') // shape:a at (0, 0)
+  await request(app).post('/projects/essay/canvas').send(base)
+
+  // Hold the lock so both the save and the change-set queue up behind it, in
+  // the order they're issued — reproducing scenario (a): the whole-snapshot
+  // save lands BETWEEN the change-set's read and write.
+  const { release, held } = holdCanvasLock(canvasPath)
+
+  const savePromise = request(app)
+    .post('/projects/essay/canvas')
+    .send({ document: base.document, session: { note: 'saved-by-browser' } })
+  await letHandlerReachTheLock()
+
+  const move = { id: 'x', author: 'claude', ops: [{ kind: 'move_cards' as const, moves: [{ cardId: 'shape:a', x: 77, y: 88 }] }] }
+  const changesetPromise = request(app).post('/projects/essay/changeset').send(move)
+  await letHandlerReachTheLock()
+
+  release()
+  await held
+  const [saveRes, changesetRes] = await Promise.all([savePromise, changesetPromise])
+  expect(saveRes.status).toBe(200)
+  expect(changesetRes.status).toBe(200)
+
+  // Neither write is lost: the save's session value AND the change-set's move
+  // both land on disk, because the change-set's read (inside the lock) can
+  // only ever see the save's already-persisted result, never a stale copy.
+  const final = await readCanvas(canvasPath)
+  expect((final as any).session).toEqual({ note: 'saved-by-browser' })
+  const shape = (final as any).document.store['shape:a']
+  expect(shape.x).toBe(77)
+  expect(shape.y).toBe(88)
+})
+
+test('two concurrent change-sets both persist; neither clobbers the other', async () => {
+  const d = await rootWithProject()
+  const app = createServer(d)
+  const canvasPath = canvasPathFor(d, 'essay')!
+  await request(app).post('/projects/essay/canvas').send(cardSnapshot('shape:a'))
+
+  // Hold the lock so both change-sets queue up behind it rather than racing to
+  // read the base canvas at the same instant — reproducing scenario (b).
+  const { release, held } = holdCanvasLock(canvasPath)
+
+  const csFirst = {
+    id: 'first', author: 'claude',
+    ops: [{ kind: 'create_note_card' as const, text: 'first note', x: 1, y: 2 }],
+  }
+  const csSecond = {
+    id: 'second', author: 'claude',
+    ops: [{ kind: 'create_note_card' as const, text: 'second note', x: 3, y: 4 }],
+  }
+  const firstPromise = request(app).post('/projects/essay/changeset').send(csFirst)
+  await letHandlerReachTheLock()
+  const secondPromise = request(app).post('/projects/essay/changeset').send(csSecond)
+  await letHandlerReachTheLock()
+
+  release()
+  await held
+  const [firstRes, secondRes] = await Promise.all([firstPromise, secondPromise])
+  expect(firstRes.status).toBe(200)
+  expect(secondRes.status).toBe(200)
+
+  const final = await readCanvas(canvasPath)
+  const texts = Object.values((final as any).document.store)
+    .filter((r: any) => r?.typeName === 'shape' && r.type === 'card' && r.props?.kind === 'note')
+    .map((r: any) => r.props.text)
+  expect(texts.sort()).toEqual(['first note', 'second note'])
 })
