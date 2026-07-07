@@ -87,8 +87,10 @@ test('POST changeset validates and forwards to onChangeSet with the project id',
   const d = await rootWithProject()
   const onChangeSet = vi.fn()
   const app = createServer(d, onChangeSet)
+  // No canvas yet: nothing persists, but the broadcast still fires so an
+  // open browser tab can self-heal.
   const ok = await request(app).post('/projects/essay/changeset').send(csCreate)
-  expect(ok.status).toBe(200)
+  expect(ok.status).toBe(409)
   expect(onChangeSet).toHaveBeenCalledWith('essay', csCreate)
 
   const bad = await request(app).post('/projects/essay/changeset').send({ id: 'x', ops: 'nope' })
@@ -413,14 +415,19 @@ test('a group_cards change-set persists to disk and the map shows the binding wi
   expect(after.body.cards.find((c: any) => c.id === 'shape:a')).not.toHaveProperty('groupId')
 })
 
-test('create_note_card on a project with no canvas yet falls back to broadcast-only (no crash)', async () => {
+test('changeset on a project with no canvas yet reports 409 (applied: false) but still broadcasts', async () => {
   const d = await rootWithProject()
   const onChangeSet = vi.fn()
   const app = createServer(d, onChangeSet)
   const res = await request(app).post('/projects/essay/changeset').send(csCreate)
-  expect(res.status).toBe(200)
+  expect(res.status).toBe(409)
+  expect(res.body).toMatchObject({ applied: false })
   expect(onChangeSet).toHaveBeenCalledWith('essay', csCreate)
   expect((await fullDigest(app, 'essay')).body.cards).toEqual([])
+
+  // Nothing was persisted: no canvas.json exists on disk.
+  const canvasPath = join(d, 'projects', 'essay', 'canvas.json')
+  await expect(fs.access(canvasPath)).rejects.toThrow()
 })
 
 test('two changesets targeting different projects both land on disk with no browser connected', async () => {
