@@ -143,6 +143,40 @@ test('resyncProjectIds disambiguates two projects that want the same slug', asyn
   expect((await listProjects(d)).map((p) => p.id).sort()).toEqual(['report', 'report-2'])
 })
 
+test('concurrent createProject calls with the same name never merge into one folder', async () => {
+  const d = await root()
+  const [a, b] = await Promise.all([
+    createProject(d, 'Dup', '2026-07-02T10:00:00.000Z'),
+    createProject(d, 'Dup', '2026-07-02T10:00:00.001Z'),
+  ])
+  // Two distinct ids, each with its own project.json.
+  expect(a.id).not.toBe(b.id)
+  expect([a.id, b.id].sort()).toEqual(['dup', 'dup-2'])
+  const list = await listProjects(d)
+  expect(list.map((p) => p.id).sort()).toEqual(['dup', 'dup-2'])
+  const aMeta = JSON.parse(
+    await fs.readFile(join(d, 'projects', a.id, 'project.json'), 'utf8'),
+  )
+  const bMeta = JSON.parse(
+    await fs.readFile(join(d, 'projects', b.id, 'project.json'), 'utf8'),
+  )
+  expect(aMeta.id).toBe(a.id)
+  expect(bMeta.id).toBe(b.id)
+})
+
+test('createProject claims a fresh id when the slug already exists on disk, without touching the existing folder', async () => {
+  const d = await root()
+  const first = await createProject(d, 'Report', '2026-07-02T10:00:00.000Z')
+  expect(first.id).toBe('report')
+  const second = await createProject(d, 'Report', '2026-07-02T11:00:00.000Z')
+  expect(second.id).toBe('report-2')
+  // The original folder/content is untouched.
+  const firstMeta = JSON.parse(
+    await fs.readFile(join(d, 'projects', 'report', 'project.json'), 'utf8'),
+  )
+  expect(firstMeta).toMatchObject({ id: 'report', createdAt: '2026-07-02T10:00:00.000Z' })
+})
+
 test('rename of an unknown project throws 404', async () => {
   const d = await root()
   await expect(renameProject(d, 'ghost', 'X')).rejects.toMatchObject({ status: 404 })

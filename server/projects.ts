@@ -101,17 +101,28 @@ export async function getProject(dataRoot: string, id: string): Promise<Project 
   }
 }
 
-// Find a free id for `base`, disambiguating a clash with an existing project by
-// appending -2, -3, … `exclude` drops one id (a project's own current id) from
-// the "taken" set, so re-slugging a project never collides with itself and can
-// reclaim its natural slug.
+// The Nth candidate id for `base`: the bare slug, then -2, -3, … Shared by
+// uniqueId (which picks the first untaken one from a directory listing) and
+// createProject's atomic-create retry loop (which walks the same sequence
+// against whatever mkdir actually finds on disk, since a concurrent create can
+// invalidate a pre-read "taken" set between the check and the write).
+function candidateId(base: string, n: number): string {
+  return n === 1 ? base : `${base}-${n}`
+}
+
+// The first n (1-based) whose candidateId isn't already taken on disk.
+// `exclude` drops one id (a project's own current id) from the "taken" set, so
+// re-slugging a project never collides with itself and can reclaim its
+// natural slug. This is a best-effort starting point, not a guarantee — a
+// concurrent create can still claim it first, which is why createProject
+// treats the atomic mkdir, not this read, as the source of truth.
 //
 // The taken-set is the RAW on-disk folder listing, not listProjects(): a
 // malformed/partial project folder is skipped by listProjects but still
 // physically occupies its slug (with its own canvas.json/assets). Reading the
 // directory directly keeps those folders blocking slug reuse, so a new project
 // can never mkdir into and inherit an existing folder's contents.
-async function uniqueId(dataRoot: string, base: string, exclude?: string): Promise<string> {
+async function firstFreeN(dataRoot: string, base: string, exclude?: string): Promise<number> {
   let taken: Set<string>
   try {
     taken = new Set(await fs.readdir(projectsRoot(dataRoot)))
@@ -120,12 +131,22 @@ async function uniqueId(dataRoot: string, base: string, exclude?: string): Promi
     else throw e
   }
   if (exclude) taken.delete(exclude)
-  if (!taken.has(base)) return base
-  for (let n = 2; ; n++) {
-    const candidate = `${base}-${n}`
-    if (!taken.has(candidate)) return candidate
+  for (let n = 1; ; n++) {
+    if (!taken.has(candidateId(base, n))) return n
   }
 }
+
+// Find a free id for `base`, disambiguating a clash with an existing project by
+// appending -2, -3, …
+async function uniqueId(dataRoot: string, base: string, exclude?: string): Promise<string> {
+  return candidateId(base, await firstFreeN(dataRoot, base, exclude))
+}
+
+// Cap on id-collision retries in createProject: comfortably more than any
+// real naming clash would need, just a backstop against an unbounded loop if
+// something is badly wrong (e.g. the directory is unwritable in a way that
+// doesn't surface as EEXIST).
+const MAX_CREATE_ATTEMPTS = 100
 
 export async function createProject(
   dataRoot: string,
@@ -134,14 +155,38 @@ export async function createProject(
 ): Promise<Project> {
   const trimmed = name.trim()
   if (!trimmed) throw new ProjectError('name required', 400)
-  const id = await uniqueId(dataRoot, slugify(trimmed))
-  const dir = join(projectsRoot(dataRoot), id)
-  await fs.mkdir(dir, { recursive: true })
-  const meta: Project = { id, name: trimmed, createdAt }
-  await fs.writeFile(join(dir, 'project.json'), JSON.stringify(meta, null, 2), 'utf8')
-  // No canvas.json until first save: readCanvas() returns EMPTY_CANVAS for a
-  // missing file, and saveAsset() creates assets/ lazily.
-  return meta
+  const base = slugify(trimmed)
+  const root = projectsRoot(dataRoot)
+  // Idempotent/safe: creates the projects root once so the per-project mkdir
+  // below can be non-recursive.
+  await fs.mkdir(root, { recursive: true })
+
+  // firstFreeN is a best-effort starting guess from a directory snapshot; a
+  // concurrent createProject racing for the same name can invalidate it
+  // between the read and now. The non-recursive mkdir is what actually
+  // decides ownership of an id: it's atomic, so it fails with EEXIST if
+  // another create just claimed that folder. On EEXIST we walk to the next
+  // candidate in the same base/-2/-3 sequence and retry, rather than trusting
+  // the initial read.
+  let n = await firstFreeN(dataRoot, base)
+  for (let attempt = 0; ; attempt++) {
+    const id = candidateId(base, n)
+    const dir = join(root, id)
+    try {
+      await fs.mkdir(dir)
+      const meta: Project = { id, name: trimmed, createdAt }
+      await fs.writeFile(join(dir, 'project.json'), JSON.stringify(meta, null, 2), 'utf8')
+      // No canvas.json until first save: readCanvas() returns EMPTY_CANVAS for
+      // a missing file, and saveAsset() creates assets/ lazily.
+      return meta
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e
+      if (attempt + 1 >= MAX_CREATE_ATTEMPTS) {
+        throw new ProjectError('could not allocate a unique project id', 500)
+      }
+      n++
+    }
+  }
 }
 
 export async function renameProject(
