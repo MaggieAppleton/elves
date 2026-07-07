@@ -195,6 +195,32 @@ test('a merge_notes change-set persists mergedInto to disk even with no browser 
   expect(byId['shape:a'].mergedInto).toBeNull()
 })
 
+test('merge_notes with a non-note (prose) representative → 409, nothing merged', async () => {
+  const d = await rootWithProject()
+  const onChangeSet = vi.fn()
+  const app = createServer(d, onChangeSet)
+  const snap = {
+    document: {
+      store: {
+        'shape:prose': { id: 'shape:prose', typeName: 'shape', type: 'card', x: 0, y: 0, props: { w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text: 'my own words', comments: [], mergedInto: null } },
+        'shape:b': { id: 'shape:b', typeName: 'shape', type: 'card', x: 0, y: 0, props: { w: 240, h: 120, kind: 'note', noteKind: 'text', origin: 'typed', text: 'b', comments: [], mergedInto: null } },
+      },
+    },
+    session: null,
+  }
+  await request(app).post('/projects/essay/canvas').send(snap)
+  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'merge_notes', cardIds: ['shape:prose', 'shape:b'] }] }
+  const res = await request(app).post('/projects/essay/changeset').send(cs)
+  expect(res.status).toBe(409)
+  expect(res.body.invalidMergeReps).toEqual(['shape:prose'])
+  expect(onChangeSet).not.toHaveBeenCalled()
+
+  const digest = await fullDigest(app, 'essay')
+  const byId = Object.fromEntries(digest.body.cards.map((c: any) => [c.id, c]))
+  expect(byId['shape:prose'].text).toBe('my own words')
+  expect(byId['shape:b'].mergedInto).toBeNull()
+})
+
 test('applyChangeSetToSnapshot stamps the change-set author onto the created note card', () => {
   // The persisted card must remember which agent authored it, so a reload still
   // shows the authorship mark. Use a non-Claude author to prove it is the

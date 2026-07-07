@@ -7,6 +7,7 @@ import {
   changeSetWritesText,
   referencedCardIds,
   referencedSectionIds,
+  mergeRepresentativeIds,
 } from '../src/model/changeset'
 import type { PresenceMessage } from '../src/model/presence'
 import {
@@ -318,7 +319,8 @@ export function createServer(
       // Cross-check: every referenced existing card/section must live in THIS
       // project, so a mistargeted operation fails loudly instead of silently
       // landing nowhere.
-      const cardIds = new Set(snapshotToCards(canvas).map((c) => c.id))
+      const cards = snapshotToCards(canvas)
+      const cardIds = new Set(cards.map((c) => c.id))
       const sectionIds = new Set(snapshotToSections(canvas).map((s) => s.id))
       const missing = [
         ...referencedCardIds(req.body).filter((cardId) => !cardIds.has(cardId)),
@@ -326,6 +328,16 @@ export function createServer(
       ]
       if (missing.length) {
         res.status(409).json({ error: 'card not in project', missing })
+        return
+      }
+      // merge_notes is "note cards only" — reject outright if the representative
+      // (the card the others merge under and that stays visible) is not itself a
+      // note, rather than silently letting a prose/figure/reference card become
+      // the visible head of a merge cluster.
+      const noteCardIds = new Set(cards.filter((c) => c.kind === 'note').map((c) => c.id))
+      const invalidMergeReps = mergeRepresentativeIds(req.body).filter((id) => !noteCardIds.has(id))
+      if (invalidMergeReps.length) {
+        res.status(409).json({ error: 'merge_notes representative must be a note card', invalidMergeReps })
         return
       }
       // Apply and persist here, on the server, rather than relying on some

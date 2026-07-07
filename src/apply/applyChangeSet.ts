@@ -30,6 +30,12 @@ function applyAddComment(editor: Editor, op: Extract<Op, { kind: 'add_comment' }
 
 function applyMerge(editor: Editor, op: Extract<Op, { kind: 'merge_notes' }>): TLShapeId[] {
   const { representativeId, hiddenIds } = planMerge(op.cardIds)
+  // The representative becomes the visible head of the merge cluster, so it
+  // must be a note itself — the server's changeset endpoint already rejects
+  // this case with a 409, but guard here too so this function never merges
+  // under a non-note representative if ever applied directly.
+  const rep = editor.getShape(representativeId as CardShape['id']) as CardShape | undefined
+  if (!rep || rep.props.kind !== 'note') return []
   for (const id of hiddenIds) {
     const shape = editor.getShape(id as CardShape['id']) as CardShape | undefined
     if (shape && shape.props.kind === 'note') {
@@ -37,7 +43,7 @@ function applyMerge(editor: Editor, op: Extract<Op, { kind: 'merge_notes' }>): T
     }
   }
   // Glow the visible survivor — the hidden members are removed from render.
-  return editor.getShape(representativeId as CardShape['id']) ? [representativeId as TLShapeId] : []
+  return [representativeId as TLShapeId]
 }
 
 function applyMove(editor: Editor, op: Extract<Op, { kind: 'move_cards' }>): TLShapeId[] {
