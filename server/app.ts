@@ -8,10 +8,12 @@ import {
   referencedCardIds,
   referencedSectionIds,
   mergeRepresentativeIds,
+  referencedGroupIds,
 } from '../src/model/changeset'
 import type { PresenceMessage } from '../src/model/presence'
 import {
   snapshotToCards, snapshotToSections, snapshotToCardMap, snapshotToCardsById, snapshotToDraft,
+  snapshotToGroupIds,
 } from './digest'
 import { applyChangeSetToSnapshot } from './applyChangeSet'
 import { reconcileCanvasFile, type Summarizer } from './summarize'
@@ -322,9 +324,11 @@ export function createServer(
       const cards = snapshotToCards(canvas)
       const cardIds = new Set(cards.map((c) => c.id))
       const sectionIds = new Set(snapshotToSections(canvas).map((s) => s.id))
+      const groupIds = new Set(snapshotToGroupIds(canvas))
       const missing = [
         ...referencedCardIds(req.body).filter((cardId) => !cardIds.has(cardId)),
         ...referencedSectionIds(req.body).filter((sectionId) => !sectionIds.has(sectionId)),
+        ...referencedGroupIds(req.body).filter((groupId) => !groupIds.has(groupId)),
       ]
       if (missing.length) {
         res.status(409).json({ error: 'card not in project', missing })
@@ -344,10 +348,20 @@ export function createServer(
       // connected browser tab to have this project open and save it back —
       // that dependency meant a change-set could report success while never
       // landing on disk. A brand-new project with no canvas yet has no
-      // tldraw schema to write into, so it still falls back to broadcast-only
-      // until a browser bootstraps the document for the first time.
+      // tldraw schema to write into, so nothing is persisted here.
       const applied = applyChangeSetToSnapshot(canvas, req.body)
-      if (applied) await writeCanvas(paths.canvasPath, applied)
+      if (!applied) {
+        // Still broadcast, so a browser tab that happens to have the project
+        // open can self-heal via the live connection — but don't claim
+        // success or schedule summaries for something that never landed.
+        onChangeSet?.(req.params.id, req.body)
+        res.status(409).json({
+          error: 'project has no canvas yet — open it once in the app to initialize the canvas',
+          applied: false,
+        })
+        return
+      }
+      await writeCanvas(paths.canvasPath, applied)
       onChangeSet?.(req.params.id, req.body)
       // A new note card (e.g. a long transcribed note) may need summarizing;
       // set_summary change-sets themselves settle to a no-op on the next pass.

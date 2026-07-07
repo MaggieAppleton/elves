@@ -275,3 +275,16 @@ export function referencedSectionIds(cs: ChangeSet): string[] {
   }
   return ids
 }
+
+/**
+ * Group ids an op references as an EXISTING group shape. group_cards mints a
+ * new group and references nothing, so only ungroup_cards contributes here —
+ * mirrors referencedCardIds/referencedSectionIds for the group model.
+ */
+export function referencedGroupIds(cs: ChangeSet): string[] {
+  const ids: string[] = []
+  for (const op of cs.ops) {
+    if (op.kind === 'ungroup_cards') ids.push(op.groupId)
+  }
+  return ids
+}

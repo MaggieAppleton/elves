@@ -134,7 +134,10 @@ function applyEditCard(editor: Editor, op: Extract<Op, { kind: 'edit_card' }>): 
   const shape = editor.getShape(op.cardId as CardShape['id']) as CardShape | undefined
   // Working material (note / reference / figure) is Claude's to edit; a prose
   // card holds the user's own draft and stays the user's alone.
-  if (!shape || !claudeMayEditCardText(shape.props.kind)) return []
+  // A reference's `text` is the user's own annotation — Claude writes its
+  // bibliographic facts at creation, never the annotation, so references are
+  // excluded here even though they're a 'note'-kind card.
+  if (!shape || !claudeMayEditCardText(shape.props.kind) || shape.props.noteKind === 'reference') return []
   const props: Partial<CardShape['props']> = {}
   // `text` is the card body; `title` is a figure's working title (figures only).
   if (op.text !== undefined) props.text = op.text

@@ -183,6 +183,22 @@ describe('applyChangeSet affected-id contract', () => {
     expect(ed._ungrouped).toEqual(['shape:g1'])
   })
 
+  test('edit_card updates a note card\'s text — notes are working material', () => {
+    const ed = fakeEditor([noteCard('card:a', { noteKind: 'text', text: 'old body' })])
+    expect(applyChangeSet(ed as unknown as Editor, cs([
+      { kind: 'edit_card', cardId: 'card:a', text: 'new body' },
+    ]))).toEqual(['card:a'])
+    expect((ed._shapes.get('card:a') as any).props.text).toBe('new body')
+  })
+
+  test('edit_card REFUSES to touch a reference card\'s annotation — that stays the user\'s alone', () => {
+    const ed = fakeEditor([noteCard('card:ref', { noteKind: 'reference', text: 'my own annotation' })])
+    expect(applyChangeSet(ed as unknown as Editor, cs([
+      { kind: 'edit_card', cardId: 'card:ref', text: 'agent trying to rewrite the annotation' },
+    ]))).toEqual([])
+    expect((ed._shapes.get('card:ref') as any).props.text).toBe('my own annotation')
+  })
+
   test('set_summary → [cardId]', () => {
     const ed = fakeEditor([noteCard('card:a')])
     expect(applyChangeSet(ed as unknown as Editor, cs([
