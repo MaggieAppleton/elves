@@ -48,7 +48,7 @@ export function assetsDirFor(dataRoot: string, id: string): string | null {
 }
 
 export function slugify(name: string): string {
-  const s = name
+  const s = (name || '')
     .toLowerCase()
     .trim()
     .replace(/[^a-z0-9]+/g, '-')
@@ -71,6 +71,11 @@ export async function listProjects(dataRoot: string): Promise<Project[]> {
       const meta = JSON.parse(
         await fs.readFile(join(projectsRoot(dataRoot), id, 'project.json'), 'utf8'),
       ) as Project
+      // Treat a hand-edited, older-format, or partially-written project.json
+      // (valid JSON but missing/blank required fields) the same as an
+      // unreadable one: skip it rather than surfacing undefined downstream.
+      if (typeof meta.name !== 'string' || !meta.name) continue
+      if (typeof meta.createdAt !== 'string' || !meta.createdAt) continue
       out.push({ id, name: meta.name, createdAt: meta.createdAt })
     } catch {
       // Skip anything that isn't a readable project folder.
@@ -86,6 +91,10 @@ export async function getProject(dataRoot: string, id: string): Promise<Project 
     const meta = JSON.parse(
       await fs.readFile(join(projectsRoot(dataRoot), id, 'project.json'), 'utf8'),
     ) as Project
+    // A malformed meta (hand-edited, older format, or partial write) is
+    // treated as "not found", matching callers that only check truthiness.
+    if (typeof meta.name !== 'string' || !meta.name) return null
+    if (typeof meta.createdAt !== 'string' || !meta.createdAt) return null
     return { id, name: meta.name, createdAt: meta.createdAt }
   } catch {
     return null
@@ -101,14 +110,26 @@ function candidateId(base: string, n: number): string {
   return n === 1 ? base : `${base}-${n}`
 }
 
-// The first n (1-based) whose candidateId isn't in the directory listing.
+// The first n (1-based) whose candidateId isn't already taken on disk.
 // `exclude` drops one id (a project's own current id) from the "taken" set, so
 // re-slugging a project never collides with itself and can reclaim its
 // natural slug. This is a best-effort starting point, not a guarantee — a
 // concurrent create can still claim it first, which is why createProject
 // treats the atomic mkdir, not this read, as the source of truth.
+//
+// The taken-set is the RAW on-disk folder listing, not listProjects(): a
+// malformed/partial project folder is skipped by listProjects but still
+// physically occupies its slug (with its own canvas.json/assets). Reading the
+// directory directly keeps those folders blocking slug reuse, so a new project
+// can never mkdir into and inherit an existing folder's contents.
 async function firstFreeN(dataRoot: string, base: string, exclude?: string): Promise<number> {
-  const taken = new Set((await listProjects(dataRoot)).map((p) => p.id))
+  let taken: Set<string>
+  try {
+    taken = new Set(await fs.readdir(projectsRoot(dataRoot)))
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') taken = new Set()
+    else throw e
+  }
   if (exclude) taken.delete(exclude)
   for (let n = 1; ; n++) {
     if (!taken.has(candidateId(base, n))) return n
@@ -208,6 +229,9 @@ export async function renameProject(
 // project being moved, so a batch stays clash-safe and deterministic.
 export async function resyncProjectIds(dataRoot: string): Promise<void> {
   for (const proj of await listProjects(dataRoot)) {
+    // listProjects already filters out entries with a missing/blank name, but
+    // guard here too so no future caller can reach slugify(undefined).
+    if (!proj.name) continue
     const desired = slugify(proj.name)
     if (desired === proj.id) continue
     const newId = await uniqueId(dataRoot, desired, proj.id)

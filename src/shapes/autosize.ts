@@ -53,12 +53,24 @@ const REF_EYEBROW = 18 // favicon/glyph row + its gap
 const REF_GAP = 5
 const REF_MEDIA = 46
 const REF_MEDIA_GAP = 10
+// The user's own annotation sits BELOW the bibliographic face as a sibling —
+// separated from it by the card's 6px flex gap and carrying its own 13px bottom
+// padding (top padding 0). It spans the full card width (13px left/right) and,
+// unlike the 2-line-clamped description, grows to fit however much the user
+// writes (13px / line-height 1.4), which is why it must be measured here.
+const REF_CARD_GAP = 6
+const REF_ANNOTATION_PAD_B = 13
 
 function clampLines(measuredH: number, fontSize: number, lineHeight: number, maxLines: number): number {
   return Math.min(measuredH, Math.ceil(fontSize * lineHeight * maxLines))
 }
 
-export function measuredReferenceHeight(editor: Editor, reference: Reference, width: number): number {
+export function measuredReferenceHeight(
+  editor: Editor,
+  reference: Reference,
+  annotation: string,
+  width: number,
+): number {
   const leftMedia = hasLeftMedia(reference)
   const textWidth = Math.max(60, width - REF_PAD - (leftMedia ? REF_MEDIA + REF_MEDIA_GAP : 0))
 
@@ -81,6 +93,18 @@ export function measuredReferenceHeight(editor: Editor, reference: Reference, wi
 
   h += REF_PAD_Y
   if (leftMedia) h = Math.max(h, REF_PAD_Y + REF_MEDIA)
+
+  // Grow the card to hold the annotation the user is writing/reading (both the
+  // editing textarea and the read-only div occupy this same measured space).
+  // Empty annotation renders nothing, so it adds no height. Measured full-width
+  // (the annotation isn't offset by the left media) and unclamped.
+  if (annotation) {
+    const a = editor.textMeasure.measureText(annotation, {
+      fontFamily: FONT_FAMILY, fontSize: 13, lineHeight: 1.4, fontWeight: '400', fontStyle: 'normal',
+      maxWidth: Math.max(60, width - REF_PAD), padding: '0px',
+    })
+    h += REF_CARD_GAP + Math.ceil(a.h) + REF_ANNOTATION_PAD_B
+  }
   return Math.ceil(h)
 }
 

@@ -191,3 +191,49 @@ test('listProjects on a missing root returns []', async () => {
   const d = await root()
   expect(await listProjects(d)).toEqual([])
 })
+
+test('listProjects skips a project.json missing createdAt but keeps the rest', async () => {
+  const d = await root()
+  await createProject(d, 'Good', '2026-07-02T10:00:00.000Z')
+  await fs.mkdir(join(d, 'projects', 'bad'), { recursive: true })
+  await fs.writeFile(
+    join(d, 'projects', 'bad', 'project.json'),
+    JSON.stringify({ id: 'bad', name: 'Bad' }),
+    'utf8',
+  )
+  const list = await listProjects(d)
+  expect(list.map((p) => p.id)).toEqual(['good'])
+})
+
+test('createProject does not reuse a malformed folder that occupies the slug', async () => {
+  const d = await root()
+  // A malformed project (missing name) is invisible to listProjects but its
+  // folder still owns the slug 'bad' on disk, with its own canvas + assets.
+  await fs.mkdir(join(d, 'projects', 'bad', 'assets'), { recursive: true })
+  await fs.writeFile(
+    join(d, 'projects', 'bad', 'project.json'),
+    JSON.stringify({ id: 'bad', createdAt: '2026-07-02T10:00:00.000Z' }),
+    'utf8',
+  )
+  await fs.writeFile(join(d, 'projects', 'bad', 'canvas.json'), '{"stale":true}', 'utf8')
+  const created = await createProject(d, 'Bad', '2026-07-02T11:00:00.000Z')
+  // The new project must take a distinct id, not reuse the occupied folder.
+  expect(created.id).toBe('bad-2')
+  // And it must not inherit the old folder's canvas.
+  await expect(
+    fs.readFile(join(d, 'projects', 'bad-2', 'canvas.json'), 'utf8'),
+  ).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+test('resyncProjectIds skips a project.json missing name without throwing', async () => {
+  const d = await root()
+  await createProject(d, 'Good', '2026-07-02T10:00:00.000Z')
+  await fs.mkdir(join(d, 'projects', 'bad'), { recursive: true })
+  await fs.writeFile(
+    join(d, 'projects', 'bad', 'project.json'),
+    JSON.stringify({ id: 'bad', createdAt: '2026-07-02T11:00:00.000Z' }),
+    'utf8',
+  )
+  await expect(resyncProjectIds(d)).resolves.not.toThrow()
+  expect((await listProjects(d)).map((p) => p.id)).toEqual(['good'])
+})
