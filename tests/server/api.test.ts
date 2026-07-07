@@ -225,3 +225,28 @@ test('a write failure returns 500 instead of crashing the server', async () => {
     .send({ document: null, session: null })
   expect(res.status).toBe(500)
 }, 10000)
+
+// --- CORS allowlist (issue #29) ---------------------------------------------
+// The default allowlist includes the Vite client dev port (5173); see
+// server/origins.ts. These use the request's own default port (no PORT env
+// set in this test run) so they exercise the real default allowlist.
+
+test('a disallowed cross-origin Origin does not get Access-Control-Allow-Origin', async () => {
+  const app = await appWithTmp()
+  const res = await request(app).get('/projects').set('Origin', 'https://evil.example')
+  expect(res.status).toBe(200) // the request itself still completes...
+  expect(res.headers['access-control-allow-origin']).toBeUndefined() // ...but a browser can't read it cross-origin
+})
+
+test('the allowed client dev origin gets Access-Control-Allow-Origin echoed back', async () => {
+  const app = await appWithTmp()
+  const res = await request(app).get('/projects').set('Origin', 'http://localhost:5173')
+  expect(res.status).toBe(200)
+  expect(res.headers['access-control-allow-origin']).toBe('http://localhost:5173')
+})
+
+test('a request with no Origin header (supertest default) still works', async () => {
+  const app = await appWithTmp()
+  const res = await request(app).get('/projects')
+  expect(res.status).toBe(200)
+})

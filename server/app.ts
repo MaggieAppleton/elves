@@ -19,6 +19,8 @@ import { applyChangeSetToSnapshot } from './applyChangeSet'
 import { reconcileCanvasFile, type Summarizer } from './summarize'
 import { extForMime, saveAsset, resolveAssetPath } from './assets'
 import { unfurl, type UnfurlDeps, type FetchedImage } from './unfurl'
+import { safeFetch } from './ssrf'
+import { getAllowedOrigins, isOriginAllowed } from './origins'
 import {
   listProjects,
   createProject,
@@ -38,13 +40,16 @@ const MAX_IMAGE_BYTES = 5_000_000
 // fetches are http(s)-only, time-limited, and size-capped; images are stored as
 // local files so a reference card stays offline-usable and portable.
 function unfurlDepsFor(assetsDir: string): UnfurlDeps {
+  // SSRF-guarded: safeFetch resolves + range-checks the hostname of the
+  // initial URL AND of every redirect hop (never `redirect: 'follow'`), so a
+  // pasted URL can't reach this machine's own network or a cloud metadata
+  // endpoint, even via a redirect chain. See server/ssrf.ts.
   const withTimeout = async (url: string, accept: string) => {
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS)
     try {
-      return await fetch(url, {
+      return await safeFetch(url, {
         signal: ctrl.signal,
-        redirect: 'follow',
         headers: { 'user-agent': UNFURL_UA, accept },
       })
     } finally {
@@ -107,7 +112,23 @@ export function createServer(
   onPresence?: (projectId: string, presence: PresenceMessage) => void,
 ) {
   const app = express()
-  app.use(cors())
+  // Origin allowlist (see server/origins.ts): only same-origin/no-Origin
+  // requests (curl, tests, server-to-server) and the localhost client dev
+  // port / this server's own port may read responses cross-origin. This is
+  // what stops an arbitrary web page from calling this API from the
+  // browser. Widen with ELVES_ALLOWED_ORIGINS if needed.
+  //
+  // FOLLOW-UP (out of scope for issue #29's network-boundary hardening):
+  // there is still no request auth (shared-token or otherwise) — any process
+  // that CAN reach this origin (e.g. another app on the same machine, once
+  // it knows/guesses the port) can call every route unauthenticated. Shared-
+  // token auth is tracked separately and deliberately not implemented here.
+  const allowedOrigins = getAllowedOrigins()
+  app.use(cors({
+    origin(origin, callback) {
+      callback(null, isOriginAllowed(origin, allowedOrigins))
+    },
+  }))
   app.use(express.json({ limit: '64mb' }))
 
   // --- Summary reconciliation scheduler -------------------------------------
