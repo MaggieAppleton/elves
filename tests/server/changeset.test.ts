@@ -413,6 +413,38 @@ test('a group_cards change-set persists to disk and the map shows the binding wi
   expect(after.body.cards.find((c: any) => c.id === 'shape:a')).not.toHaveProperty('groupId')
 })
 
+test('changeset with ungroup_cards referencing an unknown/foreign groupId → 409', async () => {
+  const d = await rootWithProject()
+  const onChangeSet = vi.fn()
+  const app = createServer(d, onChangeSet)
+  await request(app).post('/projects/essay/canvas').send(twoCardCanvas())
+  const ungroup = { id: 'x', author: 'claude', ops: [{ kind: 'ungroup_cards', groupId: 'shape:nope' }] }
+  const res = await request(app).post('/projects/essay/changeset').send(ungroup)
+  expect(res.status).toBe(409)
+  expect(res.body.missing).toEqual(['shape:nope'])
+  expect(onChangeSet).not.toHaveBeenCalled()
+})
+
+test('changeset with ungroup_cards on a real group in the project dissolves it', async () => {
+  const d = await rootWithProject()
+  const onChangeSet = vi.fn()
+  const app = createServer(d, onChangeSet)
+  await request(app).post('/projects/essay/canvas').send(twoCardCanvas())
+  await request(app).post('/projects/essay/changeset').send({
+    id: 'g', author: 'claude', ops: [{ kind: 'group_cards', cardIds: ['shape:a', 'shape:b'] }],
+  })
+  const groupId = (await request(app).get('/projects/essay/map')).body.groups[0].id
+
+  const ungroup = { id: 'y', author: 'claude', ops: [{ kind: 'ungroup_cards', groupId }] }
+  const res = await request(app).post('/projects/essay/changeset').send(ungroup)
+  expect(res.status).toBe(200)
+  expect(onChangeSet).toHaveBeenCalledWith('essay', ungroup)
+
+  const map = await request(app).get('/projects/essay/map')
+  expect(map.body.groups).toEqual([])
+  expect(map.body.cards.find((c: any) => c.id === 'shape:a')).not.toHaveProperty('groupId')
+})
+
 test('create_note_card on a project with no canvas yet falls back to broadcast-only (no crash)', async () => {
   const d = await rootWithProject()
   const onChangeSet = vi.fn()
