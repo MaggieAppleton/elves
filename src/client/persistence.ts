@@ -56,3 +56,29 @@ export function debounce<A extends any[]>(fn: (...a: A) => void, ms: number) {
     t = setTimeout(() => fn(...a), ms)
   }
 }
+
+// Wraps a fire-and-forget async save so overlapping requests never drop the
+// latest state: if a request comes in while one is already in flight, it's
+// marked dirty and re-run (capturing fresh state) once the in-flight save
+// settles, instead of being silently dropped.
+export function createSaver(saveFn: () => Promise<void>) {
+  let saving = false
+  let pendingDirty = false
+  const run = () => {
+    if (saving) {
+      pendingDirty = true
+      return
+    }
+    saving = true
+    saveFn()
+      .catch((err) => console.error('Elves: canvas save failed', err))
+      .finally(() => {
+        saving = false
+        if (pendingDirty) {
+          pendingDirty = false
+          run()
+        }
+      })
+  }
+  return { request: run }
+}

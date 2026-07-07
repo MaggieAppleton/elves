@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import type { Reference } from '../../src/model/types'
 import {
   isChangeSet, isReference, planMerge, referencedCardIds, referencedSectionIds, changeSetWritesText,
+  mergeRepresentativeIds,
 } from '../../src/model/changeset'
 
 const VALID_REF: Reference = {
@@ -17,6 +18,26 @@ describe('planMerge', () => {
   })
   test('deduplicates and never hides the representative', () => {
     expect(planMerge(['a', 'b', 'b', 'a'])).toEqual({ representativeId: 'a', hiddenIds: ['b'] })
+  })
+})
+
+describe('mergeRepresentativeIds', () => {
+  test('collects cardIds[0] from each merge_notes op', () => {
+    const cs = {
+      id: 'x', author: 'claude',
+      ops: [
+        { kind: 'merge_notes' as const, cardIds: ['a', 'b', 'c'] },
+        { kind: 'merge_notes' as const, cardIds: ['d', 'e'] },
+      ],
+    }
+    expect(mergeRepresentativeIds(cs)).toEqual(['a', 'd'])
+  })
+  test('ignores other op kinds and empty cardIds', () => {
+    const cs = {
+      id: 'x', author: 'claude',
+      ops: [{ kind: 'merge_notes' as const, cardIds: [] }, { kind: 'move_cards' as const, moves: [] }],
+    }
+    expect(mergeRepresentativeIds(cs)).toEqual([])
   })
 })
 

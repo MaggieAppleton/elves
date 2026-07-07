@@ -22,7 +22,13 @@ async function main() {
   await migrateSourceCardsToNotes(dataRoot)
   // Bring any project whose id drifted from its display name back in sync (folder
   // renamed to match slugify(name)). Idempotent; a no-op once everything matches.
-  await resyncProjectIds(dataRoot)
+  // Degrades to a log rather than blocking startup if a project is malformed
+  // or a rename fails partway through.
+  try {
+    await resyncProjectIds(dataRoot)
+  } catch (err) {
+    console.error('[elves] project id resync failed:', err)
+  }
 
   const httpServer = http.createServer()
   const { broadcast, broadcastPresence } = attachRealtime(httpServer)

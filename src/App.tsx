@@ -3,6 +3,7 @@ import { Tldraw, Editor, getSnapshot, loadSnapshot, createShapeId } from 'tldraw
 import 'tldraw/tldraw.css'
 import './theme.css'
 import { CardShapeUtil, CardShape } from './shapes/CardShapeUtil'
+import { CardSelectionForeground } from './shapes/CardSelectionForeground'
 import { cardIsHidden, collapseAll } from './shapes/mergeView'
 import { SectionShapeUtil, SectionShape } from './shapes/SectionShapeUtil'
 import { QuestionShapeUtil } from './shapes/QuestionShapeUtil'
@@ -11,11 +12,13 @@ import {
   makeFigureCardProps,
 } from './model/cards'
 import { makeSectionProps } from './model/sections'
+import { cascadeOffset } from './model/layout'
 import { requestUnfurl } from './client/references'
 import {
   loadCanvas,
   saveCanvas,
   debounce,
+  createSaver,
   listProjects,
   createProject,
   renameProject,
@@ -30,8 +33,10 @@ import { ProjectSwitcher } from './components/ProjectSwitcher'
 import { DraftPane } from './components/DraftPane'
 import { DraftDrawerControls } from './components/DraftDrawerControls'
 import { type ViewState, moreDraft, lessDraft } from './client/viewMachine'
+import { prefersReducedMotion, isElementWidthTransitionEnd } from './client/motion'
 
 const shapeUtils = [CardShapeUtil, SectionShapeUtil, QuestionShapeUtil]
+const components = { SelectionForeground: CardSelectionForeground }
 
 // A dismissed question is answered/waved off: hidden from render AND hit-testing
 // (so it can't linger as an invisible-yet-selectable ghost), but kept in the
@@ -111,6 +116,9 @@ export default function App() {
   // than drop them and lose the agent's action, buffer them here, tagged with
   // their target project, and reconcile once the load resolves.
   const pendingChangeSetsRef = useRef<{ projectId: string; cs: ChangeSet }[]>([])
+  // Counts spawns via addCard/addSection so each new card/section cascades
+  // away from the last instead of stacking invisibly at the viewport center.
+  const spawnCountRef = useRef(0)
 
   // Three view states — canvas only, split, draft only — plus the split ratio
   // (canvas fraction). tldraw stays MOUNTED in all three; draft-only just
@@ -120,6 +128,7 @@ export default function App() {
   const [split, setSplit] = useState(DEFAULT_SPLIT)
   const [dragging, setDragging] = useState(false)
   const stageRef = useRef<HTMLDivElement>(null)
+  const canvasPaneRef = useRef<HTMLDivElement>(null)
 
   // Keep the refs + the asset base in sync during render so they are correct the
   // instant tldraw's onMount fires and whenever a card image renders.
@@ -259,13 +268,39 @@ export default function App() {
     const bounds = ed.getShapePageBounds(id)
     if (!bounds) return
     ed.select(id)
-    ed.centerOnPoint(bounds.center, { animation: { duration: 300 } })
+    const reduceMotion = prefersReducedMotion()
+    ed.centerOnPoint(bounds.center, reduceMotion ? undefined : { animation: { duration: 300 } })
   }
 
   const onSelectCard = (cardId: string) => {
     if (view === 'draft') {
       changeView('split')
-      setTimeout(() => focusCard(cardId), 340) // after the width transition settles
+      const pane = canvasPaneRef.current
+      // The canvas pane widens on a CSS transition (theme.css .elves-canvas-pane,
+      // 320ms); centering before it finishes measures a stale viewport. Wait for
+      // that exact transition to end rather than guessing its duration. Reduced
+      // motion disables the transition entirely (no transitionend will fire), so
+      // skip straight to focusing in that case. A fallback timeout covers any
+      // other case where transitionend never arrives (unmounted pane, interrupted
+      // transition, etc).
+      if (prefersReducedMotion() || !pane) {
+        focusCard(cardId)
+        return
+      }
+      let done = false
+      const finish = () => {
+        if (done) return
+        done = true
+        pane.removeEventListener('transitionend', onTransitionEnd)
+        clearTimeout(fallback)
+        focusCard(cardId)
+      }
+      const onTransitionEnd = (e: TransitionEvent) => {
+        if (!isElementWidthTransitionEnd(e, pane)) return
+        finish()
+      }
+      pane.addEventListener('transitionend', onTransitionEnd)
+      const fallback = setTimeout(finish, 340)
     } else {
       focusCard(cardId)
     }
@@ -350,6 +385,22 @@ export default function App() {
     ed.on('event', (info) => {
       if (info.name === 'pointer_down' && info.target === 'canvas') collapseAll()
     })
+    // Foreclose rotating the native `group` shape (issue #39). card/section utils
+    // veto their own rotation, but grouped cards can be rotated via the GROUP's
+    // handle/action — and `group` is a tldraw core shape that cannot be overridden
+    // with a custom util (checkShapesAndAddCore throws). A rotated group ancestor
+    // reintroduces the very client/server reading-order divergence this issue
+    // closes: server/digest.ts resolvePageXY walks parent x/y additively with no
+    // rotation matrix. So we clamp any group back to rotation 0 in the store — the
+    // one place every rotate path (drag handle AND the rotate-90 actions) funnels
+    // through. Reverting x/y too keeps the group from orbiting its pivot as it's
+    // held un-rotated.
+    ed.sideEffects.registerBeforeChangeHandler('shape', (prev, next) => {
+      if (next.type === 'group' && next.rotation !== 0) {
+        return { ...next, rotation: 0, x: prev.x, y: prev.y }
+      }
+      return next
+    })
     const pid = projectIdRef.current
     if (!pid) return
     loadCanvas(pid)
@@ -360,17 +411,8 @@ export default function App() {
         // paths here (not in a .finally that also runs on failure) means a
         // failed load leaves the canvas read-through and never overwrites disk.
         canvasLoadedRef.current = true
-        let saving = false
-        const doSave = () => {
-          if (saving) return
-          saving = true
-          saveCanvas(pid, getSnapshot(ed.store))
-            .catch((err) => console.error('Elves: canvas save failed', err))
-            .finally(() => {
-              saving = false
-            })
-        }
-        const save = debounce(doSave, 500)
+        const saver = createSaver(() => saveCanvas(pid, getSnapshot(ed.store)))
+        const save = debounce(saver.request, 500)
         ed.store.listen(save, { source: 'user', scope: 'document' })
         ed.registerExternalContentHandler('files', async ({ files, point }) => {
           for (const file of files) {
@@ -406,30 +448,32 @@ export default function App() {
       kind === 'prose' ? makeProseCardProps()
       : kind === 'figure' ? makeFigureCardProps()
       : makeNoteCardProps()
+    const { dx, dy } = cascadeOffset(spawnCountRef.current++)
     const id = createShapeId()
     editor.createShape<CardShape>({
       id,
       type: 'card',
-      x: center.x - props.w / 2,
-      y: center.y - props.h / 2,
+      x: center.x - props.w / 2 + dx,
+      y: center.y - props.h / 2 + dy,
       props,
     })
     editor.select(id)
-    // A figure is born blank — drop straight into editing so the title/description
-    // fields are ready to type, the way a new section opens its editor.
-    if (kind === 'figure') editor.setEditingShape(id)
+    // A new card is born blank — drop straight into editing so the fields
+    // are ready to type, the way a new section opens its editor.
+    editor.setEditingShape(id)
   }
 
   const addSection = () => {
     if (!editor) return
     const center = editor.getViewportPageBounds().center
     const props = makeSectionProps()
+    const { dx, dy } = cascadeOffset(spawnCountRef.current++)
     const id = createShapeId()
     editor.createShape<SectionShape>({
       id,
       type: 'section',
-      x: center.x - props.w / 2,
-      y: center.y - props.h / 2,
+      x: center.x - props.w / 2 + dx,
+      y: center.y - props.h / 2 + dy,
       props,
     })
     editor.select(id)
@@ -588,10 +632,16 @@ export default function App() {
         />
       </div>
       <div className="elves-stage" ref={stageRef} data-dragging={dragging} data-view={view}>
-        <div className="elves-canvas-pane" style={{ width: canvasWidth }} data-collapsed={view === 'draft'}>
+        <div
+          className="elves-canvas-pane"
+          ref={canvasPaneRef}
+          style={{ width: canvasWidth }}
+          data-collapsed={view === 'draft'}
+        >
           <Tldraw
             key={currentProjectId ?? 'none'}
             shapeUtils={shapeUtils}
+            components={components}
             getShapeVisibility={getShapeVisibility}
             onMount={handleMount}
           />
