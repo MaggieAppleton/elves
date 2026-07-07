@@ -247,6 +247,22 @@ export function referencedCardIds(cs: ChangeSet): string[] {
 }
 
 /**
+ * The representative id of every merge_notes op (cardIds[0]) — the card the
+ * hidden members merge under and that stays visible afterward. Callers with a
+ * canvas to check against (the server's changeset endpoint) use this to reject
+ * a change-set whose representative is not itself a note card: merge_notes is
+ * "note cards only", and a non-note representative would become the visible
+ * head of a merge cluster it has no business leading.
+ */
+export function mergeRepresentativeIds(cs: ChangeSet): string[] {
+  const ids: string[] = []
+  for (const op of cs.ops) {
+    if (op.kind === 'merge_notes' && op.cardIds.length > 0) ids.push(op.cardIds[0])
+  }
+  return ids
+}
+
+/**
  * Section ids an op references as an EXISTING section (move targets, rename
  * target). create_section mints a new id and references nothing, so it is
  * excluded — mirrors referencedCardIds for the section model.
