@@ -1,6 +1,8 @@
 import express, { Request, Response } from 'express'
 import cors from 'cors'
-import { readCanvas, withCanvasLock, clearCanvas, EmptyCanvasOverwriteError, CanvasSnapshot } from './store'
+import {
+  readCanvas, withCanvasLock, clearCanvas, EmptyCanvasOverwriteError, ProjectGoneError, CanvasSnapshot,
+} from './store'
 import {
   isChangeSet,
   ChangeSet,
@@ -28,6 +30,7 @@ import {
   getProject,
   canvasPathFor,
   assetsDirFor,
+  projectAliveGuard,
   ProjectError,
 } from './projects'
 
@@ -265,13 +268,27 @@ export function createServer(
       try {
         // Route through the per-path lock so a whole-snapshot save serializes
         // against any in-flight change-set for the same canvas — otherwise a
-        // changeset's stale read could clobber this save (or vice versa).
-        await withCanvasLock(paths.canvasPath, () => body as CanvasSnapshot)
+        // changeset's stale read could clobber this save (or vice versa). The
+        // guard refuses the write if the project was renamed away in the gap
+        // between resolving paths above and this write actually running.
+        await withCanvasLock(
+          paths.canvasPath,
+          () => body as CanvasSnapshot,
+          projectAliveGuard(dataRoot, req.params.id),
+        )
       } catch (err) {
         // A save that would blank a canvas holding a real document is refused,
         // never a silent data loss. To clear a canvas on purpose, use DELETE.
         if (err instanceof EmptyCanvasOverwriteError) {
           res.status(409).json({ error: 'refusing to blank a non-empty canvas; use DELETE to clear' })
+          return
+        }
+        // The project was renamed or deleted after paths were resolved above
+        // (a rename raced this save). The write is refused rather than
+        // recreating the old, now-orphaned directory — the caller's save did
+        // not land and should be retried against the project's current id.
+        if (err instanceof ProjectGoneError) {
+          res.status(404).json({ error: 'project no longer exists at this id; it may have been renamed' })
           return
         }
         throw err
@@ -361,39 +378,55 @@ export function createServer(
       let missing: string[] = []
       let invalidMergeReps: string[] = []
       let noCanvas = false
-      const applied = await withCanvasLock(paths.canvasPath, (canvas) => {
-        // Cross-check: every referenced existing card/section/group must live
-        // in THIS project, so a mistargeted operation fails loudly instead of
-        // silently landing nowhere.
-        const cards = snapshotToCards(canvas)
-        const cardIds = new Set(cards.map((c) => c.id))
-        const sectionIds = new Set(snapshotToSections(canvas).map((s) => s.id))
-        const groupIds = new Set(snapshotToGroupIds(canvas))
-        missing = [
-          ...referencedCardIds(req.body).filter((cardId) => !cardIds.has(cardId)),
-          ...referencedSectionIds(req.body).filter((sectionId) => !sectionIds.has(sectionId)),
-          ...referencedGroupIds(req.body).filter((groupId) => !groupIds.has(groupId)),
-        ]
-        if (missing.length) return null
-        // merge_notes is "note cards only" — reject outright if the
-        // representative (the card the others merge under and that stays
-        // visible) is not itself a note, rather than silently letting a
-        // prose/figure/reference card become the visible head of a cluster.
-        const noteCardIds = new Set(cards.filter((c) => c.kind === 'note').map((c) => c.id))
-        invalidMergeReps = mergeRepresentativeIds(req.body).filter((id) => !noteCardIds.has(id))
-        if (invalidMergeReps.length) return null
-        // Apply and persist here, on the server, rather than relying on some
-        // connected browser tab to have this project open and save it back —
-        // that dependency meant a change-set could report success while never
-        // landing on disk. A brand-new project with no canvas yet has no
-        // tldraw schema to write into, so nothing is persisted here.
-        const next = applyChangeSetToSnapshot(canvas, req.body)
-        if (!next) {
-          noCanvas = true
-          return null
+      let applied: CanvasSnapshot | null
+      try {
+        applied = await withCanvasLock(
+          paths.canvasPath,
+          (canvas) => {
+            // Cross-check: every referenced existing card/section/group must
+            // live in THIS project, so a mistargeted operation fails loudly
+            // instead of silently landing nowhere.
+            const cards = snapshotToCards(canvas)
+            const cardIds = new Set(cards.map((c) => c.id))
+            const sectionIds = new Set(snapshotToSections(canvas).map((s) => s.id))
+            const groupIds = new Set(snapshotToGroupIds(canvas))
+            missing = [
+              ...referencedCardIds(req.body).filter((cardId) => !cardIds.has(cardId)),
+              ...referencedSectionIds(req.body).filter((sectionId) => !sectionIds.has(sectionId)),
+              ...referencedGroupIds(req.body).filter((groupId) => !groupIds.has(groupId)),
+            ]
+            if (missing.length) return null
+            // merge_notes is "note cards only" — reject outright if the
+            // representative (the card the others merge under and that stays
+            // visible) is not itself a note, rather than silently letting a
+            // prose/figure/reference card become the visible head of a cluster.
+            const noteCardIds = new Set(cards.filter((c) => c.kind === 'note').map((c) => c.id))
+            invalidMergeReps = mergeRepresentativeIds(req.body).filter((id) => !noteCardIds.has(id))
+            if (invalidMergeReps.length) return null
+            // Apply and persist here, on the server, rather than relying on some
+            // connected browser tab to have this project open and save it back —
+            // that dependency meant a change-set could report success while never
+            // landing on disk. A brand-new project with no canvas yet has no
+            // tldraw schema to write into, so nothing is persisted here.
+            const next = applyChangeSetToSnapshot(canvas, req.body)
+            if (!next) {
+              noCanvas = true
+              return null
+            }
+            return next
+          },
+          // Refuse the write if the project was renamed away between resolving
+          // paths above and the write actually running (#36); the caller's
+          // change-set did not land and should be retried against the new id.
+          projectAliveGuard(dataRoot, req.params.id),
+        )
+      } catch (err) {
+        if (err instanceof ProjectGoneError) {
+          res.status(404).json({ error: 'project no longer exists at this id; it may have been renamed' })
+          return
         }
-        return next
-      })
+        throw err
+      }
       if (missing.length) {
         res.status(409).json({ error: 'card not in project', missing })
         return

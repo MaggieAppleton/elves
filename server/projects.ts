@@ -101,6 +101,16 @@ export async function getProject(dataRoot: string, id: string): Promise<Project 
   }
 }
 
+// A `writeCanvas`/`clearCanvas` guard (see store.ts) that re-checks a project
+// still lives at `id` at the moment it's called — not when the caller first
+// resolved its paths. A request handler resolves `id`'s canvas/assets paths up
+// front (requireProject), but a rename can land in the gap between that and
+// the write actually running; passing this guard makes the write refuse
+// instead of recreating the old, renamed-away directory.
+export function projectAliveGuard(dataRoot: string, id: string): () => Promise<boolean> {
+  return async () => (await getProject(dataRoot, id)) !== null
+}
+
 // The Nth candidate id for `base`: the bare slug, then -2, -3, … Shared by
 // uniqueId (which picks the first untaken one from a directory listing) and
 // createProject's atomic-create retry loop (which walks the same sequence

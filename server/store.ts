@@ -22,6 +22,22 @@ export class EmptyCanvasOverwriteError extends Error {
   }
 }
 
+/**
+ * Thrown when a write's caller-supplied guard (see `writeCanvas`'s `stillValid`
+ * argument) says the write's target is no longer valid — e.g. the project a
+ * canvas path belongs to was renamed (to a new directory) or deleted after the
+ * caller resolved its paths but before this write actually ran. The write must
+ * refuse rather than recreate the old directory (which would resurrect an
+ * orphaned folder containing only canvas.json, with the save missing from the
+ * project's real, renamed home).
+ */
+export class ProjectGoneError extends Error {
+  constructor() {
+    super('project no longer exists at this path')
+    this.name = 'ProjectGoneError'
+  }
+}
+
 export async function readCanvas(path: string): Promise<CanvasSnapshot> {
   let raw: string
   try {
@@ -83,24 +99,48 @@ function enqueue<T>(path: string, task: () => Promise<T>): Promise<T> {
  * the moment this call reaches the front of the queue, and its return value is
  * persisted — unless it returns `null`, meaning "nothing to write" (mirrors
  * applyChangeSetToSnapshot's null-means-no-op contract).
+ *
+ * @param stillValid Optional guard checked immediately before the write, inside
+ *   this call's serialized per-path task — so no queue delay can widen the
+ *   window between a caller resolving `path` and the write actually touching
+ *   disk. If it resolves `false`, the write is refused with `ProjectGoneError`
+ *   instead of proceeding to (re)create `path`'s directory. store.ts itself has
+ *   no notion of "project" — callers that write into a project's directory (see
+ *   server/app.ts) pass a guard that re-checks the project still exists;
+ *   generic/standalone callers (and this module's own tests) may omit it.
  */
 export function withCanvasLock<T extends CanvasSnapshot | null>(
   path: string,
   fn: (current: CanvasSnapshot) => T | Promise<T>,
+  stillValid?: () => Promise<boolean>,
 ): Promise<T> {
   return enqueue(path, async () => {
     const current = await readCanvas(path)
     const next = await fn(current)
-    if (next !== null) await doWrite(path, next)
+    if (next !== null) await doWrite(path, next, stillValid)
     return next
   })
 }
 
-export function writeCanvas(path: string, data: CanvasSnapshot): Promise<void> {
-  return withCanvasLock(path, () => data).then(() => undefined)
+export function writeCanvas(
+  path: string,
+  data: CanvasSnapshot,
+  stillValid?: () => Promise<boolean>,
+): Promise<void> {
+  return withCanvasLock(path, () => data, stillValid).then(() => undefined)
 }
 
-async function doWrite(path: string, data: CanvasSnapshot): Promise<void> {
+async function doWrite(
+  path: string,
+  data: CanvasSnapshot,
+  stillValid?: () => Promise<boolean>,
+): Promise<void> {
+  // Refuse to write — and never recreate a directory the caller's guard says
+  // is gone (e.g. a project renamed/deleted between path resolution and this
+  // write actually running).
+  if (stillValid && !(await stillValid())) {
+    throw new ProjectGoneError()
+  }
   await fs.mkdir(dirname(path), { recursive: true })
   // A save must never blank a canvas that holds a real document. An incoming
   // snapshot with no document (the EMPTY_CANVAS sentinel) may only land on a
