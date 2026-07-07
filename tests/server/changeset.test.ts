@@ -87,8 +87,10 @@ test('POST changeset validates and forwards to onChangeSet with the project id',
   const d = await rootWithProject()
   const onChangeSet = vi.fn()
   const app = createServer(d, onChangeSet)
+  // No canvas yet: nothing persists, but the broadcast still fires so an
+  // open browser tab can self-heal.
   const ok = await request(app).post('/projects/essay/changeset').send(csCreate)
-  expect(ok.status).toBe(200)
+  expect(ok.status).toBe(409)
   expect(onChangeSet).toHaveBeenCalledWith('essay', csCreate)
 
   const bad = await request(app).post('/projects/essay/changeset').send({ id: 'x', ops: 'nope' })
@@ -250,6 +252,10 @@ function mixedCardsSnapshot() {
           id: 'shape:prose', typeName: 'shape', type: 'card', x: 0, y: 400,
           props: { w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text: 'my own words', figureTitle: '', figureStatus: null, authoredBy: null, comments: [], mergedInto: null },
         },
+        'shape:ref': {
+          id: 'shape:ref', typeName: 'shape', type: 'card', x: 0, y: 600,
+          props: { w: 240, h: 120, kind: 'note', noteKind: 'reference', origin: 'reference', text: 'my own annotation', figureTitle: '', figureStatus: null, authoredBy: null, comments: [], mergedInto: null },
+        },
       },
     },
     session: null,
@@ -287,6 +293,12 @@ test('edit_card REFUSES to touch a prose card — the user\'s draft is protected
   const cs = { id: 'x', author: 'claude', ops: [{ kind: 'edit_card' as const, cardId: 'shape:prose', text: 'agent trying to rewrite prose' }] }
   const next = applyChangeSetToSnapshot(mixedCardsSnapshot(), cs) as any
   expect(next.document.store['shape:prose'].props.text).toBe('my own words')
+})
+
+test('edit_card REFUSES to touch a reference card\'s annotation — that stays the user\'s alone', () => {
+  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'edit_card' as const, cardId: 'shape:ref', text: 'agent trying to rewrite the annotation' }] }
+  const next = applyChangeSetToSnapshot(mixedCardsSnapshot(), cs) as any
+  expect(next.document.store['shape:ref'].props.text).toBe('my own annotation')
 })
 
 test('delete_card removes a Claude-authored card', () => {
@@ -445,14 +457,19 @@ test('changeset with ungroup_cards on a real group in the project dissolves it',
   expect(map.body.cards.find((c: any) => c.id === 'shape:a')).not.toHaveProperty('groupId')
 })
 
-test('create_note_card on a project with no canvas yet falls back to broadcast-only (no crash)', async () => {
+test('changeset on a project with no canvas yet reports 409 (applied: false) but still broadcasts', async () => {
   const d = await rootWithProject()
   const onChangeSet = vi.fn()
   const app = createServer(d, onChangeSet)
   const res = await request(app).post('/projects/essay/changeset').send(csCreate)
-  expect(res.status).toBe(200)
+  expect(res.status).toBe(409)
+  expect(res.body).toMatchObject({ applied: false })
   expect(onChangeSet).toHaveBeenCalledWith('essay', csCreate)
   expect((await fullDigest(app, 'essay')).body.cards).toEqual([])
+
+  // Nothing was persisted: no canvas.json exists on disk.
+  const canvasPath = join(d, 'projects', 'essay', 'canvas.json')
+  await expect(fs.access(canvasPath)).rejects.toThrow()
 })
 
 test('two changesets targeting different projects both land on disk with no browser connected', async () => {
