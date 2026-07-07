@@ -58,7 +58,7 @@ export function authorsLabel(authors: string[]): string {
 /**
  * Best-effort refType from a URL host alone, so a freshly pasted link renders
  * as the right *kind* of card even before richer metadata arrives. The server
- * unfurl and Claude can override this.
+ * unfurl and an agent can override this.
  */
 export function guessRefType(url: string): RefType {
   const h = refHost(url).toLowerCase()

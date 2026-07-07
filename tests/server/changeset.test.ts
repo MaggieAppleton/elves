@@ -260,7 +260,33 @@ test('applyChangeSetToSnapshot persists a figure card with title, description-as
   expect(created.props.authoredBy).toBe('openai')
 })
 
-// A canvas holding a Claude-authored figure and note, plus a user-authored prose
+test('applyChangeSetToSnapshot stamps the change-set author onto a created section', () => {
+  // Sections carry an authorship mark like cards; a non-Claude agent's section
+  // must be attributed to that agent, not hardcoded to 'claude'.
+  const snap = {
+    document: { store: { 'page:page': { id: 'page:page', typeName: 'page' } } },
+    session: null,
+  } as any
+  const cs = { id: 'x', author: 'codex', ops: [{ kind: 'create_section' as const, text: 'Origins', x: 1, y: 2 }] }
+  const next = applyChangeSetToSnapshot(snap, cs) as any
+  const created = Object.values(next.document.store).find(
+    (r: any) => r?.typeName === 'shape' && r.type === 'section',
+  ) as any
+  expect(created.props.authoredBy).toBe('codex')
+})
+
+test('applyChangeSetToSnapshot stamps the change-set author onto an added comment', () => {
+  const cs = {
+    id: 'x', author: 'codex',
+    ops: [{ kind: 'add_comment' as const, cardId: 'shape:a', comment: { type: null, text: 'thin here' } }],
+  }
+  const next = applyChangeSetToSnapshot(cardSnapshot('shape:a'), cs) as any
+  const card = next.document.store['shape:a']
+  expect(card.props.comments).toHaveLength(1)
+  expect(card.props.comments[0].author).toBe('codex')
+})
+
+// A canvas holding an agent-authored figure and note, plus a user-authored prose
 // card, so the edit/delete guards can be exercised across the boundary.
 function mixedCardsSnapshot() {
   return {

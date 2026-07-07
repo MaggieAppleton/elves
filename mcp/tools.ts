@@ -7,7 +7,7 @@ import {
   readCardMap, readCards, readDraft, postChangeSet, unfurlReference, listProjects, type ProjectSummary,
 } from './elvesClient'
 
-/** Fields Claude may supply to override / enrich the unfurl baseline. */
+/** Fields an agent may supply to override / enrich the unfurl baseline. */
 export interface ReferenceFields {
   refType?: RefType
   title?: string
@@ -96,7 +96,7 @@ export function createNoteCardTool(
 /**
  * Create a reference note card. Fetches an unfurl baseline for the url
  * (title/site/favicon/hero, and citation metadata for papers), then overlays any
- * fields Claude researched — Claude wins for the fields it provides, the unfurl
+ * fields the agent researched — those win for the fields it provides, the unfurl
  * baseline fills the rest (and keeps the locally-cached favicon/thumbnail). If
  * the page can't be fetched, falls back to a minimal reference so a card still
  * lands. Writes only reference *facts* + a new note card — never prose.
@@ -147,7 +147,7 @@ export function createSectionTool(
  * diagram, interactive animation) at its narrative position. `title` is a short
  * working title; `description` says what the visual needs to show, in words. The
  * card is born at status `idea` and carries this process's agent authorship mark,
- * since Claude is suggesting a placeholder the user refines or rejects. A figure
+ * since the agent is suggesting a placeholder the user refines or rejects. A figure
  * is a plan/annotation, never the user's prose — the safe side of the boundary,
  * like a section label.
  */
@@ -179,7 +179,7 @@ export function editCardTool(
 }
 
 /**
- * Delete a card Claude authored — a suggestion it dropped (a figure, a note it
+ * Delete a card an agent authored — a suggestion it dropped (a figure, a note it
  * transcribed). The server restricts this to agent-authored cards, so it can
  * never remove the user's own prose or notes; those stay the user's to delete.
  */

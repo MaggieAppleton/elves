@@ -42,7 +42,7 @@ const components = { SelectionForeground: CardSelectionForeground }
 
 // A dismissed question is answered/waved off: hidden from render AND hit-testing
 // (so it can't linger as an invisible-yet-selectable ghost), but kept in the
-// file so it stays recoverable and Claude still sees it in read_map.
+// file so it stays recoverable and the agent still sees it in read_map.
 const questionIsHidden = (shape: { type: string; props: { dismissed?: boolean } }) =>
   shape.type === 'question' && !!shape.props.dismissed
 

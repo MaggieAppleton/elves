@@ -257,7 +257,8 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
         type: T.nullable(T.literalEnum('needs-evidence', 'weak-argument', 'needs-citation', 'wants-figure')),
         text: T.string,
         resolved: T.boolean,
-        author: T.literalEnum('claude'),
+        // Any agent id (e.g. 'claude', 'codex'); resolved through the agent registry.
+        author: T.string,
       }),
     ),
     mergedInto: T.nullable(T.string),
