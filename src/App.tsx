@@ -350,6 +350,22 @@ export default function App() {
     ed.on('event', (info) => {
       if (info.name === 'pointer_down' && info.target === 'canvas') collapseAll()
     })
+    // Foreclose rotating the native `group` shape (issue #39). card/section utils
+    // veto their own rotation, but grouped cards can be rotated via the GROUP's
+    // handle/action — and `group` is a tldraw core shape that cannot be overridden
+    // with a custom util (checkShapesAndAddCore throws). A rotated group ancestor
+    // reintroduces the very client/server reading-order divergence this issue
+    // closes: server/digest.ts resolvePageXY walks parent x/y additively with no
+    // rotation matrix. So we clamp any group back to rotation 0 in the store — the
+    // one place every rotate path (drag handle AND the rotate-90 actions) funnels
+    // through. Reverting x/y too keeps the group from orbiting its pivot as it's
+    // held un-rotated.
+    ed.sideEffects.registerBeforeChangeHandler('shape', (prev, next) => {
+      if (next.type === 'group' && next.rotation !== 0) {
+        return { ...next, rotation: 0, x: prev.x, y: prev.y }
+      }
+      return next
+    })
     const pid = projectIdRef.current
     if (!pid) return
     loadCanvas(pid)

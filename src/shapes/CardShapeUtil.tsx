@@ -2,7 +2,7 @@ import {
   ShapeUtil, TLBaseShape, HTMLContainer, Rectangle2d, T, RecordProps,
   createShapePropsMigrationSequence, createShapePropsMigrationIds, resizeBox,
   stopEventPropagation,
-  type Editor, type Geometry2d, type TLResizeInfo,
+  type Editor, type Geometry2d, type TLResizeInfo, type TLShapePartial,
 } from 'tldraw'
 import { useLayoutEffect, type CSSProperties, type ReactNode } from 'react'
 import type { CardKind, NoteKind, Origin, Comment, Reference, FigureStatus } from '../model/types'
@@ -612,6 +612,17 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
 
   override canResize() { return true }
   override canEdit() { return true }
+  // Rotation has no role in this spatial-narrative model: resolvePageXY (the
+  // server/MCP compile in server/digest.ts) walks page x/y additively and is
+  // only exact when no ancestor is rotated. tldraw has no canRotate() flag, so
+  // we hide the interactive handle AND veto the rotate-90 actions (which don't
+  // check hideRotateHandle) by snapping every onRotate back to the shape's
+  // pre-rotation pose. Together these keep the Draft pane and read_draft from
+  // ever disagreeing on reading order. See issue #39.
+  override hideRotateHandle() { return true }
+  override onRotate(initial: CardShape): TLShapePartial<CardShape> {
+    return { id: initial.id, type: 'card', x: initial.x, y: initial.y, rotation: initial.rotation }
+  }
   override onResize(shape: CardShape, info: TLResizeInfo<CardShape>) {
     // Let the user set the width by dragging; height always fits the text at
     // that width, so a resize can't clip content or leave dead space.
