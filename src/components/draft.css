@@ -50,6 +50,11 @@
   color: var(--elves-ink);
 }
 .elves-draft__copy:disabled { opacity: 0.45; cursor: default; }
+.elves-draft__copy--error {
+  color: var(--elves-cc-evidence-label);
+  border-color: var(--elves-cc-evidence-border);
+  background: var(--elves-cc-evidence-bg);
+}
 .elves-draft__copy:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring);

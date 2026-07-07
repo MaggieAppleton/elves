@@ -55,14 +55,16 @@ export function DraftPane({
     [editor],
   )
 
-  const [copied, setCopied] = useState(false)
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle')
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(draftToMarkdown(blocks))
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1400)
+      setCopyStatus('copied')
+      setTimeout(() => setCopyStatus('idle'), 1400)
     } catch (err) {
       console.error('Elves: copy draft failed', err)
+      setCopyStatus('error')
+      setTimeout(() => setCopyStatus('idle'), 1400)
     }
   }
 
@@ -73,13 +75,13 @@ export function DraftPane({
       <header className="elves-draft__bar">
         <span className="elves-draft__label">Draft</span>
         <button
-          className="elves-draft__copy"
+          className={`elves-draft__copy${copyStatus === 'error' ? ' elves-draft__copy--error' : ''}`}
           data-testid="draft-copy"
           onClick={copy}
           disabled={empty}
           title="Copy the draft as Markdown"
         >
-          {copied ? 'Copied' : 'Copy as Markdown'}
+          {copyStatus === 'copied' ? 'Copied' : copyStatus === 'error' ? 'Copy failed' : 'Copy as Markdown'}
         </button>
       </header>
       <div className="elves-draft__scroll">
