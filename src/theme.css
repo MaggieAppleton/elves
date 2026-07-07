@@ -427,6 +427,19 @@ body {
   .elves-toolbar button { transition: none; }
 }
 
+/* Small, unobtrusive realtime connection indicator — only rendered when not
+   connected, so a healthy connection stays invisible. */
+.elves-realtime-status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--elves-ink-faint);
+}
+.elves-realtime-status[data-status='connecting'] { background: var(--elves-ink-faint); }
+.elves-realtime-status[data-status='reconnecting'] { background: #d9a441; }
+.elves-realtime-status[data-status='disconnected'] { background: #d9534f; }
+
 /* ---- Project switcher (top-right) -------------------------------------- */
 .elves-switcher {
   position: relative;

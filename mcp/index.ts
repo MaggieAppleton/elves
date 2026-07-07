@@ -160,7 +160,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'edit_card',
-    "Edit an existing WORKING-MATERIAL card in place — a note's body, a reference card's annotation, or a figure's description, all via `text`; plus a figure's working `title` (figures only). Pass only the field(s) you want to change; omit the rest to leave them untouched. Get the cardId from read_map. This edits everything EXCEPT a PROSE card — that holds the user's own draft, which is theirs alone to write, and the server refuses to edit it. Notes, references, and figures are working material Claude helps maintain. Prefer this over delete + recreate — it keeps the card's id, position, and authorship mark. (To change a reference card's bibliographic metadata rather than its annotation, that's not editable here; recreate it.)",
+    "Edit an existing WORKING-MATERIAL card in place — a note's body or a figure's description, via `text`; plus a figure's working `title` (figures only). Pass only the field(s) you want to change; omit the rest to leave them untouched. Get the cardId from read_map. This edits notes and figures, which are working material Claude helps maintain. It does NOT edit a PROSE card — that holds the user's own draft, theirs alone to write — nor a REFERENCE card's `text`, which is the user's own annotation; a reference's bibliographic facts are set once at creation and aren't editable here (recreate it to change them). Prefer this over delete + recreate — it keeps the card's id, position, and authorship mark.",
     { project: PROJECT, cardId: z.string(), text: z.string().optional(), title: z.string().optional() },
     async ({ project, cardId, text, title }) => {
       await editCardTool(baseUrl, project, { cardId, text, title })

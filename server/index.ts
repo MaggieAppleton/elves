@@ -5,12 +5,15 @@ import { createServer } from './app'
 import { attachRealtime } from './realtime'
 import { migrateLegacyCanvas } from './migrate'
 import { migrateSourceCardsToNotes } from './migrateNotes'
-import { listProjects, canvasPathFor, resyncProjectIds } from './projects'
-import { OllamaSummarizer, reconcileCanvasFile, type Summarizer } from './summarize'
+import { listProjects, resyncProjectIds } from './projects'
+import { OllamaSummarizer } from './summarize'
+import { resolveHost } from './host'
+import type { CanvasServer } from './app'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const dataRoot = process.env.ELVES_DATA ?? join(here, '..', 'data')
 const port = Number(process.env.PORT ?? 5199)
+const host = resolveHost()
 
 async function main() {
   // Bring a single-canvas install up to the multi-project layout before serving.
@@ -20,7 +23,13 @@ async function main() {
   await migrateSourceCardsToNotes(dataRoot)
   // Bring any project whose id drifted from its display name back in sync (folder
   // renamed to match slugify(name)). Idempotent; a no-op once everything matches.
-  await resyncProjectIds(dataRoot)
+  // Degrades to a log rather than blocking startup if a project is malformed
+  // or a rename fails partway through.
+  try {
+    await resyncProjectIds(dataRoot)
+  } catch (err) {
+    console.error('[elves] project id resync failed:', err)
+  }
 
   const httpServer = http.createServer()
   const { broadcast, broadcastPresence } = attachRealtime(httpServer)
@@ -29,29 +38,26 @@ async function main() {
   const app = createServer(dataRoot, broadcast, { summarizer, now }, broadcastPresence)
   httpServer.on('request', app)
 
-  httpServer.listen(port, () => {
-    console.log(`Elves server on http://localhost:${port}  (data: ${dataRoot}, summarizer: ${summarizer.label})`)
+  // Binds loopback-only by default (see server/host.ts) — set ELVES_HOST=0.0.0.0
+  // to explicitly opt in to LAN/remote access.
+  httpServer.listen(port, host, () => {
+    console.log(`Elves server on http://${host}:${port}  (data: ${dataRoot}, summarizer: ${summarizer.label})`)
   })
 
   // Backfill summaries for cards that don't have a current one yet, so the
   // zoom-out view works on existing canvases without waiting for an edit. The
   // hash guard makes this a no-op after the first run, and it degrades to
-  // nothing (never throws) when the summarizer is unreachable.
-  void backfillSummaries(dataRoot, summarizer, now, broadcast)
+  // nothing (never throws) when the summarizer is unreachable. Goes through
+  // the app's own runSummaries so it shares the running/dirty single-flight
+  // guard with scheduled reconciles — this backfill can never run concurrently
+  // with a debounced reconcile for the same project.
+  void backfillSummaries(dataRoot, app)
 }
 
-async function backfillSummaries(
-  dataRoot: string,
-  summarizer: Summarizer,
-  now: () => string,
-  broadcast: (projectId: string, cs: import('../src/model/changeset').ChangeSet) => void,
-): Promise<void> {
+async function backfillSummaries(dataRoot: string, app: CanvasServer): Promise<void> {
   try {
     for (const project of await listProjects(dataRoot)) {
-      const canvasPath = canvasPathFor(dataRoot, project.id)
-      if (!canvasPath) continue
-      const cs = await reconcileCanvasFile(canvasPath, summarizer, now)
-      if (cs) broadcast(project.id, cs)
+      await app.runSummaries(project.id)
     }
   } catch (err) {
     console.error('[elves] summary backfill failed:', err)
