@@ -1,6 +1,7 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import {
   debounce,
+  createSaver,
   loadCanvas,
   saveCanvas,
   listProjects,
@@ -79,4 +80,81 @@ test('loadCanvas throws when the response is not ok', async () => {
 test('saveCanvas throws when the response is not ok', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) })))
   await expect(saveCanvas('essay', { a: 1 })).rejects.toThrow('save failed: 500')
+})
+
+test('createSaver retries once more if a request comes in while a save is in flight, capturing the latest state', async () => {
+  // Mirrors real usage: the "snapshot" is read synchronously at the moment
+  // saveFn is invoked, then persisted asynchronously — so a request that
+  // arrives mid-flight must trigger a second call reading the *newer* state.
+  let state = 'first'
+  const persisted: string[] = []
+  let resolveFirst: () => void
+  const first = new Promise<void>((resolve) => {
+    resolveFirst = resolve
+  })
+  let calls = 0
+  const saveFn = vi.fn(() => {
+    calls += 1
+    const snapshot = state // captured synchronously at call time
+    if (calls === 1) return first.then(() => { persisted.push(snapshot) })
+    persisted.push(snapshot)
+    return Promise.resolve()
+  })
+  const saver = createSaver(saveFn)
+
+  saver.request()
+  expect(saveFn).toHaveBeenCalledTimes(1)
+
+  // A second edit arrives (state changes) while the first save is still in flight.
+  state = 'latest'
+  saver.request()
+  expect(saveFn).toHaveBeenCalledTimes(1) // no overlapping call yet
+
+  resolveFirst!()
+  await first
+  // let the .finally/retry microtasks flush
+  await Promise.resolve()
+  await Promise.resolve()
+
+  expect(saveFn).toHaveBeenCalledTimes(2)
+  expect(persisted).toEqual(['first', 'latest'])
+})
+
+test('createSaver does not retry when no request arrives during the in-flight save', async () => {
+  const saveFn = vi.fn(async () => {})
+  const saver = createSaver(saveFn)
+  saver.request()
+  await Promise.resolve()
+  await Promise.resolve()
+  expect(saveFn).toHaveBeenCalledTimes(1)
+})
+
+test('createSaver does not wedge when a save rejects: the error is swallowed and later requests still save', async () => {
+  const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  let reject: (err: unknown) => void
+  const first = new Promise<void>((_, rej) => {
+    reject = rej
+  })
+  const saveFn = vi.fn(() => (saveFn.mock.calls.length === 1 ? first : Promise.resolve()))
+  const saver = createSaver(saveFn)
+
+  saver.request()
+  expect(saveFn).toHaveBeenCalledTimes(1)
+
+  // The in-flight save rejects — a pendingDirty request queued mid-flight must
+  // still flush on settle, proving saving=false is cleared even on rejection.
+  saver.request()
+  reject!(new Error('boom'))
+  await first.catch(() => {}) // swallow so the rejection doesn't escape the test
+  await Promise.resolve()
+  await Promise.resolve()
+
+  expect(errorSpy).toHaveBeenCalledWith('Elves: canvas save failed', expect.any(Error))
+  // Flush from the pendingDirty retry happened despite the first save rejecting.
+  expect(saveFn).toHaveBeenCalledTimes(2)
+
+  // And the saver isn't stuck with saving=true forever: a fresh request saves again.
+  saver.request()
+  await Promise.resolve()
+  expect(saveFn).toHaveBeenCalledTimes(3)
 })
