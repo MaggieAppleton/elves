@@ -415,9 +415,9 @@ export default function App() {
       props,
     })
     editor.select(id)
-    // A figure is born blank — drop straight into editing so the title/description
-    // fields are ready to type, the way a new section opens its editor.
-    if (kind === 'figure') editor.setEditingShape(id)
+    // A new card is born blank — drop straight into editing so the fields
+    // are ready to type, the way a new section opens its editor.
+    editor.setEditingShape(id)
   }
 
   const addSection = () => {
