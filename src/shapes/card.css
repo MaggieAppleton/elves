@@ -421,6 +421,44 @@
   overflow-wrap: anywhere;
 }
 
+/* The user's own annotation, sitting under the (read-only) bibliographic face.
+   elves-ref__annotation-input mirrors .elves-card__editor's transparent,
+   pointer-events-opted-in textarea; elves-ref__annotation is its read-only
+   twin, styled like .elves-ref__desc so it reads as part of the card body. */
+.elves-ref__annotation {
+  flex: 1;
+  padding: 0 13px 13px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--elves-ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.elves-ref__annotation-input {
+  display: block;
+  flex: 1;
+  /* min-height:0 lets the textarea shrink to the height the autosize measurement
+     reserved for it (its intrinsic multi-row default would otherwise force the
+     card taller than the read-only div for the same text). */
+  min-height: 0;
+  width: 100%;
+  margin: 0;
+  padding: 0 13px 13px;
+  box-sizing: border-box;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  color: inherit;
+  pointer-events: all;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
 /* ↗ open — the one interactive target on the face. It opts back into pointer
    events (the rest of the card stays click-through so tldraw can select/drag
    it), opens the url, and on hover reveals the full-metadata panel. */

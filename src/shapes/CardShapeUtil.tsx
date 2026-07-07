@@ -213,7 +213,7 @@ function AutosizeCard({
       const want = cur.props.kind === 'figure'
         ? measuredFigureHeight(editor, cur.props.figureTitle, cur.props.text, cur.props.w)
         : cur.props.noteKind === 'reference' && cur.props.reference
-        ? measuredReferenceHeight(editor, cur.props.reference, cur.props.w)
+        ? measuredReferenceHeight(editor, cur.props.reference, cur.props.text, cur.props.w)
         : measuredCardHeight(editor, cur.props.text, cur.props.w, cur.props.kind === 'note')
       if (Math.abs(want - cur.props.h) > 1) {
         editor.updateShape<CardShape>({ id: cur.id, type: 'card', props: { h: want } })
@@ -408,11 +408,33 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                 data-testid="card-image"
               />
             ) : isReference ? (
-              // Reference cards render a type-adaptive face; the annotation text
-              // (shape.props.text) stays the user's own words, edited elsewhere.
+              // Reference cards render a type-adaptive face — bibliographic
+              // metadata (title/authors/etc.) is always read-only, sourced from
+              // the reference itself. The annotation (shape.props.text) is the
+              // user's own words underneath it: an editable textarea while
+              // editing, mirroring the prose/note pattern below, and a plain
+              // line of text otherwise.
               <>
                 {mergedBadge}
                 <ReferenceCardFace reference={reference} />
+                {isEditing ? (
+                  <textarea
+                    className="elves-ref__annotation-input"
+                    data-testid="ref-annotation-input"
+                    autoFocus
+                    defaultValue={text}
+                    placeholder="Add your own notes…"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onChange={(e) =>
+                      this.editor.updateShape<CardShape>({
+                        id: shape.id, type: 'card',
+                        props: { text: e.currentTarget.value },
+                      })
+                    }
+                  />
+                ) : text ? (
+                  <div className="elves-ref__annotation" data-testid="ref-annotation">{text}</div>
+                ) : null}
               </>
             ) : isFigure ? (
               // Figure cards plan a visual: a dashed sketch-frame with an image
@@ -632,7 +654,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     const h = shape.props.kind === 'figure'
       ? measuredFigureHeight(this.editor, shape.props.figureTitle, shape.props.text, w)
       : shape.props.noteKind === 'reference' && shape.props.reference
-      ? measuredReferenceHeight(this.editor, shape.props.reference, w)
+      ? measuredReferenceHeight(this.editor, shape.props.reference, shape.props.text, w)
       : measuredCardHeight(this.editor, shape.props.text, w, shape.props.kind === 'note')
     return { ...next, props: { ...next.props, h } }
   }
