@@ -381,6 +381,11 @@ body {
   gap: 8px;
 }
 .elves-toolbar {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 400;
   display: flex;
   gap: 2px;
   padding: 3px;
