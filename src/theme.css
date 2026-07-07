@@ -370,7 +370,6 @@ body {
 }
 
 /* ---- Creation toolbar (top-center) as an elevated action cluster -------- */
-/* Sits just below the centered view toggle. */
 .elves-topbar {
   position: fixed;
   top: 12px;

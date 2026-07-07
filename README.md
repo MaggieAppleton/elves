@@ -1,6 +1,6 @@
 # Elves
 
-A local-first, canvas-based writing studio for taking a piece from scattered notes to a shaped set of your-own-voice points. You think spatially on an infinite canvas of cards; the tool keeps everything on your machine in a plain, human-readable file.
+A local-first, canvas-based writing studio for taking a piece from scattered notes to a shaped set of your-own-voice points. You think spatially on an infinite canvas of cards; the tool keeps everything on your machine in local files you own.
 
 ## Features
 
@@ -30,11 +30,11 @@ A local-first, canvas-based writing studio for taking a piece from scattered not
 
 **Summaries & the zoom-out map.** Every note and prose card gets a one-line **summary** generated **locally by [Ollama](https://ollama.com)**. Zoom out past ~70% and each card shows its summary instead of its full text (orange, one uniform readable size, cards grow to fit so nothing is cut off) — so a big piece reads at a glance. No Ollama? Summaries just stay empty and nothing breaks.
 
-**Linear draft — read the canvas as a piece.** A **Canvas · Split · Draft** toggle (top-left, or cycle with `⌘/Ctrl + \`) slides in a reading pane that compiles your prose cards into one continuous draft, in true narrative order: **sections** run left → right as the order of the piece, and **within a section** cards run top → bottom. Click any paragraph to jump to its card on the canvas; **Copy as Markdown** exports the whole thing with `##` headings. Only prose compiles (notes, figures, and questions stay off the page), and you can opt any card out of the draft so an aside doesn't read as part of the piece. It's read-only — the canvas stays the one place prose is written — and Claude reads the very same compile through `read_draft`.
+**Linear draft — read the canvas as a piece.** A **draft drawer** slides in from the right edge — pull it out with the **«** tab, or cycle **Canvas · Split · Draft** with `⌘/Ctrl + \` (add `⇧` to walk back) — compiling your prose cards into one continuous reading pane, in true narrative order: **sections** run left → right as the order of the piece, and **within a section** cards run top → bottom. Click any paragraph to jump to its card on the canvas; **Copy as Markdown** exports the whole thing with `##` headings. Only prose compiles (notes, figures, and questions stay off the page), and you can opt any card out of the draft so an aside doesn't read as part of the piece. It's read-only — the canvas stays the one place prose is written — and Claude reads the very same compile through `read_draft`.
 
 **Projects.** Keep several pieces at once, each a self-contained, portable folder; create / switch / rename from the toolbar.
 
-**Claude via MCP.** With the app running, Claude works the canvas through a scoped [MCP](https://modelcontextprotocol.io) server. It **reads** with `list_projects`, `read_map` (a cheap, token-light map with a one-line gist per card, plus the section and group lists), `read_cards` (full text on demand), and `read_draft` (the piece as one linear draft). It **organizes and critiques** with `add_comment`, `merge_notes`, `move_cards`, `create_note_card` (transcribe), `create_reference`, `create_figure_card`, `create_question`, `create_section` / `edit_section_text` / `move_sections`, and `group_cards` / `ungroup_cards`. It can `edit_card` (a note's body, a reference's annotation, or a figure's title/description) and `delete_card` — but only for working-material cards it authored. Every tool targets a specific project, and **none can write your prose**. Cards Claude adds are born a little wider (500px) since it drops in a finished thought rather than a box you grow as you type.
+**Claude via MCP.** With the app running, Claude works the canvas through a scoped [MCP](https://modelcontextprotocol.io) server. It **reads** with `list_projects`, `read_map` (a cheap, token-light map with a one-line gist per card, plus the section and group lists), `read_cards` (full text on demand), and `read_draft` (the piece as one linear draft). It **organizes and critiques** with `add_comment`, `merge_notes`, `move_cards`, `create_note_card` (transcribe), `create_reference`, `create_figure_card`, `create_question`, `create_section` / `edit_section_text` / `move_sections`, and `group_cards` / `ungroup_cards`. It can `edit_card` (a note's body, a reference's annotation, or a figure's title/description) and `delete_card` — but only for working-material cards it authored. Every tool targets a specific project, and **none can write your prose**.
 
 ## Requirements
 
@@ -84,7 +84,7 @@ npm run dev       # web app on :5173
 - **+ Figure** adds a figure card — a placeholder for a planned visual; click its **status chip** to cycle `idea → sketched → final`.
 - **Drag** cards to arrange them; use the canvas to group and lay out your argument spatially. Drag a card's corner to **resize** it.
 - **Double-click** a card to edit its text; click empty canvas to commit.
-- The **view toggle** (top-left) switches between **Canvas · Split · Draft**, or cycle with `⌘/Ctrl + \`.
+- The **draft drawer** slides in from the right — pull the **«** tab, or cycle **Canvas · Split · Draft** with `⌘/Ctrl + \` (add `⇧` to walk back).
 - The **project switcher** (top-right) creates / switches / renames projects.
 - Edits save automatically (debounced) to the current project's `canvas.json`.
 
@@ -172,7 +172,7 @@ src/
   meta.ts                 # shared build/version metadata
   theme.css               # --elves-card-font and layout
   components/ProjectSwitcher.tsx # top-right project menu (list / switch / new / rename)
-  components/ViewToggle.tsx      # Canvas · Split · Draft switch (⌘/Ctrl + \)
+  components/DraftDrawerControls.tsx # draft-drawer chevrons: Canvas · Split · Draft (⌘/Ctrl + \)
   components/DraftPane.tsx       # the linear draft: canvas compiled into a piece, read-only
   model/                  # pure data model: cards, comments, sections, change-set ops
   model/draft.ts          # compile the canvas into narrative reading order (shared by pane + server + MCP)
@@ -210,7 +210,7 @@ data/projects/<id>/       # each project's canvas.json + assets/ (git-ignored)
 
 ## Data & privacy
 
-Local-first by design. Each project is a plain, human-readable folder (`data/projects/<id>/canvas.json` plus an `assets/` folder of image files), all on your machine and git-ignored. **Your canvas is never sent anywhere.**
+Local-first by design. Each project is a self-contained local folder (`data/projects/<id>/canvas.json` — a raw tldraw record dump that also carries the session's camera and selection — plus an `assets/` folder of image files), all on your machine and git-ignored. **Your canvas is never sent anywhere.**
 
 The one thing that reaches outside your machine is **reference unfurling**: when you paste
 a link (or ask Claude to enrich/research references), the server fetches *that public URL*
