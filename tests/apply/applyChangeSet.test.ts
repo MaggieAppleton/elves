@@ -81,6 +81,16 @@ describe('applyChangeSet affected-id contract', () => {
     expect((ed._shapes.get('card:b') as any).props.mergedInto).toBe('card:a')
   })
 
+  test('merge_notes with a non-note representative → no merge, nothing affected', () => {
+    const prose = { id: 'card:prose', type: 'card', x: 0, y: 0, props: { kind: 'prose', w: 200, h: 60, comments: [], mergedInto: null, text: 'my own words' } }
+    const ed = fakeEditor([prose, noteCard('card:b')])
+    expect(applyChangeSet(ed as unknown as Editor, cs([
+      { kind: 'merge_notes', cardIds: ['card:prose', 'card:b'] },
+    ]))).toEqual([])
+    expect((ed._shapes.get('card:b') as any).props.mergedInto).toBeNull()
+    expect((ed._shapes.get('card:prose') as any).props.text).toBe('my own words')
+  })
+
   test('move_cards → the ids actually moved', () => {
     const ed = fakeEditor([noteCard('card:a'), noteCard('card:b')])
     expect(applyChangeSet(ed as unknown as Editor, cs([
@@ -171,6 +181,22 @@ describe('applyChangeSet affected-id contract', () => {
       { kind: 'ungroup_cards', groupId: 'shape:g1' },
     ]))).toEqual(['card:a', 'card:b'])
     expect(ed._ungrouped).toEqual(['shape:g1'])
+  })
+
+  test('edit_card updates a note card\'s text — notes are working material', () => {
+    const ed = fakeEditor([noteCard('card:a', { noteKind: 'text', text: 'old body' })])
+    expect(applyChangeSet(ed as unknown as Editor, cs([
+      { kind: 'edit_card', cardId: 'card:a', text: 'new body' },
+    ]))).toEqual(['card:a'])
+    expect((ed._shapes.get('card:a') as any).props.text).toBe('new body')
+  })
+
+  test('edit_card REFUSES to touch a reference card\'s annotation — that stays the user\'s alone', () => {
+    const ed = fakeEditor([noteCard('card:ref', { noteKind: 'reference', text: 'my own annotation' })])
+    expect(applyChangeSet(ed as unknown as Editor, cs([
+      { kind: 'edit_card', cardId: 'card:ref', text: 'agent trying to rewrite the annotation' },
+    ]))).toEqual([])
+    expect((ed._shapes.get('card:ref') as any).props.text).toBe('my own annotation')
   })
 
   test('set_summary → [cardId]', () => {

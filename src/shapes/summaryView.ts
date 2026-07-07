@@ -10,17 +10,19 @@ export const GIST_ZOOM = 0.7
 
 /**
  * Whether a card should render its gist rather than its full text right now.
- * Only text cards with an actual model summary switch — image and reference
- * cards keep their faces, and a card with no summary (short, or not yet
- * generated) keeps showing its own text.
+ * Image and reference cards keep their faces. Everything else with a model
+ * summary OR non-empty text switches — matching the server's read_map
+ * fallback (server/digest.ts), a model summary is shown when present, else a
+ * mechanical gist of the text (see `mechanicalGist` in model/summary.ts). A
+ * card with neither (empty text, not yet typed into) keeps showing as-is.
  */
 export function shouldShowGist(
   zoom: number,
-  card: { noteKind: NoteKind | null; summary: string | null },
+  card: { noteKind: NoteKind | null; summary: string | null; text?: string },
 ): boolean {
   if (zoom >= GIST_ZOOM) return false
   if (card.noteKind === 'image' || card.noteKind === 'reference') return false
-  return !!card.summary
+  return !!card.summary || !!card.text?.trim()
 }
 
 /**

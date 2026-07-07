@@ -11,6 +11,7 @@ import {
   makeFigureCardProps,
 } from './model/cards'
 import { makeSectionProps } from './model/sections'
+import { cascadeOffset } from './model/layout'
 import { requestUnfurl } from './client/references'
 import {
   loadCanvas,
@@ -111,6 +112,9 @@ export default function App() {
   // than drop them and lose the agent's action, buffer them here, tagged with
   // their target project, and reconcile once the load resolves.
   const pendingChangeSetsRef = useRef<{ projectId: string; cs: ChangeSet }[]>([])
+  // Counts spawns via addCard/addSection so each new card/section cascades
+  // away from the last instead of stacking invisibly at the viewport center.
+  const spawnCountRef = useRef(0)
 
   // Three view states — canvas only, split, draft only — plus the split ratio
   // (canvas fraction). tldraw stays MOUNTED in all three; draft-only just
@@ -406,30 +410,32 @@ export default function App() {
       kind === 'prose' ? makeProseCardProps()
       : kind === 'figure' ? makeFigureCardProps()
       : makeNoteCardProps()
+    const { dx, dy } = cascadeOffset(spawnCountRef.current++)
     const id = createShapeId()
     editor.createShape<CardShape>({
       id,
       type: 'card',
-      x: center.x - props.w / 2,
-      y: center.y - props.h / 2,
+      x: center.x - props.w / 2 + dx,
+      y: center.y - props.h / 2 + dy,
       props,
     })
     editor.select(id)
-    // A figure is born blank — drop straight into editing so the title/description
-    // fields are ready to type, the way a new section opens its editor.
-    if (kind === 'figure') editor.setEditingShape(id)
+    // A new card is born blank — drop straight into editing so the fields
+    // are ready to type, the way a new section opens its editor.
+    editor.setEditingShape(id)
   }
 
   const addSection = () => {
     if (!editor) return
     const center = editor.getViewportPageBounds().center
     const props = makeSectionProps()
+    const { dx, dy } = cascadeOffset(spawnCountRef.current++)
     const id = createShapeId()
     editor.createShape<SectionShape>({
       id,
       type: 'section',
-      x: center.x - props.w / 2,
-      y: center.y - props.h / 2,
+      x: center.x - props.w / 2 + dx,
+      y: center.y - props.h / 2 + dy,
       props,
     })
     editor.select(id)
