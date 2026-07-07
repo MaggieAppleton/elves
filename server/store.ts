@@ -84,6 +84,12 @@ async function doWrite(path: string, data: CanvasSnapshot): Promise<void> {
   // bad-but-valid write (a lossy change-set) is recoverable from `<path>.bak`
   // instead of being permanent. Runs inside the serialized write chain, so no
   // other write interleaves.
+  //
+  // FOLLOW-UP (out of scope for the network-boundary hardening in issue #29):
+  // this is a single rolling `.bak`, not integrity-checked or rotated — a
+  // corrupt write followed by another write still loses the last-known-good
+  // state. Rotating/checksummed backups are tracked separately and
+  // deliberately not implemented here.
   await backupExisting(path)
   const tmp = `${path}.${process.pid}.${tmpSeq++}.tmp`
   await fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf8')

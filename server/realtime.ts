@@ -2,9 +2,19 @@ import { WebSocketServer, WebSocket } from 'ws'
 import type { Server } from 'node:http'
 import type { ChangeSet } from '../src/model/changeset'
 import type { PresenceMessage } from '../src/model/presence'
+import { getAllowedOrigins, isOriginAllowed } from './origins'
 
 export function attachRealtime(httpServer: Server) {
-  const wss = new WebSocketServer({ server: httpServer, path: '/ws' })
+  // Same allowlist as the HTTP CORS check (server/origins.ts), so a browser
+  // page can't reach the realtime feed just because CORS blocked its HTTP
+  // calls. A connection with no Origin header (non-browser clients) is
+  // allowed, matching the CORS no-Origin behaviour.
+  const allowedOrigins = getAllowedOrigins()
+  const wss = new WebSocketServer({
+    server: httpServer,
+    path: '/ws',
+    verifyClient: (info: { origin: string }) => isOriginAllowed(info.origin, allowedOrigins),
+  })
   const clients = new Set<WebSocket>()
 
   wss.on('connection', (ws) => {
