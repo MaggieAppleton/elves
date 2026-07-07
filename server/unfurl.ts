@@ -24,7 +24,7 @@ export function decodeEntities(s: string): string {
       const n = code[1] === 'x' || code[1] === 'X'
         ? parseInt(code.slice(2), 16)
         : parseInt(code.slice(1), 10)
-      return Number.isFinite(n) ? String.fromCodePoint(n) : whole
+      return Number.isFinite(n) && n >= 0 && n <= 0x10FFFF ? String.fromCodePoint(n) : whole
     }
     return ENTITIES[code.toLowerCase()] ?? ENTITIES[code] ?? whole
   })
@@ -198,7 +198,12 @@ export async function unfurl(url: string, deps: UnfurlDeps): Promise<Reference> 
     return minimalReference(url, deps.now())
   }
 
-  const meta = parseMetadata(html, finalUrl)
+  let meta: ParsedMeta
+  try {
+    meta = parseMetadata(html, finalUrl)
+  } catch {
+    return minimalReference(url, deps.now())
+  }
 
   const saveFrom = async (imgUrl: string | null): Promise<string | null> => {
     if (!imgUrl) return null
