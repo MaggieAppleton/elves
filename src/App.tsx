@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Tldraw, Editor, getSnapshot, loadSnapshot, createShapeId, type TLShapeId } from 'tldraw'
+import { TextAUnderline, Notepad, ImagesSquare, Link, Slideshow, SelectionPlus } from '@phosphor-icons/react'
 import 'tldraw/tldraw.css'
 import './theme.css'
 import { CardShapeUtil, CardShape } from './shapes/CardShapeUtil'
@@ -740,12 +741,12 @@ export default function App() {
               can never spill in front of the prose. */}
           {view !== 'draft' && (
             <div className="elves-toolbar">
-              <button data-testid="new-prose" onClick={() => addCard('prose')}><PlusIcon />Prose</button>
-              <button data-testid="new-note" onClick={() => addCard('note')}><PlusIcon />Notes</button>
-              <button data-testid="new-image" onClick={() => fileInputRef.current?.click()}><PlusIcon />Image</button>
-              <button data-testid="new-reference" onClick={addReferenceFlow}><PlusIcon />Link</button>
-              <button data-testid="new-figure" onClick={() => addCard('figure')}><PlusIcon />Figure</button>
-              <button data-testid="new-section" onClick={addSection}><PlusIcon />Section</button>
+              <button data-testid="new-prose" onClick={() => addCard('prose')}><TextAUnderline className="elves-btn-icon" aria-hidden="true" />Prose</button>
+              <button data-testid="new-note" onClick={() => addCard('note')}><Notepad className="elves-btn-icon" aria-hidden="true" />Notes</button>
+              <button data-testid="new-image" onClick={() => fileInputRef.current?.click()}><ImagesSquare className="elves-btn-icon" aria-hidden="true" />Image</button>
+              <button data-testid="new-reference" onClick={addReferenceFlow}><Link className="elves-btn-icon" aria-hidden="true" />Link</button>
+              <button data-testid="new-figure" onClick={() => addCard('figure')}><Slideshow className="elves-btn-icon" aria-hidden="true" />Figure</button>
+              <button data-testid="new-section" onClick={addSection}><SelectionPlus className="elves-btn-icon" aria-hidden="true" />Section</button>
               <input
                 ref={fileInputRef}
                 type="file"

@@ -38,7 +38,6 @@ export function shouldShowGist(
 // the counter-scale always wants more than the cap — so every gist lands on
 // exactly GIST_FONT_MAX. That gives one uniform size everywhere in gist mode.
 export const GIST_ON_SCREEN_PX = 18
-export const GIST_FONT_MIN = 20
 // Capped at the largest size that fits a summarized card's box without clipping.
 // A card's box is measured to hold the FULL, longer text at 15px, so a short
 // gist fits comfortably — measured against the real canvas, 25px clips 0 of 48
@@ -46,5 +45,5 @@ export const GIST_FONT_MIN = 20
 export const GIST_FONT_MAX = 25
 export function gistFontSize(zoom: number): number {
   const compensated = GIST_ON_SCREEN_PX / Math.max(zoom, 0.01)
-  return Math.round(Math.min(Math.max(compensated, GIST_FONT_MIN), GIST_FONT_MAX))
+  return Math.round(Math.min(compensated, GIST_FONT_MAX))
 }

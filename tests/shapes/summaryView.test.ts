@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import {
-  shouldShowGist, gistFontSize, GIST_ZOOM, GIST_FONT_MIN, GIST_FONT_MAX,
+  shouldShowGist, gistFontSize, GIST_ZOOM, GIST_FONT_MAX,
 } from '../../src/shapes/summaryView'
 
 const summarized = { noteKind: null, summary: 'a gist' } as const
@@ -33,10 +33,10 @@ test('image and reference cards never swap to a gist', () => {
 test('gistFontSize is a consistent, clamped size across the zoom-out range', () => {
   // Pure function of zoom → every card gets the SAME size at a given zoom, so
   // the summaries read as one consistent set rather than per-card sizes.
+  // Across the whole gist zoom-out range the counter-scale always wants more
+  // than the cap, so every gist lands on exactly GIST_FONT_MAX — one uniform,
+  // clearly-readable size (well above the normal 15px card text).
   for (const z of [0.1, 0.2, 0.3, 0.45, 0.49]) {
-    expect(gistFontSize(z)).toBeGreaterThanOrEqual(GIST_FONT_MIN)
-    expect(gistFontSize(z)).toBeLessThanOrEqual(GIST_FONT_MAX)
-    // Always larger than the normal 15px card text, so it reads clearly.
-    expect(gistFontSize(z)).toBeGreaterThan(15)
+    expect(gistFontSize(z)).toBe(GIST_FONT_MAX)
   }
 })
