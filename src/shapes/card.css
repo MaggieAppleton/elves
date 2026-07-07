@@ -567,6 +567,22 @@
 .elves-comment[data-type="needs-evidence"] .elves-comment__resolve:hover { background: var(--elves-cc-evidence-border); }
 .elves-comment[data-type="weak-argument"]  .elves-comment__resolve:hover { background: var(--elves-cc-weak-border); }
 .elves-comment[data-type="needs-citation"] .elves-comment__resolve:hover { background: var(--elves-cc-citation-border); }
+
+/* Card height always auto-fits content (see CardShapeUtil.onResize), so only
+   horizontal resize actually sticks. Hide the vertical/corner handles so the
+   affordance matches the real behavior; see CardSelectionForeground.tsx. */
+.elves-selection-fg--h-only [data-testid="selection.resize.top"],
+.elves-selection-fg--h-only [data-testid="selection.resize.bottom"],
+.elves-selection-fg--h-only [data-testid="selection.target.top-left"],
+.elves-selection-fg--h-only [data-testid="selection.target.top-right"],
+.elves-selection-fg--h-only [data-testid="selection.target.bottom-left"],
+.elves-selection-fg--h-only [data-testid="selection.target.bottom-right"],
+.elves-selection-fg--h-only [data-testid="selection.resize.top-left"],
+.elves-selection-fg--h-only [data-testid="selection.resize.top-right"],
+.elves-selection-fg--h-only [data-testid="selection.resize.bottom-left"],
+.elves-selection-fg--h-only [data-testid="selection.resize.bottom-right"] {
+  display: none;
+}
 .elves-comment[data-type="wants-figure"]   .elves-comment__resolve:hover { background: var(--elves-cc-figure-border); }
 
 @media (prefers-reduced-motion: reduce) {

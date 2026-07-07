@@ -3,6 +3,7 @@ import { Tldraw, Editor, getSnapshot, loadSnapshot, createShapeId } from 'tldraw
 import 'tldraw/tldraw.css'
 import './theme.css'
 import { CardShapeUtil, CardShape } from './shapes/CardShapeUtil'
+import { CardSelectionForeground } from './shapes/CardSelectionForeground'
 import { cardIsHidden, collapseAll } from './shapes/mergeView'
 import { SectionShapeUtil, SectionShape } from './shapes/SectionShapeUtil'
 import { QuestionShapeUtil } from './shapes/QuestionShapeUtil'
@@ -33,6 +34,7 @@ import { DraftDrawerControls } from './components/DraftDrawerControls'
 import { type ViewState, moreDraft, lessDraft } from './client/viewMachine'
 
 const shapeUtils = [CardShapeUtil, SectionShapeUtil, QuestionShapeUtil]
+const components = { SelectionForeground: CardSelectionForeground }
 
 // A dismissed question is answered/waved off: hidden from render AND hit-testing
 // (so it can't linger as an invisible-yet-selectable ghost), but kept in the
@@ -598,6 +600,7 @@ export default function App() {
           <Tldraw
             key={currentProjectId ?? 'none'}
             shapeUtils={shapeUtils}
+            components={components}
             getShapeVisibility={getShapeVisibility}
             onMount={handleMount}
           />
