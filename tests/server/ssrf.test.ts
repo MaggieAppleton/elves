@@ -24,6 +24,17 @@ describe('isBlockedAddress', () => {
     ['fe80::1', true], // link-local
     ['::ffff:127.0.0.1', true], // IPv4-mapped loopback
     ['::ffff:8.8.8.8', false], // IPv4-mapped public
+    // The WHATWG URL parser normalizes IPv4-mapped literals to HEX before they
+    // reach the guard, so the hex spelling must be blocked too — a pasted
+    // http://[::ffff:7f00:1]/ is loopback, http://[::ffff:a9fe:a9fe]/ is metadata.
+    ['::ffff:7f00:1', true], // IPv4-mapped loopback (hex) — 127.0.0.1
+    ['::ffff:a9fe:a9fe', true], // IPv4-mapped cloud metadata (hex) — 169.254.169.254
+    ['::ffff:c0a8:1', true], // IPv4-mapped private (hex) — 192.168.0.1
+    ['::ffff:0808:0808', false], // IPv4-mapped public (hex) — 8.8.8.8
+    ['::7f00:1', true], // deprecated IPv4-compatible loopback
+    ['64:ff9b::7f00:1', true], // NAT64 of loopback
+    ['100.64.0.1', true], // CGNAT (RFC 6598)
+    ['255.255.255.255', true], // broadcast / reserved 240/4
     ['2001:4860:4860::8888', false], // public (Google DNS)
   ]
 

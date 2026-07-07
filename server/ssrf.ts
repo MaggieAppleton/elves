@@ -35,17 +35,63 @@ function isBlockedIPv4(ip: string): boolean {
     inCidr4(ip, '127.0.0.0', 8) || // loopback
     inCidr4(ip, '169.254.0.0', 16) || // link-local, incl. 169.254.169.254 (cloud metadata)
     inCidr4(ip, '0.0.0.0', 8) || // "this network"
-    inCidr4(ip, '224.0.0.0', 4) // multicast
+    inCidr4(ip, '100.64.0.0', 10) || // CGNAT (RFC 6598)
+    inCidr4(ip, '224.0.0.0', 4) || // multicast
+    inCidr4(ip, '240.0.0.0', 4) // reserved, incl. 255.255.255.255 broadcast
   )
 }
 
+// Expand an IPv6 literal (already validated by net.isIP) to its 16 bytes.
+// Handles `::` compression and an embedded IPv4 tail in EITHER form —
+// dotted (`::ffff:127.0.0.1`) or hex (`::ffff:7f00:1`). Returns null if the
+// text doesn't parse, so callers can refuse rather than guess.
+function ipv6ToBytes(ip: string): number[] | null {
+  let s = ip.toLowerCase()
+  // Fold a trailing dotted-IPv4 into two hextets so the parser below only ever
+  // deals in hex groups (`::ffff:127.0.0.1` → `::ffff:7f00:1`).
+  const v4 = s.match(/:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/)
+  if (v4) {
+    const oct = v4[1].split('.').map(Number)
+    if (oct.some((n) => n > 255)) return null
+    const hi = ((oct[0] << 8) | oct[1]).toString(16)
+    const lo = ((oct[2] << 8) | oct[3]).toString(16)
+    s = s.slice(0, s.length - v4[1].length) + `${hi}:${lo}`
+  }
+  const halves = s.split('::')
+  if (halves.length > 2) return null
+  const left = halves[0] ? halves[0].split(':') : []
+  const right = halves.length === 2 && halves[1] ? halves[1].split(':') : []
+  const groups =
+    halves.length === 2
+      ? [...left, ...Array(8 - left.length - right.length).fill('0'), ...right]
+      : left
+  if (groups.length !== 8) return null
+  const bytes: number[] = []
+  for (const g of groups) {
+    const v = parseInt(g, 16)
+    if (Number.isNaN(v) || v < 0 || v > 0xffff) return null
+    bytes.push((v >> 8) & 0xff, v & 0xff)
+  }
+  return bytes
+}
+
 function isBlockedIPv6(ip: string): boolean {
-  const norm = ip.toLowerCase()
-  if (norm === '::1' || norm === '::') return true // loopback / unspecified
-  if (/^fe[89ab][0-9a-f]:/.test(norm)) return true // fe80::/10 link-local
-  if (/^f[cd][0-9a-f]{2}:/.test(norm)) return true // fc00::/7 unique local
-  const mapped = norm.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/) // IPv4-mapped IPv6
-  if (mapped) return isBlockedIPv4(mapped[1])
+  const b = ipv6ToBytes(ip)
+  if (!b) return true // unparseable — refuse rather than guess
+  // Any address embedding an IPv4 in its low 32 bits is only as safe as that
+  // IPv4: ::/96 (loopback ::1, unspecified ::, deprecated IPv4-compatible),
+  // ::ffff:0:0/96 (IPv4-mapped — the range URL literals like [::ffff:7f00:1]
+  // land in), and 64:ff9b::/96 (NAT64). Check the embedded IPv4 for all three
+  // so no encoding of a private/loopback/metadata v4 slips through.
+  const embeddedV4 = () => isBlockedIPv4(b.slice(12).join('.'))
+  const zero = (from: number, to: number) => b.slice(from, to).every((x) => x === 0)
+  if (zero(0, 12)) return embeddedV4() // ::/96
+  if (zero(0, 10) && b[10] === 0xff && b[11] === 0xff) return embeddedV4() // ::ffff:0:0/96
+  if (b[0] === 0x00 && b[1] === 0x64 && b[2] === 0xff && b[3] === 0x9b && zero(4, 12)) {
+    return embeddedV4() // 64:ff9b::/96 NAT64
+  }
+  if (b[0] === 0xfe && (b[1] & 0xc0) === 0x80) return true // fe80::/10 link-local
+  if ((b[0] & 0xfe) === 0xfc) return true // fc00::/7 unique local
   return false
 }
 
@@ -101,6 +147,14 @@ export interface SafeFetchOptions {
  * request is made, and redirects are followed manually (never `redirect:
  * 'follow'`) so a same-origin-looking URL can't rebind to a private address
  * partway through the chain.
+ *
+ * Known residual (documented follow-up): each hop is validated by hostname and
+ * then fetched by hostname, so the runtime does its own second DNS lookup —
+ * a low-TTL attacker domain could resolve public on the check and private on
+ * the connect (classic same-host DNS rebinding). Closing it fully means
+ * pinning the vetted IP and connecting to it with the original Host header,
+ * which fetch/undici don't expose cleanly. The loopback-default bind keeps the
+ * blast radius local until then.
  */
 export async function safeFetch(
   url: string,
