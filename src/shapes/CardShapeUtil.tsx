@@ -536,7 +536,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                       this.editor.updateShape<CardShape>({
                         id: shape.id,
                         type: 'card',
-                        props: { text: e.currentTarget.value },
+                        props: { text: e.currentTarget.value, authoredBy: null },
                       })
                     }
                   />
