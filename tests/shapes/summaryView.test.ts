@@ -16,8 +16,13 @@ test('zoomed out with a summary: show the gist', () => {
   expect(shouldShowGist(OUT, summarized)).toBe(true)
 })
 
-test('zoomed out but no summary (short or ungenerated): keep the real text', () => {
+test('zoomed out, no summary, no text: keep the real text', () => {
   expect(shouldShowGist(OUT, { noteKind: null, summary: null })).toBe(false)
+  expect(shouldShowGist(OUT, { noteKind: null, summary: null, text: '' })).toBe(false)
+})
+
+test('zoomed out, no summary but non-empty text: show the mechanical gist', () => {
+  expect(shouldShowGist(OUT, { noteKind: null, summary: null, text: 'some real text' })).toBe(true)
 })
 
 test('image and reference cards never swap to a gist', () => {
