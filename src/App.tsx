@@ -16,6 +16,7 @@ import {
   loadCanvas,
   saveCanvas,
   debounce,
+  createSaver,
   listProjects,
   createProject,
   renameProject,
@@ -360,17 +361,8 @@ export default function App() {
         // paths here (not in a .finally that also runs on failure) means a
         // failed load leaves the canvas read-through and never overwrites disk.
         canvasLoadedRef.current = true
-        let saving = false
-        const doSave = () => {
-          if (saving) return
-          saving = true
-          saveCanvas(pid, getSnapshot(ed.store))
-            .catch((err) => console.error('Elves: canvas save failed', err))
-            .finally(() => {
-              saving = false
-            })
-        }
-        const save = debounce(doSave, 500)
+        const saver = createSaver(() => saveCanvas(pid, getSnapshot(ed.store)))
+        const save = debounce(saver.request, 500)
         ed.store.listen(save, { source: 'user', scope: 'document' })
         ed.registerExternalContentHandler('files', async ({ files, point }) => {
           for (const file of files) {
