@@ -45,9 +45,10 @@ test('the + Link button unfurls a pasted url into a clickable reference card', a
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
 
-  // The + Link flow prompts for a url via window.prompt.
-  page.once('dialog', (dialog) => dialog.accept('example.com/malleable'))
+  // The + Link flow opens an in-app modal to paste the url; Enter submits.
   await page.getByTestId('new-reference').click()
+  await page.getByTestId('link-prompt-input').fill('example.com/malleable')
+  await page.getByTestId('link-prompt-submit').click()
 
   await expect(page.getByTestId('ref-card')).toBeVisible()
   await expect(page.getByTestId('ref-title')).toHaveText('Intercepted Reference')
