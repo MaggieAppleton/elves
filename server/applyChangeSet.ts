@@ -43,8 +43,8 @@ function existingCardRects(store: StoreRecords): Rect[] {
 }
 
 /**
- * The one placement invariant Claude can't guarantee on its own: a new card
- * never lands on top of an existing one. Claude picks x (its place in the
+ * The one placement invariant the agent can't guarantee on its own: a new card
+ * never lands on top of an existing one. The agent picks x (its place in the
  * left→right narrative) and a y; if that rectangle covers any card, we slide it
  * straight DOWN — past the lowest card it collides with, plus a gap — until the
  * slot is clear. Only y moves, never x, so the card keeps its narrative order.
@@ -117,7 +117,7 @@ export function applyChangeSetToSnapshot(
       case 'add_comment': {
         const shape = findCardShape(store, op.cardId)
         if (!shape) break
-        const comment = makeComment(`cmt-${crypto.randomUUID()}`, op.comment.text, op.comment.type)
+        const comment = makeComment(`cmt-${crypto.randomUUID()}`, op.comment.text, op.comment.type, cs.author)
         shape.props.comments = addComment(shape.props.comments ?? [], comment)
         break
       }
@@ -139,7 +139,7 @@ export function applyChangeSetToSnapshot(
         for (const m of op.moves) {
           const shape = findCardShape(store, m.cardId)
           if (shape) {
-            // Claude passes absolute page coords; a grouped card stores parent-local
+            // The agent passes absolute page coords; a grouped card stores parent-local
             // coords, so subtract its parent's page origin (a no-op for top-level cards).
             const origin = parentOrigin(store, shape)
             shape.x = m.x - origin.x
@@ -212,9 +212,9 @@ export function applyChangeSetToSnapshot(
       }
       case 'edit_card': {
         const shape = findCardShape(store, op.cardId)
-        // Working material (note / reference / figure) is Claude's to edit; a prose
-        // card holds the user's own draft and is never editable (claudeMayEditCardText).
-        // A reference's `text` is the user's own annotation — Claude writes its
+        // Working material (note / reference / figure) is the agent's to edit; a prose
+        // card holds the user's own draft and is never editable (see claudeMayEditCardText).
+        // A reference's `text` is the user's own annotation — the agent writes its
         // bibliographic facts at creation, never the annotation, so references are
         // excluded here even though they're a 'note'-kind card.
         if (!shape || !claudeMayEditCardText(shape.props.kind) || shape.props.noteKind === 'reference') break
@@ -226,7 +226,7 @@ export function applyChangeSetToSnapshot(
       }
       case 'delete_card': {
         const shape = findCardShape(store, op.cardId)
-        // Claude may retract only its OWN suggestions — cards it authored. The
+        // An agent may retract only its OWN suggestions — cards it authored. The
         // user's own prose and notes (authoredBy null) are protected.
         if (shape && shape.props.authoredBy) delete store[op.cardId]
         break
@@ -245,7 +245,7 @@ export function applyChangeSetToSnapshot(
           meta: {},
           parentId: defaultPageId(store),
           index: getIndexAbove(topIndex(store)),
-          props: makeSectionProps(op.text, 'claude'),
+          props: makeSectionProps(op.text, cs.author),
         }
         break
       }
@@ -263,7 +263,7 @@ export function applyChangeSetToSnapshot(
         const shape = findSectionShape(store, op.sectionId)
         if (shape) {
           shape.props.text = op.text
-          shape.props.authoredBy = 'claude'
+          shape.props.authoredBy = cs.author
         }
         break
       }

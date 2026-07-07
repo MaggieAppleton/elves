@@ -54,7 +54,8 @@ export class SectionShapeUtil extends ShapeUtil<SectionShape> {
     w: T.number,
     h: T.number,
     text: T.string,
-    authoredBy: T.literalEnum('user', 'claude'),
+    // 'user' for a human, else an agent id (e.g. 'claude', 'codex').
+    authoredBy: T.string,
   }
 
   getDefaultProps(): SectionShape['props'] {

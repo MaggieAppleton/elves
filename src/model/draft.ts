@@ -60,7 +60,7 @@ export interface DraftBlock {
   sectionId: string | null
   /** The heading text, or null for the opening block. */
   section: string | null
-  /** Heading author — drives the pane's orange Claude labels; null when opening. */
+  /** Heading author — drives the pane's agent-accent labels; null when opening. */
   authoredBy: SectionAuthor | null
   cards: DraftBlockCard[]
 }

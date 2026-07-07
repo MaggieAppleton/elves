@@ -26,7 +26,7 @@ import {
 const COMMENT_TYPE = z.enum(['needs-evidence', 'weak-argument', 'needs-citation', 'wants-figure'])
 const REF_TYPE = z.enum(['paper', 'article', 'book', 'software', 'social', 'video', 'wiki', 'link'])
 
-// Every tool that touches a canvas requires this. Claude must know which project
+// Every tool that touches a canvas requires this. The agent must know which project
 // it is working in before doing anything; if it doesn't, it calls list_projects
 // and confirms with the user rather than guessing.
 const PROJECT = z
@@ -47,7 +47,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'read_map',
-    "Read a project's canvas MAP — the cheap, token-light first pass. Returns { cards, sections, questions, groups }. Each card is a small entry: id, kind (prose|note|figure), noteKind (text|image|reference), x/y position (x is narrative order: left=earlier, right=later), `gist` (a one-line summary of the card — a model-authored summary for long cards, else the card's own short text; for a figure card the gist is its title), `textLen` (character count of the full text), and — when set — `mergedInto`, `refType`, and `figureStatus` (idea|sketched|final, on figure cards). It does NOT include full card text, comment bodies, or reference metadata. A `figure` card is a placeholder for a PLANNED VISUAL (see create_figure_card) — use the map to see which visuals are already planned so you don't suggest a duplicate. Sections: id, text (a short thematic label), x/y, authoredBy (user|claude). Questions: id, text (a question you or another agent asked), x/y, authoredBy, and `dismissed` — the user hides a question once they've answered or waved it off; check these before asking, and NEVER re-ask a dismissed one (it's an answered \"no\"). Groups: id, cardIds, memberCount, bounds — a set of cards bound to travel together (see group_cards); each grouped card also carries a `groupId`. Call this FIRST (with the project id) to see the shape of the piece and get ids; then call read_cards for the few cards you actually need in full before commenting, merging, moving, renaming, questioning, or enriching.",
+    "Read a project's canvas MAP — the cheap, token-light first pass. Returns { cards, sections, questions, groups }. Each card is a small entry: id, kind (prose|note|figure), noteKind (text|image|reference), x/y position (x is narrative order: left=earlier, right=later), `gist` (a one-line summary of the card — a model-authored summary for long cards, else the card's own short text; for a figure card the gist is its title), `textLen` (character count of the full text), and — when set — `mergedInto`, `refType`, and `figureStatus` (idea|sketched|final, on figure cards). It does NOT include full card text, comment bodies, or reference metadata. A `figure` card is a placeholder for a PLANNED VISUAL (see create_figure_card) — use the map to see which visuals are already planned so you don't suggest a duplicate. Sections: id, text (a short thematic label), x/y, authoredBy (`user`, or an agent id such as `claude`). Questions: id, text (a question you or another agent asked), x/y, authoredBy, and `dismissed` — the user hides a question once they've answered or waved it off; check these before asking, and NEVER re-ask a dismissed one (it's an answered \"no\"). Groups: id, cardIds, memberCount, bounds — a set of cards bound to travel together (see group_cards); each grouped card also carries a `groupId`. Call this FIRST (with the project id) to see the shape of the piece and get ids; then call read_cards for the few cards you actually need in full before commenting, merging, moving, renaming, questioning, or enriching.",
     { project: PROJECT },
     async ({ project }) => ({
       content: [{ type: 'text', text: JSON.stringify(await readMapTool(baseUrl, project)) }],
@@ -160,7 +160,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'edit_card',
-    "Edit an existing WORKING-MATERIAL card in place — a note's body or a figure's description, via `text`; plus a figure's working `title` (figures only). Pass only the field(s) you want to change; omit the rest to leave them untouched. Get the cardId from read_map. This edits notes and figures, which are working material Claude helps maintain. It does NOT edit a PROSE card — that holds the user's own draft, theirs alone to write — nor a REFERENCE card's `text`, which is the user's own annotation; a reference's bibliographic facts are set once at creation and aren't editable here (recreate it to change them). Prefer this over delete + recreate — it keeps the card's id, position, and authorship mark.",
+    "Edit an existing WORKING-MATERIAL card in place — a note's body or a figure's description, via `text`; plus a figure's working `title` (figures only). Pass only the field(s) you want to change; omit the rest to leave them untouched. Get the cardId from read_map. This edits notes and figures, which are working material an agent helps maintain. It does NOT edit a PROSE card — that holds the user's own draft, theirs alone to write — nor a REFERENCE card's `text`, which is the user's own annotation; a reference's bibliographic facts are set once at creation and aren't editable here (recreate it to change them). Prefer this over delete + recreate — it keeps the card's id, position, and authorship mark.",
     { project: PROJECT, cardId: z.string(), text: z.string().optional(), title: z.string().optional() },
     async ({ project, cardId, text, title }) => {
       await editCardTool(baseUrl, project, { cardId, text, title })
@@ -170,7 +170,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'delete_card',
-    "Delete a card CLAUDE authored — a suggestion you dropped that the user wants gone: a figure placeholder, a note you transcribed, or one you're about to replace. Get the cardId from read_map. Scoped for safety: the server deletes a card only if it was agent-authored, so this can NEVER remove the user's own prose or notes — those stay theirs to delete by hand. Deletion is not reversible through the tools, so make sure the card is really yours to remove (check read_map/read_cards first). To fix a card's wording, prefer edit_card over delete + recreate.",
+    "Delete a card YOU authored — a suggestion you dropped that the user wants gone: a figure placeholder, a note you transcribed, or one you're about to replace. Get the cardId from read_map. Scoped for safety: the server deletes a card only if it was agent-authored, so this can NEVER remove the user's own prose or notes — those stay theirs to delete by hand. Deletion is not reversible through the tools, so make sure the card is really yours to remove (check read_map/read_cards first). To fix a card's wording, prefer edit_card over delete + recreate.",
     { project: PROJECT, cardId: z.string() },
     async ({ project, cardId }) => {
       await deleteCardTool(baseUrl, project, { cardId })

@@ -1,7 +1,12 @@
 import { Comment, CommentType } from './types'
 
-export function makeComment(id: string, text: string, type: CommentType | null = null): Comment {
-  return { id, type, text, resolved: false, author: 'claude' }
+export function makeComment(
+  id: string,
+  text: string,
+  type: CommentType | null = null,
+  author = 'claude',
+): Comment {
+  return { id, type, text, resolved: false, author }
 }
 
 export function addComment(comments: Comment[], comment: Comment): Comment[] {

@@ -44,7 +44,7 @@ export function makeImageNoteCardProps(assetId: string): CardProps {
 
 /**
  * A reference note card: structured bibliographic metadata (from unfurl or
- * Claude) with an empty annotation `text` the user fills in later. It is a
+ * an agent) with an empty annotation `text` the user fills in later. It is a
  * note card — reference material, never prose — so the boundary holds.
  */
 export function makeReferenceCardProps(reference: Reference): CardProps {
@@ -59,7 +59,7 @@ export function makeReferenceCardProps(reference: Reference): CardProps {
  * A figure card: a placeholder for a planned visual, at its narrative position.
  * `title` is its short working title; `description` (stored in `text`) says what
  * the visual needs to show. It is born at status `idea`. Like a note or
- * reference card it can be agent-authored — Claude suggests a figure as a
+ * reference card it can be agent-authored — an agent suggests a figure as a
  * placeholder the user refines or rejects — so `authoredBy` drives its
  * authorship mark. A figure's title + description are a plan/annotation, never
  * the user's prose, so an agent writing them stays on the safe side of the
@@ -91,14 +91,14 @@ export function isFigureCard(p: { kind: CardKind }): boolean {
 
 /**
  * Elves' core rule, as testable code. The one card the user's OWN DRAFT lives in
- * — a prose card — is Claude's to organize, comment on, and question, but never
- * to write or edit. Everything else on the canvas is working material Claude
+ * — a prose card — is an agent's to organize, comment on, and question, but never
+ * to write or edit. Everything else on the canvas is working material an agent
  * helps maintain: a note's body, a reference's annotation, a figure's
- * title/description. Claude may edit those (and the model already lets it *create*
+ * title/description. An agent may edit those (and the model already lets it *create*
  * them — see makeNoteCardProps / makeReferenceCardProps / makeFigureCardProps).
  * So the boundary is exactly one kind: prose is protected, the rest are editable.
  * The server tool API MUST consult this before applying any text edit attributed
- * to Claude (see edit_card in applyChangeSet).
+ * to an agent (see edit_card in applyChangeSet).
  */
 export function claudeMayEditCardText(kind: CardKind): boolean {
   return kind !== 'prose'

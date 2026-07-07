@@ -312,7 +312,7 @@ export function createServer(
   )
 
   // The cheap navigation map: sections + a small entry per card (gist, position,
-  // textLen), no full text. Claude reads this first, then drills into specific
+  // textLen), no full text. The agent reads this first, then drills into specific
   // cards with POST /cards.
   app.get(
     '/projects/:id/map',
@@ -491,7 +491,7 @@ export function createServer(
   // --- Reference unfurl -----------------------------------------------------
   // Given a URL, fetch it and return a structured Reference draft (title,
   // authors, favicon + hero cached as local assets). This makes an OUTBOUND
-  // request to the URL the user pasted / asked Claude to enrich — always an
+  // request to the URL the user pasted / asked an agent to enrich — always an
   // explicit, per-action fetch, never background. The canvas itself stays local.
   app.post(
     '/projects/:id/unfurl',

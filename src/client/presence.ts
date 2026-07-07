@@ -1,8 +1,8 @@
 import { atom, type TLShapeId } from 'tldraw'
 
 /**
- * Ephemeral agent-presence store — the soft orange glow that shows where the
- * agent (Claude, via MCP) is looking and working on the canvas.
+ * Ephemeral agent-presence store — the soft accent-colored glow that shows where
+ * the agent (via MCP) is looking and working on the canvas.
  *
  * This deliberately lives OUTSIDE tldraw's document store: presence is never
  * written to canvas.json, never in the undo history, never a document record.
