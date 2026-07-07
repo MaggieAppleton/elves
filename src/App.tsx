@@ -24,7 +24,7 @@ import {
 import { uploadAsset, setAssetProject } from './client/assets'
 import { applyChangeSet } from './apply/applyChangeSet'
 import type { ChangeSet } from './model/changeset'
-import { connectRealtime } from './client/realtime'
+import { connectRealtime, RealtimeStatus } from './client/realtime'
 import { markDoing, markLooking, clearPresence } from './client/presence'
 import { ProjectSwitcher } from './components/ProjectSwitcher'
 import { DraftPane } from './components/DraftPane'
@@ -97,6 +97,7 @@ export default function App() {
   const [projects, setProjects] = useState<Project[] | null>(null) // null = still loading
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
   const [editor, setEditor] = useState<Editor | null>(null)
+  const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>('connecting')
   const [showTools, setShowTools] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const editorRef = useRef<Editor | null>(null)
@@ -142,6 +143,29 @@ export default function App() {
       })
   }, [])
 
+  // A disconnected-but-open tab can't just resume where it left off: the
+  // server persists change-sets to disk independently, so this tab's in-memory
+  // store may be stale relative to disk by the time the socket reconnects.
+  // Re-fetch and loadSnapshot the CURRENTLY open project's authoritative
+  // canvas — mirroring reconcilePendingChangeSets — before any local autosave
+  // gets a chance to write the stale in-memory document back over it.
+  const resyncOnReconnect = () => {
+    const ed = editorRef.current
+    const pid = projectIdRef.current
+    if (!ed || !pid || !canvasLoadedRef.current) return
+    loadCanvas(pid)
+      .then((fresh: any) => {
+        // A project switch (or unmount) may have moved on while we were fetching.
+        if (projectIdRef.current !== pid || editorRef.current !== ed) return
+        // Wrap in mergeRemoteChanges so the load is tagged source:'remote', not
+        // 'user' — otherwise it would trip the {source:'user'} autosave listener
+        // and schedule an echo save that could clobber a change the agent
+        // persisted in the ~500ms debounce window after this fetch.
+        if (fresh?.document) ed.store.mergeRemoteChanges(() => loadSnapshot(ed.store, fresh))
+      })
+      .catch((err) => console.error('Elves: resync after reconnect failed', err))
+  }
+
   // One realtime connection for the app's lifetime. Apply a change-set only when
   // it targets the project currently open (refs stay current across switches).
   useEffect(
@@ -173,6 +197,7 @@ export default function App() {
           const present = presence.cardIds.filter((id) => ed.getShape(id as CardShape['id']))
           markLooking(present as CardShape['id'][])
         },
+        { onStatus: setRealtimeStatus, onReconnect: resyncOnReconnect },
       ),
     [],
   )
@@ -335,7 +360,10 @@ export default function App() {
     // A project switch may have unmounted this editor while we were fetching.
     if (projectIdRef.current !== pid || editorRef.current !== ed) return
     if (fresh?.document) {
-      loadSnapshot(ed.store, fresh)
+      // Same reasoning as resyncOnReconnect: the re-fetched snapshot is
+      // authoritative (already includes the queued ops), so load it as a remote
+      // change so it doesn't trip the {source:'user'} autosave and echo-save it.
+      ed.store.mergeRemoteChanges(() => loadSnapshot(ed.store, fresh))
       return
     }
     for (const { cs } of queued) applyAndPersist(ed, pid, cs)
@@ -578,6 +606,19 @@ export default function App() {
               }}
             />
           </div>
+        )}
+        {realtimeStatus !== 'connected' && (
+          <div
+            className="elves-realtime-status"
+            data-status={realtimeStatus}
+            title={
+              realtimeStatus === 'connecting'
+                ? 'Connecting…'
+                : realtimeStatus === 'reconnecting'
+                  ? 'Reconnecting — some agent changes may be delayed'
+                  : 'Disconnected — reconnecting shortly'
+            }
+          />
         )}
         <ProjectSwitcher
           projects={projects}
