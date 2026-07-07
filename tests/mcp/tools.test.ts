@@ -46,6 +46,17 @@ afterEach(async () => {
   dirs = []
 })
 
+// A bare document with no cards/sections yet — enough for applyChangeSetToSnapshot
+// to have a real tldraw schema to write into (vs. the no-canvas 409 case).
+async function seedEmptyCanvas(base: string) {
+  const snap = { document: { store: { 'page:page': { id: 'page:page', typeName: 'page' } } }, session: null }
+  await fetch(`${base}/projects/essay/canvas`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(snap),
+  })
+}
+
 async function seedCard(base: string, id: string) {
   const snap = {
     document: { store: { [id]: { id, typeName: 'shape', type: 'card', x: 1, y: 2, props: { w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text: 'hi', comments: [], mergedInto: null } } } },
@@ -103,6 +114,7 @@ test('addCommentTool posts a change-set the server broadcasts tagged with the pr
 
 test('createNoteCardTool posts a create_note_card change-set', async () => {
   const { base } = await liveElves()
+  await seedEmptyCanvas(base)
   const ws = new WebSocket(base.replace('http', 'ws') + '/ws')
   const received = new Promise<any>((res) => ws.on('message', (d) => res(JSON.parse(d.toString()))))
   await new Promise<void>((r) => ws.on('open', () => r()))
@@ -117,6 +129,7 @@ test('createNoteCardTool posts a create_note_card change-set', async () => {
 
 test('createFigureCardTool posts a create_figure_card change-set', async () => {
   const { base } = await liveElves()
+  await seedEmptyCanvas(base)
   const ws = new WebSocket(base.replace('http', 'ws') + '/ws')
   const received = new Promise<any>((res) => ws.on('message', (d) => res(JSON.parse(d.toString()))))
   await new Promise<void>((r) => ws.on('open', () => r()))
@@ -161,6 +174,7 @@ test('readDraftTool compiles the canvas into ordered narrative blocks', async ()
 
 test('createReferenceTool unfurls a url and posts a create_reference change-set, Claude fields winning', async () => {
   const { base } = await liveElves()
+  await seedEmptyCanvas(base)
   const ws = new WebSocket(base.replace('http', 'ws') + '/ws')
   const received = new Promise<any>((res) => ws.on('message', (d) => res(JSON.parse(d.toString()))))
   await new Promise<void>((r) => ws.on('open', () => r()))
@@ -195,6 +209,7 @@ test('a tool call for an unknown project rejects with a helpful error', async ()
 
 test('createSectionTool posts a create_section change-set', async () => {
   const { base } = await liveElves()
+  await seedEmptyCanvas(base)
   const ws = new WebSocket(base.replace('http', 'ws') + '/ws')
   const received = new Promise<any>((res) => ws.on('message', (d) => res(JSON.parse(d.toString()))))
   await new Promise<void>((r) => ws.on('open', () => r()))

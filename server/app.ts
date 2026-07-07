@@ -7,15 +7,20 @@ import {
   changeSetWritesText,
   referencedCardIds,
   referencedSectionIds,
+  mergeRepresentativeIds,
+  referencedGroupIds,
 } from '../src/model/changeset'
 import type { PresenceMessage } from '../src/model/presence'
 import {
   snapshotToCards, snapshotToSections, snapshotToCardMap, snapshotToCardsById, snapshotToDraft,
+  snapshotToGroupIds,
 } from './digest'
 import { applyChangeSetToSnapshot } from './applyChangeSet'
 import { reconcileCanvasFile, type Summarizer } from './summarize'
 import { extForMime, saveAsset, resolveAssetPath } from './assets'
 import { unfurl, type UnfurlDeps, type FetchedImage } from './unfurl'
+import { safeFetch } from './ssrf'
+import { getAllowedOrigins, isOriginAllowed } from './origins'
 import {
   listProjects,
   createProject,
@@ -35,13 +40,16 @@ const MAX_IMAGE_BYTES = 5_000_000
 // fetches are http(s)-only, time-limited, and size-capped; images are stored as
 // local files so a reference card stays offline-usable and portable.
 function unfurlDepsFor(assetsDir: string): UnfurlDeps {
+  // SSRF-guarded: safeFetch resolves + range-checks the hostname of the
+  // initial URL AND of every redirect hop (never `redirect: 'follow'`), so a
+  // pasted URL can't reach this machine's own network or a cloud metadata
+  // endpoint, even via a redirect chain. See server/ssrf.ts.
   const withTimeout = async (url: string, accept: string) => {
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS)
     try {
-      return await fetch(url, {
+      return await safeFetch(url, {
         signal: ctrl.signal,
-        redirect: 'follow',
         headers: { 'user-agent': UNFURL_UA, accept },
       })
     } finally {
@@ -114,7 +122,23 @@ export function createServer(
   onPresence?: (projectId: string, presence: PresenceMessage) => void,
 ): CanvasServer {
   const app = express()
-  app.use(cors())
+  // Origin allowlist (see server/origins.ts): only same-origin/no-Origin
+  // requests (curl, tests, server-to-server) and the localhost client dev
+  // port / this server's own port may read responses cross-origin. This is
+  // what stops an arbitrary web page from calling this API from the
+  // browser. Widen with ELVES_ALLOWED_ORIGINS if needed.
+  //
+  // FOLLOW-UP (out of scope for issue #29's network-boundary hardening):
+  // there is still no request auth (shared-token or otherwise) — any process
+  // that CAN reach this origin (e.g. another app on the same machine, once
+  // it knows/guesses the port) can call every route unauthenticated. Shared-
+  // token auth is tracked separately and deliberately not implemented here.
+  const allowedOrigins = getAllowedOrigins()
+  app.use(cors({
+    origin(origin, callback) {
+      callback(null, isOriginAllowed(origin, allowedOrigins))
+    },
+  }))
   app.use(express.json({ limit: '64mb' }))
 
   // --- Summary reconciliation scheduler -------------------------------------
@@ -327,33 +351,66 @@ export function createServer(
         res.status(403).json({ error: 'change-set may not write card text' })
         return
       }
-      // Validate and apply inside the SAME per-path lock as the read, so the
-      // referenced-id cross-check runs against the exact snapshot that gets
-      // written — a whole-snapshot save (or another change-set) landing
-      // between the read and the write can no longer invalidate this check or
-      // get silently clobbered by this write (the lost-update race, #27).
+      // Validate and apply inside the SAME per-path lock as the read, so every
+      // cross-check runs against the exact snapshot that gets written — a
+      // whole-snapshot save (or another change-set) landing between the read
+      // and the write can no longer invalidate a check or get silently
+      // clobbered by this write (the lost-update race, #27). The 409 responses
+      // are raised outside the lock via flags set inside it, so the lock holds
+      // only the read/validate/apply, never the HTTP response.
       let missing: string[] = []
-      await withCanvasLock(paths.canvasPath, (canvas) => {
-        // Cross-check: every referenced existing card/section must live in
-        // THIS project, so a mistargeted operation fails loudly instead of
+      let invalidMergeReps: string[] = []
+      let noCanvas = false
+      const applied = await withCanvasLock(paths.canvasPath, (canvas) => {
+        // Cross-check: every referenced existing card/section/group must live
+        // in THIS project, so a mistargeted operation fails loudly instead of
         // silently landing nowhere.
-        const cardIds = new Set(snapshotToCards(canvas).map((c) => c.id))
+        const cards = snapshotToCards(canvas)
+        const cardIds = new Set(cards.map((c) => c.id))
         const sectionIds = new Set(snapshotToSections(canvas).map((s) => s.id))
+        const groupIds = new Set(snapshotToGroupIds(canvas))
         missing = [
           ...referencedCardIds(req.body).filter((cardId) => !cardIds.has(cardId)),
           ...referencedSectionIds(req.body).filter((sectionId) => !sectionIds.has(sectionId)),
+          ...referencedGroupIds(req.body).filter((groupId) => !groupIds.has(groupId)),
         ]
         if (missing.length) return null
+        // merge_notes is "note cards only" — reject outright if the
+        // representative (the card the others merge under and that stays
+        // visible) is not itself a note, rather than silently letting a
+        // prose/figure/reference card become the visible head of a cluster.
+        const noteCardIds = new Set(cards.filter((c) => c.kind === 'note').map((c) => c.id))
+        invalidMergeReps = mergeRepresentativeIds(req.body).filter((id) => !noteCardIds.has(id))
+        if (invalidMergeReps.length) return null
         // Apply and persist here, on the server, rather than relying on some
         // connected browser tab to have this project open and save it back —
         // that dependency meant a change-set could report success while never
         // landing on disk. A brand-new project with no canvas yet has no
-        // tldraw schema to write into, so it still falls back to broadcast-only
-        // until a browser bootstraps the document for the first time.
-        return applyChangeSetToSnapshot(canvas, req.body)
+        // tldraw schema to write into, so nothing is persisted here.
+        const next = applyChangeSetToSnapshot(canvas, req.body)
+        if (!next) {
+          noCanvas = true
+          return null
+        }
+        return next
       })
       if (missing.length) {
         res.status(409).json({ error: 'card not in project', missing })
+        return
+      }
+      if (invalidMergeReps.length) {
+        res.status(409).json({ error: 'merge_notes representative must be a note card', invalidMergeReps })
+        return
+      }
+      if (noCanvas || !applied) {
+        // Still broadcast, so a browser tab that happens to have the project
+        // open can self-heal via the live connection — but don't claim
+        // success or schedule summaries for something that never landed.
+        onChangeSet?.(req.params.id, req.body)
+        res.status(409).json({
+          error: 'project has no canvas yet — open it once in the app to initialize the canvas',
+          applied: false,
+        })
         return
       }
       onChangeSet?.(req.params.id, req.body)

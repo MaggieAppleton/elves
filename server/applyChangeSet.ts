@@ -123,6 +123,12 @@ export function applyChangeSetToSnapshot(
       }
       case 'merge_notes': {
         const { representativeId, hiddenIds } = planMerge(op.cardIds)
+        // The representative becomes the visible head of the merge cluster, so
+        // it must be a note itself — the server's changeset endpoint already
+        // rejects this case with a 409, but guard here too so this function
+        // never merges under a non-note representative if ever called directly.
+        const repShape = findCardShape(store, representativeId)
+        if (!repShape || repShape.props.kind !== 'note') break
         for (const id of hiddenIds) {
           const shape = findCardShape(store, id)
           if (shape && shape.props.kind === 'note') shape.props.mergedInto = representativeId
@@ -208,7 +214,10 @@ export function applyChangeSetToSnapshot(
         const shape = findCardShape(store, op.cardId)
         // Working material (note / reference / figure) is Claude's to edit; a prose
         // card holds the user's own draft and is never editable (claudeMayEditCardText).
-        if (!shape || !claudeMayEditCardText(shape.props.kind)) break
+        // A reference's `text` is the user's own annotation — Claude writes its
+        // bibliographic facts at creation, never the annotation, so references are
+        // excluded here even though they're a 'note'-kind card.
+        if (!shape || !claudeMayEditCardText(shape.props.kind) || shape.props.noteKind === 'reference') break
         // `text` is the card's body (note body, reference annotation, figure
         // description); `title` is a figure's working title and applies to figures only.
         if (op.text !== undefined) shape.props.text = op.text

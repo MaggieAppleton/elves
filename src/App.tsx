@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { Tldraw, Editor, getSnapshot, loadSnapshot, createShapeId } from 'tldraw'
+import { Tldraw, Editor, getSnapshot, loadSnapshot, createShapeId, type TLShapeId } from 'tldraw'
 import 'tldraw/tldraw.css'
 import './theme.css'
 import { CardShapeUtil, CardShape } from './shapes/CardShapeUtil'
+import { CardSelectionForeground } from './shapes/CardSelectionForeground'
 import { cardIsHidden, collapseAll } from './shapes/mergeView'
 import { SectionShapeUtil, SectionShape } from './shapes/SectionShapeUtil'
 import { QuestionShapeUtil } from './shapes/QuestionShapeUtil'
@@ -11,11 +12,13 @@ import {
   makeFigureCardProps,
 } from './model/cards'
 import { makeSectionProps } from './model/sections'
+import { cascadeOffset } from './model/layout'
 import { requestUnfurl } from './client/references'
 import {
   loadCanvas,
   saveCanvas,
   debounce,
+  createSaver,
   listProjects,
   createProject,
   renameProject,
@@ -24,14 +27,17 @@ import {
 import { uploadAsset, setAssetProject } from './client/assets'
 import { applyChangeSet } from './apply/applyChangeSet'
 import type { ChangeSet } from './model/changeset'
-import { connectRealtime } from './client/realtime'
+import { connectRealtime, RealtimeStatus } from './client/realtime'
 import { markDoing, markLooking, clearPresence } from './client/presence'
+import { shapeRecordsById, diffChangedIds } from './client/resync'
 import { ProjectSwitcher } from './components/ProjectSwitcher'
 import { DraftPane } from './components/DraftPane'
 import { DraftDrawerControls } from './components/DraftDrawerControls'
 import { type ViewState, moreDraft, lessDraft } from './client/viewMachine'
+import { prefersReducedMotion, isElementWidthTransitionEnd } from './client/motion'
 
 const shapeUtils = [CardShapeUtil, SectionShapeUtil, QuestionShapeUtil]
+const components = { SelectionForeground: CardSelectionForeground }
 
 // A dismissed question is answered/waved off: hidden from render AND hit-testing
 // (so it can't linger as an invisible-yet-selectable ghost), but kept in the
@@ -97,6 +103,7 @@ export default function App() {
   const [projects, setProjects] = useState<Project[] | null>(null) // null = still loading
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
   const [editor, setEditor] = useState<Editor | null>(null)
+  const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>('connecting')
   const [showTools, setShowTools] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const editorRef = useRef<Editor | null>(null)
@@ -111,6 +118,16 @@ export default function App() {
   // than drop them and lose the agent's action, buffer them here, tagged with
   // their target project, and reconcile once the load resolves.
   const pendingChangeSetsRef = useRef<{ projectId: string; cs: ChangeSet }[]>([])
+  // Coalesces steady-state resyncs (see resyncCanvas / scheduleResync below): a
+  // fetch already in flight absorbs any broadcasts that arrive while it's
+  // pending, rather than racing a second overlapping loadCanvas.
+  const resyncStateRef = useRef<{ inFlight: boolean; pendingGlow: boolean }>({
+    inFlight: false,
+    pendingGlow: false,
+  })
+  // Counts spawns via addCard/addSection so each new card/section cascades
+  // away from the last instead of stacking invisibly at the viewport center.
+  const spawnCountRef = useRef(0)
 
   // Three view states — canvas only, split, draft only — plus the split ratio
   // (canvas fraction). tldraw stays MOUNTED in all three; draft-only just
@@ -120,6 +137,7 @@ export default function App() {
   const [split, setSplit] = useState(DEFAULT_SPLIT)
   const [dragging, setDragging] = useState(false)
   const stageRef = useRef<HTMLDivElement>(null)
+  const canvasPaneRef = useRef<HTMLDivElement>(null)
 
   // Keep the refs + the asset base in sync during render so they are correct the
   // instant tldraw's onMount fires and whenever a card image renders.
@@ -142,6 +160,29 @@ export default function App() {
       })
   }, [])
 
+  // A disconnected-but-open tab can't just resume where it left off: the
+  // server persists change-sets to disk independently, so this tab's in-memory
+  // store may be stale relative to disk by the time the socket reconnects.
+  // Re-fetch and loadSnapshot the CURRENTLY open project's authoritative
+  // canvas — mirroring reconcilePendingChangeSets — before any local autosave
+  // gets a chance to write the stale in-memory document back over it.
+  const resyncOnReconnect = () => {
+    const ed = editorRef.current
+    const pid = projectIdRef.current
+    if (!ed || !pid || !canvasLoadedRef.current) return
+    loadCanvas(pid)
+      .then((fresh: any) => {
+        // A project switch (or unmount) may have moved on while we were fetching.
+        if (projectIdRef.current !== pid || editorRef.current !== ed) return
+        // Wrap in mergeRemoteChanges so the load is tagged source:'remote', not
+        // 'user' — otherwise it would trip the {source:'user'} autosave listener
+        // and schedule an echo save that could clobber a change the agent
+        // persisted in the ~500ms debounce window after this fetch.
+        if (fresh?.document) ed.store.mergeRemoteChanges(() => loadSnapshot(ed.store, fresh))
+      })
+      .catch((err) => console.error('Elves: resync after reconnect failed', err))
+  }
+
   // One realtime connection for the app's lifetime. Apply a change-set only when
   // it targets the project currently open (refs stay current across switches).
   useEffect(
@@ -161,7 +202,14 @@ export default function App() {
             pendingChangeSetsRef.current.push({ projectId, cs })
             return
           }
-          applyAndPersist(ed, projectId, cs)
+          // Steady state: the server already applied AND persisted this
+          // change-set (server/app.ts) before broadcasting it verbatim. Replaying
+          // the ops here would mint a second, independent set of shape ids and
+          // then echo-save, overwriting the server's card with a diverging copy
+          // (issue #28). Re-fetch the authoritative snapshot instead — same
+          // pattern reconcilePendingChangeSets already uses for the load window.
+          const glow = cs.ops.some((op) => op.kind !== 'set_summary')
+          scheduleResync(projectId, glow)
         },
         (projectId, presence) => {
           // The agent is "looking" at these cards (read_cards). Ephemeral: no
@@ -173,6 +221,7 @@ export default function App() {
           const present = presence.cardIds.filter((id) => ed.getShape(id as CardShape['id']))
           markLooking(present as CardShape['id'][])
         },
+        { onStatus: setRealtimeStatus, onReconnect: resyncOnReconnect },
       ),
     [],
   )
@@ -259,13 +308,39 @@ export default function App() {
     const bounds = ed.getShapePageBounds(id)
     if (!bounds) return
     ed.select(id)
-    ed.centerOnPoint(bounds.center, { animation: { duration: 300 } })
+    const reduceMotion = prefersReducedMotion()
+    ed.centerOnPoint(bounds.center, reduceMotion ? undefined : { animation: { duration: 300 } })
   }
 
   const onSelectCard = (cardId: string) => {
     if (view === 'draft') {
       changeView('split')
-      setTimeout(() => focusCard(cardId), 340) // after the width transition settles
+      const pane = canvasPaneRef.current
+      // The canvas pane widens on a CSS transition (theme.css .elves-canvas-pane,
+      // 320ms); centering before it finishes measures a stale viewport. Wait for
+      // that exact transition to end rather than guessing its duration. Reduced
+      // motion disables the transition entirely (no transitionend will fire), so
+      // skip straight to focusing in that case. A fallback timeout covers any
+      // other case where transitionend never arrives (unmounted pane, interrupted
+      // transition, etc).
+      if (prefersReducedMotion() || !pane) {
+        focusCard(cardId)
+        return
+      }
+      let done = false
+      const finish = () => {
+        if (done) return
+        done = true
+        pane.removeEventListener('transitionend', onTransitionEnd)
+        clearTimeout(fallback)
+        focusCard(cardId)
+      }
+      const onTransitionEnd = (e: TransitionEvent) => {
+        if (!isElementWidthTransitionEnd(e, pane)) return
+        finish()
+      }
+      pane.addEventListener('transitionend', onTransitionEnd)
+      const fallback = setTimeout(finish, 340)
     } else {
       focusCard(cardId)
     }
@@ -310,34 +385,93 @@ export default function App() {
     ed.select(id)
   }
 
+  // Re-fetch the server's authoritative snapshot and load it in place of
+  // locally replaying a change-set. Shared by the steady-state realtime handler
+  // (below) and the mount-time catch-up (reconcilePendingChangeSets, below):
+  // both need "the server already has this — go get it" rather than reapplying
+  // ops, which would mint a second set of shape ids and echo-save a diverging
+  // copy over the server's (issue #28).
+  //
+  // `loadSnapshot` replaces the store's contents wholesale, so there's nothing
+  // in the result to diff op-by-op the way applyChangeSet's return value works.
+  // Instead, snapshot the shape records just before the load and diff them
+  // against what's there right after, so callers that want the "doing" glow
+  // (steady state) can still drive it off real ids.
+  type ResyncResult =
+    | { status: 'loaded'; changedIds: TLShapeId[] }
+    // The fetch failed, or the project has no persisted document yet (a
+    // brand-new project — the server won't synthesise a tldraw schema for it).
+    | { status: 'no-document' }
+    // The project switched (or this editor unmounted) while the fetch was in
+    // flight; the response no longer applies to anything currently open.
+    | { status: 'stale' }
+  const resyncCanvas = async (ed: Editor, pid: string): Promise<ResyncResult> => {
+    const before = shapeRecordsById(ed.store.allRecords())
+    let fresh: any = null
+    try {
+      fresh = await loadCanvas(pid)
+    } catch (err) {
+      console.error('Elves: resync fetch failed', err)
+    }
+    if (projectIdRef.current !== pid || editorRef.current !== ed) return { status: 'stale' }
+    if (!fresh?.document) return { status: 'no-document' }
+    // Load through the remote-changes escape hatch: loadSnapshot's store writes
+    // are otherwise tagged source:'user', which trips the {source:'user'}
+    // autosave listener and schedules an echo POST /canvas. The ids are already
+    // authoritative so that save wouldn't churn them, but the ~500ms debounce
+    // window could clobber a concurrently-persisted agent change (issue #32's
+    // hazard class). Tagging the load 'remote' excludes it from the listener.
+    // The presence-glow diff below is independent of the change source: `before`
+    // was captured above, and we re-read the store after, so markDoing still fires.
+    ed.store.mergeRemoteChanges(() => loadSnapshot(ed.store, fresh))
+    const changedIds = diffChangedIds(before, shapeRecordsById(ed.store.allRecords())) as TLShapeId[]
+    return { status: 'loaded', changedIds }
+  }
+
+  // Coalesce steady-state resyncs: a fetch already in flight absorbs any
+  // broadcasts that arrive while it's pending (accumulating whether any of them
+  // should glow) instead of racing a second overlapping loadCanvas. Once the
+  // in-flight fetch resolves, if more broadcasts arrived meanwhile it loops once
+  // more to pick up the latest state; otherwise it stops.
+  const scheduleResync = (pid: string, glow: boolean) => {
+    const state = resyncStateRef.current
+    state.pendingGlow = state.pendingGlow || glow
+    if (state.inFlight) return
+    state.inFlight = true
+    void (async () => {
+      for (;;) {
+        const glowNow = state.pendingGlow
+        state.pendingGlow = false
+        const ed = editorRef.current
+        if (ed && projectIdRef.current === pid) {
+          const result = await resyncCanvas(ed, pid)
+          if (result.status === 'loaded' && glowNow && result.changedIds.length) {
+            markDoing(result.changedIds)
+          }
+        }
+        if (!state.pendingGlow || projectIdRef.current !== pid) break
+      }
+      state.inFlight = false
+    })()
+  }
+
   // Once the canvas has loaded, reconcile any change-sets that arrived — and were
   // buffered — while it was still loading. Re-fetch once to tell two cases apart:
   //  • The server persisted them (a project that already has a document): the
   //    re-fetched snapshot is authoritative and already includes them, so reload
   //    it rather than replay — replaying would mint duplicate cards, since create
   //    ops assign fresh shape ids with nothing to dedupe against.
-  //  • The server only broadcast them (a brand-new project with no document yet —
-  //    it won't synthesise a tldraw schema server-side): nothing was persisted,
-  //    so replay the buffered ops to materialise them; the save then writes the
-  //    now-real document to disk.
+  //  • The server only broadcast them (a brand-new project with no document yet):
+  //    nothing was persisted, so replay the buffered ops to materialise them; the
+  //    save then writes the now-real document to disk.
   const reconcilePendingChangeSets = async (ed: Editor, pid: string) => {
     const queued = pendingChangeSetsRef.current.filter((e) => e.projectId === pid)
     // Reset unconditionally: anything not for `pid` is a straggler from a project
     // whose load never finished, and can't belong to the canvas mounting now.
     pendingChangeSetsRef.current = []
     if (!queued.length) return
-    let fresh: any = null
-    try {
-      fresh = await loadCanvas(pid)
-    } catch (err) {
-      console.error('Elves: resync fetch after load failed; replaying buffered change-sets', err)
-    }
-    // A project switch may have unmounted this editor while we were fetching.
-    if (projectIdRef.current !== pid || editorRef.current !== ed) return
-    if (fresh?.document) {
-      loadSnapshot(ed.store, fresh)
-      return
-    }
+    const result = await resyncCanvas(ed, pid)
+    if (result.status !== 'no-document') return // 'loaded' already includes them; 'stale' means nothing to do here
     for (const { cs } of queued) applyAndPersist(ed, pid, cs)
   }
 
@@ -350,6 +484,22 @@ export default function App() {
     ed.on('event', (info) => {
       if (info.name === 'pointer_down' && info.target === 'canvas') collapseAll()
     })
+    // Foreclose rotating the native `group` shape (issue #39). card/section utils
+    // veto their own rotation, but grouped cards can be rotated via the GROUP's
+    // handle/action — and `group` is a tldraw core shape that cannot be overridden
+    // with a custom util (checkShapesAndAddCore throws). A rotated group ancestor
+    // reintroduces the very client/server reading-order divergence this issue
+    // closes: server/digest.ts resolvePageXY walks parent x/y additively with no
+    // rotation matrix. So we clamp any group back to rotation 0 in the store — the
+    // one place every rotate path (drag handle AND the rotate-90 actions) funnels
+    // through. Reverting x/y too keeps the group from orbiting its pivot as it's
+    // held un-rotated.
+    ed.sideEffects.registerBeforeChangeHandler('shape', (prev, next) => {
+      if (next.type === 'group' && next.rotation !== 0) {
+        return { ...next, rotation: 0, x: prev.x, y: prev.y }
+      }
+      return next
+    })
     const pid = projectIdRef.current
     if (!pid) return
     loadCanvas(pid)
@@ -360,17 +510,8 @@ export default function App() {
         // paths here (not in a .finally that also runs on failure) means a
         // failed load leaves the canvas read-through and never overwrites disk.
         canvasLoadedRef.current = true
-        let saving = false
-        const doSave = () => {
-          if (saving) return
-          saving = true
-          saveCanvas(pid, getSnapshot(ed.store))
-            .catch((err) => console.error('Elves: canvas save failed', err))
-            .finally(() => {
-              saving = false
-            })
-        }
-        const save = debounce(doSave, 500)
+        const saver = createSaver(() => saveCanvas(pid, getSnapshot(ed.store)))
+        const save = debounce(saver.request, 500)
         ed.store.listen(save, { source: 'user', scope: 'document' })
         ed.registerExternalContentHandler('files', async ({ files, point }) => {
           for (const file of files) {
@@ -406,30 +547,32 @@ export default function App() {
       kind === 'prose' ? makeProseCardProps()
       : kind === 'figure' ? makeFigureCardProps()
       : makeNoteCardProps()
+    const { dx, dy } = cascadeOffset(spawnCountRef.current++)
     const id = createShapeId()
     editor.createShape<CardShape>({
       id,
       type: 'card',
-      x: center.x - props.w / 2,
-      y: center.y - props.h / 2,
+      x: center.x - props.w / 2 + dx,
+      y: center.y - props.h / 2 + dy,
       props,
     })
     editor.select(id)
-    // A figure is born blank — drop straight into editing so the title/description
-    // fields are ready to type, the way a new section opens its editor.
-    if (kind === 'figure') editor.setEditingShape(id)
+    // A new card is born blank — drop straight into editing so the fields
+    // are ready to type, the way a new section opens its editor.
+    editor.setEditingShape(id)
   }
 
   const addSection = () => {
     if (!editor) return
     const center = editor.getViewportPageBounds().center
     const props = makeSectionProps()
+    const { dx, dy } = cascadeOffset(spawnCountRef.current++)
     const id = createShapeId()
     editor.createShape<SectionShape>({
       id,
       type: 'section',
-      x: center.x - props.w / 2,
-      y: center.y - props.h / 2,
+      x: center.x - props.w / 2 + dx,
+      y: center.y - props.h / 2 + dy,
       props,
     })
     editor.select(id)
@@ -579,6 +722,19 @@ export default function App() {
             />
           </div>
         )}
+        {realtimeStatus !== 'connected' && (
+          <div
+            className="elves-realtime-status"
+            data-status={realtimeStatus}
+            title={
+              realtimeStatus === 'connecting'
+                ? 'Connecting…'
+                : realtimeStatus === 'reconnecting'
+                  ? 'Reconnecting — some agent changes may be delayed'
+                  : 'Disconnected — reconnecting shortly'
+            }
+          />
+        )}
         <ProjectSwitcher
           projects={projects}
           currentId={currentProjectId}
@@ -588,10 +744,16 @@ export default function App() {
         />
       </div>
       <div className="elves-stage" ref={stageRef} data-dragging={dragging} data-view={view}>
-        <div className="elves-canvas-pane" style={{ width: canvasWidth }} data-collapsed={view === 'draft'}>
+        <div
+          className="elves-canvas-pane"
+          ref={canvasPaneRef}
+          style={{ width: canvasWidth }}
+          data-collapsed={view === 'draft'}
+        >
           <Tldraw
             key={currentProjectId ?? 'none'}
             shapeUtils={shapeUtils}
+            components={components}
             getShapeVisibility={getShapeVisibility}
             onMount={handleMount}
           />

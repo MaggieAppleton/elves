@@ -143,6 +143,40 @@ test('resyncProjectIds disambiguates two projects that want the same slug', asyn
   expect((await listProjects(d)).map((p) => p.id).sort()).toEqual(['report', 'report-2'])
 })
 
+test('concurrent createProject calls with the same name never merge into one folder', async () => {
+  const d = await root()
+  const [a, b] = await Promise.all([
+    createProject(d, 'Dup', '2026-07-02T10:00:00.000Z'),
+    createProject(d, 'Dup', '2026-07-02T10:00:00.001Z'),
+  ])
+  // Two distinct ids, each with its own project.json.
+  expect(a.id).not.toBe(b.id)
+  expect([a.id, b.id].sort()).toEqual(['dup', 'dup-2'])
+  const list = await listProjects(d)
+  expect(list.map((p) => p.id).sort()).toEqual(['dup', 'dup-2'])
+  const aMeta = JSON.parse(
+    await fs.readFile(join(d, 'projects', a.id, 'project.json'), 'utf8'),
+  )
+  const bMeta = JSON.parse(
+    await fs.readFile(join(d, 'projects', b.id, 'project.json'), 'utf8'),
+  )
+  expect(aMeta.id).toBe(a.id)
+  expect(bMeta.id).toBe(b.id)
+})
+
+test('createProject claims a fresh id when the slug already exists on disk, without touching the existing folder', async () => {
+  const d = await root()
+  const first = await createProject(d, 'Report', '2026-07-02T10:00:00.000Z')
+  expect(first.id).toBe('report')
+  const second = await createProject(d, 'Report', '2026-07-02T11:00:00.000Z')
+  expect(second.id).toBe('report-2')
+  // The original folder/content is untouched.
+  const firstMeta = JSON.parse(
+    await fs.readFile(join(d, 'projects', 'report', 'project.json'), 'utf8'),
+  )
+  expect(firstMeta).toMatchObject({ id: 'report', createdAt: '2026-07-02T10:00:00.000Z' })
+})
+
 test('rename of an unknown project throws 404', async () => {
   const d = await root()
   await expect(renameProject(d, 'ghost', 'X')).rejects.toMatchObject({ status: 404 })
@@ -156,4 +190,50 @@ test('createProject rejects a blank name', async () => {
 test('listProjects on a missing root returns []', async () => {
   const d = await root()
   expect(await listProjects(d)).toEqual([])
+})
+
+test('listProjects skips a project.json missing createdAt but keeps the rest', async () => {
+  const d = await root()
+  await createProject(d, 'Good', '2026-07-02T10:00:00.000Z')
+  await fs.mkdir(join(d, 'projects', 'bad'), { recursive: true })
+  await fs.writeFile(
+    join(d, 'projects', 'bad', 'project.json'),
+    JSON.stringify({ id: 'bad', name: 'Bad' }),
+    'utf8',
+  )
+  const list = await listProjects(d)
+  expect(list.map((p) => p.id)).toEqual(['good'])
+})
+
+test('createProject does not reuse a malformed folder that occupies the slug', async () => {
+  const d = await root()
+  // A malformed project (missing name) is invisible to listProjects but its
+  // folder still owns the slug 'bad' on disk, with its own canvas + assets.
+  await fs.mkdir(join(d, 'projects', 'bad', 'assets'), { recursive: true })
+  await fs.writeFile(
+    join(d, 'projects', 'bad', 'project.json'),
+    JSON.stringify({ id: 'bad', createdAt: '2026-07-02T10:00:00.000Z' }),
+    'utf8',
+  )
+  await fs.writeFile(join(d, 'projects', 'bad', 'canvas.json'), '{"stale":true}', 'utf8')
+  const created = await createProject(d, 'Bad', '2026-07-02T11:00:00.000Z')
+  // The new project must take a distinct id, not reuse the occupied folder.
+  expect(created.id).toBe('bad-2')
+  // And it must not inherit the old folder's canvas.
+  await expect(
+    fs.readFile(join(d, 'projects', 'bad-2', 'canvas.json'), 'utf8'),
+  ).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+test('resyncProjectIds skips a project.json missing name without throwing', async () => {
+  const d = await root()
+  await createProject(d, 'Good', '2026-07-02T10:00:00.000Z')
+  await fs.mkdir(join(d, 'projects', 'bad'), { recursive: true })
+  await fs.writeFile(
+    join(d, 'projects', 'bad', 'project.json'),
+    JSON.stringify({ id: 'bad', createdAt: '2026-07-02T11:00:00.000Z' }),
+    'utf8',
+  )
+  await expect(resyncProjectIds(d)).resolves.not.toThrow()
+  expect((await listProjects(d)).map((p) => p.id)).toEqual(['good'])
 })
