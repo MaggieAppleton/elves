@@ -1,7 +1,7 @@
 import {
   ShapeUtil, TLBaseShape, HTMLContainer, Rectangle2d, T, RecordProps,
   resizeBox,
-  type Editor, type Geometry2d, type TLResizeInfo,
+  type Editor, type Geometry2d, type TLResizeInfo, type TLShapePartial,
 } from 'tldraw'
 import { useLayoutEffect, type ReactNode } from 'react'
 import type { SectionAuthor } from '../model/sections'
@@ -105,6 +105,14 @@ export class SectionShapeUtil extends ShapeUtil<SectionShape> {
 
   override canResize() { return true }
   override canEdit() { return true }
+  // See CardShapeUtil's onRotate for why: resolvePageXY (server/digest.ts)
+  // assumes no ancestor is rotated, and tldraw has no canRotate() flag. Hiding
+  // the handle blocks drag-rotate; vetoing onRotate blocks the rotate-90
+  // actions too, since they bypass hideRotateHandle. Issue #39.
+  override hideRotateHandle() { return true }
+  override onRotate(initial: SectionShape): TLShapePartial<SectionShape> {
+    return { id: initial.id, type: 'section', x: initial.x, y: initial.y, rotation: initial.rotation }
+  }
   override onResize(shape: SectionShape, info: TLResizeInfo<SectionShape>) {
     // User drags the width; height re-fits the label at that width.
     const next = resizeBox(shape, info)

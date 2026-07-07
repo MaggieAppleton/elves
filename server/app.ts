@@ -7,15 +7,20 @@ import {
   changeSetWritesText,
   referencedCardIds,
   referencedSectionIds,
+  mergeRepresentativeIds,
+  referencedGroupIds,
 } from '../src/model/changeset'
 import type { PresenceMessage } from '../src/model/presence'
 import {
   snapshotToCards, snapshotToSections, snapshotToCardMap, snapshotToCardsById, snapshotToDraft,
+  snapshotToGroupIds,
 } from './digest'
 import { applyChangeSetToSnapshot } from './applyChangeSet'
 import { reconcileCanvasFile, type Summarizer } from './summarize'
 import { extForMime, saveAsset, resolveAssetPath } from './assets'
 import { unfurl, type UnfurlDeps, type FetchedImage } from './unfurl'
+import { safeFetch } from './ssrf'
+import { getAllowedOrigins, isOriginAllowed } from './origins'
 import {
   listProjects,
   createProject,
@@ -35,13 +40,16 @@ const MAX_IMAGE_BYTES = 5_000_000
 // fetches are http(s)-only, time-limited, and size-capped; images are stored as
 // local files so a reference card stays offline-usable and portable.
 function unfurlDepsFor(assetsDir: string): UnfurlDeps {
+  // SSRF-guarded: safeFetch resolves + range-checks the hostname of the
+  // initial URL AND of every redirect hop (never `redirect: 'follow'`), so a
+  // pasted URL can't reach this machine's own network or a cloud metadata
+  // endpoint, even via a redirect chain. See server/ssrf.ts.
   const withTimeout = async (url: string, accept: string) => {
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS)
     try {
-      return await fetch(url, {
+      return await safeFetch(url, {
         signal: ctrl.signal,
-        redirect: 'follow',
         headers: { 'user-agent': UNFURL_UA, accept },
       })
     } finally {
@@ -104,7 +112,23 @@ export function createServer(
   onPresence?: (projectId: string, presence: PresenceMessage) => void,
 ) {
   const app = express()
-  app.use(cors())
+  // Origin allowlist (see server/origins.ts): only same-origin/no-Origin
+  // requests (curl, tests, server-to-server) and the localhost client dev
+  // port / this server's own port may read responses cross-origin. This is
+  // what stops an arbitrary web page from calling this API from the
+  // browser. Widen with ELVES_ALLOWED_ORIGINS if needed.
+  //
+  // FOLLOW-UP (out of scope for issue #29's network-boundary hardening):
+  // there is still no request auth (shared-token or otherwise) — any process
+  // that CAN reach this origin (e.g. another app on the same machine, once
+  // it knows/guesses the port) can call every route unauthenticated. Shared-
+  // token auth is tracked separately and deliberately not implemented here.
+  const allowedOrigins = getAllowedOrigins()
+  app.use(cors({
+    origin(origin, callback) {
+      callback(null, isOriginAllowed(origin, allowedOrigins))
+    },
+  }))
   app.use(express.json({ limit: '64mb' }))
 
   // --- Summary reconciliation scheduler -------------------------------------
@@ -318,24 +342,47 @@ export function createServer(
       // Cross-check: every referenced existing card/section must live in THIS
       // project, so a mistargeted operation fails loudly instead of silently
       // landing nowhere.
-      const cardIds = new Set(snapshotToCards(canvas).map((c) => c.id))
+      const cards = snapshotToCards(canvas)
+      const cardIds = new Set(cards.map((c) => c.id))
       const sectionIds = new Set(snapshotToSections(canvas).map((s) => s.id))
+      const groupIds = new Set(snapshotToGroupIds(canvas))
       const missing = [
         ...referencedCardIds(req.body).filter((cardId) => !cardIds.has(cardId)),
         ...referencedSectionIds(req.body).filter((sectionId) => !sectionIds.has(sectionId)),
+        ...referencedGroupIds(req.body).filter((groupId) => !groupIds.has(groupId)),
       ]
       if (missing.length) {
         res.status(409).json({ error: 'card not in project', missing })
+        return
+      }
+      // merge_notes is "note cards only" — reject outright if the representative
+      // (the card the others merge under and that stays visible) is not itself a
+      // note, rather than silently letting a prose/figure/reference card become
+      // the visible head of a merge cluster.
+      const noteCardIds = new Set(cards.filter((c) => c.kind === 'note').map((c) => c.id))
+      const invalidMergeReps = mergeRepresentativeIds(req.body).filter((id) => !noteCardIds.has(id))
+      if (invalidMergeReps.length) {
+        res.status(409).json({ error: 'merge_notes representative must be a note card', invalidMergeReps })
         return
       }
       // Apply and persist here, on the server, rather than relying on some
       // connected browser tab to have this project open and save it back —
       // that dependency meant a change-set could report success while never
       // landing on disk. A brand-new project with no canvas yet has no
-      // tldraw schema to write into, so it still falls back to broadcast-only
-      // until a browser bootstraps the document for the first time.
+      // tldraw schema to write into, so nothing is persisted here.
       const applied = applyChangeSetToSnapshot(canvas, req.body)
-      if (applied) await writeCanvas(paths.canvasPath, applied)
+      if (!applied) {
+        // Still broadcast, so a browser tab that happens to have the project
+        // open can self-heal via the live connection — but don't claim
+        // success or schedule summaries for something that never landed.
+        onChangeSet?.(req.params.id, req.body)
+        res.status(409).json({
+          error: 'project has no canvas yet — open it once in the app to initialize the canvas',
+          applied: false,
+        })
+        return
+      }
+      await writeCanvas(paths.canvasPath, applied)
       onChangeSet?.(req.params.id, req.body)
       // A new note card (e.g. a long transcribed note) may need summarizing;
       // set_summary change-sets themselves settle to a no-op on the next pass.

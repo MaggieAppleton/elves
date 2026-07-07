@@ -255,6 +255,16 @@ export function snapshotToGroups(snapshot: CanvasSnapshot): GroupDigest[] {
     .filter((g): g is GroupDigest => g !== null)
 }
 
+/**
+ * Every group shape id present in the project, regardless of whether it still
+ * has card members — used only to check a referenced groupId actually lives
+ * here (snapshotToGroups drops empty groups, which would wrongly read as
+ * "not in project" for that check).
+ */
+export function snapshotToGroupIds(snapshot: CanvasSnapshot): string[] {
+  return groupShapes(snapshot).map((g: any) => g.id)
+}
+
 /** Full digests for a specific set of card ids — the drill-down after the map. */
 export function snapshotToCardsById(
   snapshot: CanvasSnapshot,

@@ -7,10 +7,12 @@ import { migrateLegacyCanvas } from './migrate'
 import { migrateSourceCardsToNotes } from './migrateNotes'
 import { listProjects, canvasPathFor, resyncProjectIds } from './projects'
 import { OllamaSummarizer, reconcileCanvasFile, type Summarizer } from './summarize'
+import { resolveHost } from './host'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const dataRoot = process.env.ELVES_DATA ?? join(here, '..', 'data')
 const port = Number(process.env.PORT ?? 5199)
+const host = resolveHost()
 
 async function main() {
   // Bring a single-canvas install up to the multi-project layout before serving.
@@ -20,7 +22,13 @@ async function main() {
   await migrateSourceCardsToNotes(dataRoot)
   // Bring any project whose id drifted from its display name back in sync (folder
   // renamed to match slugify(name)). Idempotent; a no-op once everything matches.
-  await resyncProjectIds(dataRoot)
+  // Degrades to a log rather than blocking startup if a project is malformed
+  // or a rename fails partway through.
+  try {
+    await resyncProjectIds(dataRoot)
+  } catch (err) {
+    console.error('[elves] project id resync failed:', err)
+  }
 
   const httpServer = http.createServer()
   const { broadcast, broadcastPresence } = attachRealtime(httpServer)
@@ -29,8 +37,10 @@ async function main() {
   const app = createServer(dataRoot, broadcast, { summarizer, now }, broadcastPresence)
   httpServer.on('request', app)
 
-  httpServer.listen(port, () => {
-    console.log(`Elves server on http://localhost:${port}  (data: ${dataRoot}, summarizer: ${summarizer.label})`)
+  // Binds loopback-only by default (see server/host.ts) — set ELVES_HOST=0.0.0.0
+  // to explicitly opt in to LAN/remote access.
+  httpServer.listen(port, host, () => {
+    console.log(`Elves server on http://${host}:${port}  (data: ${dataRoot}, summarizer: ${summarizer.label})`)
   })
 
   // Backfill summaries for cards that don't have a current one yet, so the
