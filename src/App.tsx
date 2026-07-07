@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Tldraw, Editor, getSnapshot, loadSnapshot, createShapeId } from 'tldraw'
+import { Tldraw, Editor, getSnapshot, loadSnapshot, createShapeId, type TLShapeId } from 'tldraw'
 import 'tldraw/tldraw.css'
 import './theme.css'
 import { CardShapeUtil, CardShape } from './shapes/CardShapeUtil'
@@ -26,6 +26,7 @@ import { applyChangeSet } from './apply/applyChangeSet'
 import type { ChangeSet } from './model/changeset'
 import { connectRealtime } from './client/realtime'
 import { markDoing, markLooking, clearPresence } from './client/presence'
+import { shapeRecordsById, diffChangedIds } from './client/resync'
 import { ProjectSwitcher } from './components/ProjectSwitcher'
 import { DraftPane } from './components/DraftPane'
 import { DraftDrawerControls } from './components/DraftDrawerControls'
@@ -111,6 +112,13 @@ export default function App() {
   // than drop them and lose the agent's action, buffer them here, tagged with
   // their target project, and reconcile once the load resolves.
   const pendingChangeSetsRef = useRef<{ projectId: string; cs: ChangeSet }[]>([])
+  // Coalesces steady-state resyncs (see resyncCanvas / scheduleResync below): a
+  // fetch already in flight absorbs any broadcasts that arrive while it's
+  // pending, rather than racing a second overlapping loadCanvas.
+  const resyncStateRef = useRef<{ inFlight: boolean; pendingGlow: boolean }>({
+    inFlight: false,
+    pendingGlow: false,
+  })
 
   // Three view states — canvas only, split, draft only — plus the split ratio
   // (canvas fraction). tldraw stays MOUNTED in all three; draft-only just
@@ -161,7 +169,14 @@ export default function App() {
             pendingChangeSetsRef.current.push({ projectId, cs })
             return
           }
-          applyAndPersist(ed, projectId, cs)
+          // Steady state: the server already applied AND persisted this
+          // change-set (server/app.ts) before broadcasting it verbatim. Replaying
+          // the ops here would mint a second, independent set of shape ids and
+          // then echo-save, overwriting the server's card with a diverging copy
+          // (issue #28). Re-fetch the authoritative snapshot instead — same
+          // pattern reconcilePendingChangeSets already uses for the load window.
+          const glow = cs.ops.some((op) => op.kind !== 'set_summary')
+          scheduleResync(projectId, glow)
         },
         (projectId, presence) => {
           // The agent is "looking" at these cards (read_cards). Ephemeral: no
@@ -310,34 +325,93 @@ export default function App() {
     ed.select(id)
   }
 
+  // Re-fetch the server's authoritative snapshot and load it in place of
+  // locally replaying a change-set. Shared by the steady-state realtime handler
+  // (below) and the mount-time catch-up (reconcilePendingChangeSets, below):
+  // both need "the server already has this — go get it" rather than reapplying
+  // ops, which would mint a second set of shape ids and echo-save a diverging
+  // copy over the server's (issue #28).
+  //
+  // `loadSnapshot` replaces the store's contents wholesale, so there's nothing
+  // in the result to diff op-by-op the way applyChangeSet's return value works.
+  // Instead, snapshot the shape records just before the load and diff them
+  // against what's there right after, so callers that want the "doing" glow
+  // (steady state) can still drive it off real ids.
+  type ResyncResult =
+    | { status: 'loaded'; changedIds: TLShapeId[] }
+    // The fetch failed, or the project has no persisted document yet (a
+    // brand-new project — the server won't synthesise a tldraw schema for it).
+    | { status: 'no-document' }
+    // The project switched (or this editor unmounted) while the fetch was in
+    // flight; the response no longer applies to anything currently open.
+    | { status: 'stale' }
+  const resyncCanvas = async (ed: Editor, pid: string): Promise<ResyncResult> => {
+    const before = shapeRecordsById(ed.store.allRecords())
+    let fresh: any = null
+    try {
+      fresh = await loadCanvas(pid)
+    } catch (err) {
+      console.error('Elves: resync fetch failed', err)
+    }
+    if (projectIdRef.current !== pid || editorRef.current !== ed) return { status: 'stale' }
+    if (!fresh?.document) return { status: 'no-document' }
+    // Load through the remote-changes escape hatch: loadSnapshot's store writes
+    // are otherwise tagged source:'user', which trips the {source:'user'}
+    // autosave listener and schedules an echo POST /canvas. The ids are already
+    // authoritative so that save wouldn't churn them, but the ~500ms debounce
+    // window could clobber a concurrently-persisted agent change (issue #32's
+    // hazard class). Tagging the load 'remote' excludes it from the listener.
+    // The presence-glow diff below is independent of the change source: `before`
+    // was captured above, and we re-read the store after, so markDoing still fires.
+    ed.store.mergeRemoteChanges(() => loadSnapshot(ed.store, fresh))
+    const changedIds = diffChangedIds(before, shapeRecordsById(ed.store.allRecords())) as TLShapeId[]
+    return { status: 'loaded', changedIds }
+  }
+
+  // Coalesce steady-state resyncs: a fetch already in flight absorbs any
+  // broadcasts that arrive while it's pending (accumulating whether any of them
+  // should glow) instead of racing a second overlapping loadCanvas. Once the
+  // in-flight fetch resolves, if more broadcasts arrived meanwhile it loops once
+  // more to pick up the latest state; otherwise it stops.
+  const scheduleResync = (pid: string, glow: boolean) => {
+    const state = resyncStateRef.current
+    state.pendingGlow = state.pendingGlow || glow
+    if (state.inFlight) return
+    state.inFlight = true
+    void (async () => {
+      for (;;) {
+        const glowNow = state.pendingGlow
+        state.pendingGlow = false
+        const ed = editorRef.current
+        if (ed && projectIdRef.current === pid) {
+          const result = await resyncCanvas(ed, pid)
+          if (result.status === 'loaded' && glowNow && result.changedIds.length) {
+            markDoing(result.changedIds)
+          }
+        }
+        if (!state.pendingGlow || projectIdRef.current !== pid) break
+      }
+      state.inFlight = false
+    })()
+  }
+
   // Once the canvas has loaded, reconcile any change-sets that arrived — and were
   // buffered — while it was still loading. Re-fetch once to tell two cases apart:
   //  • The server persisted them (a project that already has a document): the
   //    re-fetched snapshot is authoritative and already includes them, so reload
   //    it rather than replay — replaying would mint duplicate cards, since create
   //    ops assign fresh shape ids with nothing to dedupe against.
-  //  • The server only broadcast them (a brand-new project with no document yet —
-  //    it won't synthesise a tldraw schema server-side): nothing was persisted,
-  //    so replay the buffered ops to materialise them; the save then writes the
-  //    now-real document to disk.
+  //  • The server only broadcast them (a brand-new project with no document yet):
+  //    nothing was persisted, so replay the buffered ops to materialise them; the
+  //    save then writes the now-real document to disk.
   const reconcilePendingChangeSets = async (ed: Editor, pid: string) => {
     const queued = pendingChangeSetsRef.current.filter((e) => e.projectId === pid)
     // Reset unconditionally: anything not for `pid` is a straggler from a project
     // whose load never finished, and can't belong to the canvas mounting now.
     pendingChangeSetsRef.current = []
     if (!queued.length) return
-    let fresh: any = null
-    try {
-      fresh = await loadCanvas(pid)
-    } catch (err) {
-      console.error('Elves: resync fetch after load failed; replaying buffered change-sets', err)
-    }
-    // A project switch may have unmounted this editor while we were fetching.
-    if (projectIdRef.current !== pid || editorRef.current !== ed) return
-    if (fresh?.document) {
-      loadSnapshot(ed.store, fresh)
-      return
-    }
+    const result = await resyncCanvas(ed, pid)
+    if (result.status !== 'no-document') return // 'loaded' already includes them; 'stale' means nothing to do here
     for (const { cs } of queued) applyAndPersist(ed, pid, cs)
   }
 
