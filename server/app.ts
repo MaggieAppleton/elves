@@ -1,6 +1,6 @@
 import express, { Request, Response } from 'express'
 import cors from 'cors'
-import { readCanvas, writeCanvas, clearCanvas, EmptyCanvasOverwriteError, CanvasSnapshot } from './store'
+import { readCanvas, withCanvasLock, clearCanvas, EmptyCanvasOverwriteError, CanvasSnapshot } from './store'
 import {
   isChangeSet,
   ChangeSet,
@@ -105,12 +105,22 @@ export interface SummarizeConfig {
   debounceMs?: number
 }
 
+/**
+ * The Express app plus `runSummaries`, exposed so callers outside a request
+ * (e.g. server/index.ts's startup backfill) can reconcile a project through
+ * the SAME running/dirty single-flight guard as scheduled reconciles — a
+ * project's canvas is never reconciled by two summarizer runs at once.
+ */
+export interface CanvasServer extends express.Express {
+  runSummaries(projectId: string): Promise<void>
+}
+
 export function createServer(
   dataRoot: string,
   onChangeSet?: (projectId: string, cs: ChangeSet) => void,
   summarize?: SummarizeConfig,
   onPresence?: (projectId: string, presence: PresenceMessage) => void,
-) {
+): CanvasServer {
   const app = express()
   // Origin allowlist (see server/origins.ts): only same-origin/no-Origin
   // requests (curl, tests, server-to-server) and the localhost client dev
@@ -253,7 +263,10 @@ export function createServer(
         return
       }
       try {
-        await writeCanvas(paths.canvasPath, body as CanvasSnapshot)
+        // Route through the per-path lock so a whole-snapshot save serializes
+        // against any in-flight change-set for the same canvas — otherwise a
+        // changeset's stale read could clobber this save (or vice versa).
+        await withCanvasLock(paths.canvasPath, () => body as CanvasSnapshot)
       } catch (err) {
         // A save that would blank a canvas holding a real document is refused,
         // never a silent data loss. To clear a canvas on purpose, use DELETE.
@@ -338,40 +351,58 @@ export function createServer(
         res.status(403).json({ error: 'change-set may not write card text' })
         return
       }
-      const canvas = await readCanvas(paths.canvasPath)
-      // Cross-check: every referenced existing card/section must live in THIS
-      // project, so a mistargeted operation fails loudly instead of silently
-      // landing nowhere.
-      const cards = snapshotToCards(canvas)
-      const cardIds = new Set(cards.map((c) => c.id))
-      const sectionIds = new Set(snapshotToSections(canvas).map((s) => s.id))
-      const groupIds = new Set(snapshotToGroupIds(canvas))
-      const missing = [
-        ...referencedCardIds(req.body).filter((cardId) => !cardIds.has(cardId)),
-        ...referencedSectionIds(req.body).filter((sectionId) => !sectionIds.has(sectionId)),
-        ...referencedGroupIds(req.body).filter((groupId) => !groupIds.has(groupId)),
-      ]
+      // Validate and apply inside the SAME per-path lock as the read, so every
+      // cross-check runs against the exact snapshot that gets written — a
+      // whole-snapshot save (or another change-set) landing between the read
+      // and the write can no longer invalidate a check or get silently
+      // clobbered by this write (the lost-update race, #27). The 409 responses
+      // are raised outside the lock via flags set inside it, so the lock holds
+      // only the read/validate/apply, never the HTTP response.
+      let missing: string[] = []
+      let invalidMergeReps: string[] = []
+      let noCanvas = false
+      const applied = await withCanvasLock(paths.canvasPath, (canvas) => {
+        // Cross-check: every referenced existing card/section/group must live
+        // in THIS project, so a mistargeted operation fails loudly instead of
+        // silently landing nowhere.
+        const cards = snapshotToCards(canvas)
+        const cardIds = new Set(cards.map((c) => c.id))
+        const sectionIds = new Set(snapshotToSections(canvas).map((s) => s.id))
+        const groupIds = new Set(snapshotToGroupIds(canvas))
+        missing = [
+          ...referencedCardIds(req.body).filter((cardId) => !cardIds.has(cardId)),
+          ...referencedSectionIds(req.body).filter((sectionId) => !sectionIds.has(sectionId)),
+          ...referencedGroupIds(req.body).filter((groupId) => !groupIds.has(groupId)),
+        ]
+        if (missing.length) return null
+        // merge_notes is "note cards only" — reject outright if the
+        // representative (the card the others merge under and that stays
+        // visible) is not itself a note, rather than silently letting a
+        // prose/figure/reference card become the visible head of a cluster.
+        const noteCardIds = new Set(cards.filter((c) => c.kind === 'note').map((c) => c.id))
+        invalidMergeReps = mergeRepresentativeIds(req.body).filter((id) => !noteCardIds.has(id))
+        if (invalidMergeReps.length) return null
+        // Apply and persist here, on the server, rather than relying on some
+        // connected browser tab to have this project open and save it back —
+        // that dependency meant a change-set could report success while never
+        // landing on disk. A brand-new project with no canvas yet has no
+        // tldraw schema to write into, so nothing is persisted here.
+        const next = applyChangeSetToSnapshot(canvas, req.body)
+        if (!next) {
+          noCanvas = true
+          return null
+        }
+        return next
+      })
       if (missing.length) {
         res.status(409).json({ error: 'card not in project', missing })
         return
       }
-      // merge_notes is "note cards only" — reject outright if the representative
-      // (the card the others merge under and that stays visible) is not itself a
-      // note, rather than silently letting a prose/figure/reference card become
-      // the visible head of a merge cluster.
-      const noteCardIds = new Set(cards.filter((c) => c.kind === 'note').map((c) => c.id))
-      const invalidMergeReps = mergeRepresentativeIds(req.body).filter((id) => !noteCardIds.has(id))
       if (invalidMergeReps.length) {
         res.status(409).json({ error: 'merge_notes representative must be a note card', invalidMergeReps })
         return
       }
-      // Apply and persist here, on the server, rather than relying on some
-      // connected browser tab to have this project open and save it back —
-      // that dependency meant a change-set could report success while never
-      // landing on disk. A brand-new project with no canvas yet has no
-      // tldraw schema to write into, so nothing is persisted here.
-      const applied = applyChangeSetToSnapshot(canvas, req.body)
-      if (!applied) {
+      if (noCanvas || !applied) {
         // Still broadcast, so a browser tab that happens to have the project
         // open can self-heal via the live connection — but don't claim
         // success or schedule summaries for something that never landed.
@@ -382,7 +413,6 @@ export function createServer(
         })
         return
       }
-      await writeCanvas(paths.canvasPath, applied)
       onChangeSet?.(req.params.id, req.body)
       // A new note card (e.g. a long transcribed note) may need summarizing;
       // set_summary change-sets themselves settle to a no-op on the next pass.
@@ -445,5 +475,7 @@ export function createServer(
     }),
   )
 
-  return app
+  const server = app as CanvasServer
+  server.runSummaries = runSummaries
+  return server
 }
