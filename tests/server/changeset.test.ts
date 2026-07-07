@@ -250,6 +250,10 @@ function mixedCardsSnapshot() {
           id: 'shape:prose', typeName: 'shape', type: 'card', x: 0, y: 400,
           props: { w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text: 'my own words', figureTitle: '', figureStatus: null, authoredBy: null, comments: [], mergedInto: null },
         },
+        'shape:ref': {
+          id: 'shape:ref', typeName: 'shape', type: 'card', x: 0, y: 600,
+          props: { w: 240, h: 120, kind: 'note', noteKind: 'reference', origin: 'reference', text: 'my own annotation', figureTitle: '', figureStatus: null, authoredBy: null, comments: [], mergedInto: null },
+        },
       },
     },
     session: null,
@@ -287,6 +291,12 @@ test('edit_card REFUSES to touch a prose card — the user\'s draft is protected
   const cs = { id: 'x', author: 'claude', ops: [{ kind: 'edit_card' as const, cardId: 'shape:prose', text: 'agent trying to rewrite prose' }] }
   const next = applyChangeSetToSnapshot(mixedCardsSnapshot(), cs) as any
   expect(next.document.store['shape:prose'].props.text).toBe('my own words')
+})
+
+test('edit_card REFUSES to touch a reference card\'s annotation — that stays the user\'s alone', () => {
+  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'edit_card' as const, cardId: 'shape:ref', text: 'agent trying to rewrite the annotation' }] }
+  const next = applyChangeSetToSnapshot(mixedCardsSnapshot(), cs) as any
+  expect(next.document.store['shape:ref'].props.text).toBe('my own annotation')
 })
 
 test('delete_card removes a Claude-authored card', () => {
