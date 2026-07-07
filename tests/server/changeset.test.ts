@@ -301,6 +301,20 @@ test('delete_card PROTECTS a user-authored card — it stays on the canvas', () 
   expect(next.document.store['shape:prose']).toBeDefined()
 })
 
+test('delete_card removes a Claude-authored note', () => {
+  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'delete_card' as const, cardId: 'shape:note' }] }
+  const next = applyChangeSetToSnapshot(mixedCardsSnapshot(), cs) as any
+  expect(next.document.store['shape:note']).toBeUndefined()
+})
+
+test('delete_card PROTECTS a hand-edited note whose authorship was claimed (authoredBy cleared to null)', () => {
+  const snapshot = mixedCardsSnapshot()
+  snapshot.document.store['shape:note'].props.authoredBy = null
+  const cs = { id: 'x', author: 'claude', ops: [{ kind: 'delete_card' as const, cardId: 'shape:note' }] }
+  const next = applyChangeSetToSnapshot(snapshot, cs) as any
+  expect(next.document.store['shape:note']).toBeDefined()
+})
+
 test('a create_figure_card change-set persists a figure and the map shows its title + status', async () => {
   const d = await rootWithProject()
   const app = createServer(d)
