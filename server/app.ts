@@ -1,6 +1,8 @@
 import express, { Request, Response } from 'express'
 import cors from 'cors'
-import { readCanvas, writeCanvas, clearCanvas, EmptyCanvasOverwriteError, CanvasSnapshot } from './store'
+import {
+  readCanvas, writeCanvas, clearCanvas, EmptyCanvasOverwriteError, ProjectGoneError, CanvasSnapshot,
+} from './store'
 import {
   isChangeSet,
   ChangeSet,
@@ -23,6 +25,7 @@ import {
   getProject,
   canvasPathFor,
   assetsDirFor,
+  projectAliveGuard,
   ProjectError,
 } from './projects'
 
@@ -229,12 +232,20 @@ export function createServer(
         return
       }
       try {
-        await writeCanvas(paths.canvasPath, body as CanvasSnapshot)
+        await writeCanvas(paths.canvasPath, body as CanvasSnapshot, projectAliveGuard(dataRoot, req.params.id))
       } catch (err) {
         // A save that would blank a canvas holding a real document is refused,
         // never a silent data loss. To clear a canvas on purpose, use DELETE.
         if (err instanceof EmptyCanvasOverwriteError) {
           res.status(409).json({ error: 'refusing to blank a non-empty canvas; use DELETE to clear' })
+          return
+        }
+        // The project was renamed or deleted after paths were resolved above
+        // (a rename raced this save). The write is refused rather than
+        // recreating the old, now-orphaned directory — the caller's save did
+        // not land and should be retried against the project's current id.
+        if (err instanceof ProjectGoneError) {
+          res.status(404).json({ error: 'project no longer exists at this id; it may have been renamed' })
           return
         }
         throw err
@@ -335,7 +346,20 @@ export function createServer(
       // tldraw schema to write into, so it still falls back to broadcast-only
       // until a browser bootstraps the document for the first time.
       const applied = applyChangeSetToSnapshot(canvas, req.body)
-      if (applied) await writeCanvas(paths.canvasPath, applied)
+      if (applied) {
+        try {
+          await writeCanvas(paths.canvasPath, applied, projectAliveGuard(dataRoot, req.params.id))
+        } catch (err) {
+          // Same race as POST /canvas: the project was renamed/deleted after
+          // paths were resolved above. Refuse rather than resurrect the old
+          // directory; the caller's change-set did not land.
+          if (err instanceof ProjectGoneError) {
+            res.status(404).json({ error: 'project no longer exists at this id; it may have been renamed' })
+            return
+          }
+          throw err
+        }
+      }
       onChangeSet?.(req.params.id, req.body)
       // A new note card (e.g. a long transcribed note) may need summarizing;
       // set_summary change-sets themselves settle to a no-op on the next pass.

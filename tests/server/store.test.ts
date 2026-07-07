@@ -10,6 +10,7 @@ import {
   hasDocument,
   clearCanvas,
   EmptyCanvasOverwriteError,
+  ProjectGoneError,
 } from '../../server/store'
 
 let dirs: string[] = []
@@ -147,6 +148,34 @@ test('clearCanvas on a missing canvas is a no-op', async () => {
   const path = join(d, 'canvas.json')
   await expect(clearCanvas(path)).resolves.toBeUndefined()
   expect(await exists(path)).toBe(false)
+})
+
+// --- stillValid guard (#36): a write must never resurrect a directory whose
+// guard says it's gone ---------------------------------------------------
+
+test('writeCanvas without a guard behaves exactly as before (creates dirs as needed)', async () => {
+  const d = await tmpDir()
+  const path = join(d, 'canvas.json')
+  await expect(writeCanvas(path, DOC1)).resolves.toBeUndefined()
+})
+
+test('a failing stillValid guard refuses the write and does not recreate the directory', async () => {
+  const d = await tmpDir()
+  const dir = join(d, 'project')
+  const path = join(dir, 'canvas.json')
+  // Nothing exists yet at `dir` — simulating a directory removed/renamed away
+  // between the caller resolving `path` and this write running.
+  await expect(writeCanvas(path, DOC1, async () => false)).rejects.toBeInstanceOf(ProjectGoneError)
+  // The guard's refusal must win before any directory creation: `dir` itself
+  // must not have been (re)created by the write.
+  expect(await exists(dir)).toBe(false)
+})
+
+test('a passing stillValid guard lets the write through as usual', async () => {
+  const d = await tmpDir()
+  const path = join(d, 'canvas.json')
+  await expect(writeCanvas(path, DOC1, async () => true)).resolves.toBeUndefined()
+  expect(await readCanvas(path)).toEqual(DOC1)
 })
 
 test('worthBackingUp preserves real documents but rejects degenerate states', () => {
