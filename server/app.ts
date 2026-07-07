@@ -7,10 +7,12 @@ import {
   changeSetWritesText,
   referencedCardIds,
   referencedSectionIds,
+  referencedGroupIds,
 } from '../src/model/changeset'
 import type { PresenceMessage } from '../src/model/presence'
 import {
   snapshotToCards, snapshotToSections, snapshotToCardMap, snapshotToCardsById, snapshotToDraft,
+  snapshotToGroupIds,
 } from './digest'
 import { applyChangeSetToSnapshot } from './applyChangeSet'
 import { reconcileCanvasFile, type Summarizer } from './summarize'
@@ -320,9 +322,11 @@ export function createServer(
       // landing nowhere.
       const cardIds = new Set(snapshotToCards(canvas).map((c) => c.id))
       const sectionIds = new Set(snapshotToSections(canvas).map((s) => s.id))
+      const groupIds = new Set(snapshotToGroupIds(canvas))
       const missing = [
         ...referencedCardIds(req.body).filter((cardId) => !cardIds.has(cardId)),
         ...referencedSectionIds(req.body).filter((sectionId) => !sectionIds.has(sectionId)),
+        ...referencedGroupIds(req.body).filter((groupId) => !groupIds.has(groupId)),
       ]
       if (missing.length) {
         res.status(409).json({ error: 'card not in project', missing })
