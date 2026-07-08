@@ -6,3 +6,4 @@ playwright-report
 test-results
 .claude
 .playwright-mcp
+.DS_Store
