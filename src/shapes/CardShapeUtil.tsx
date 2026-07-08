@@ -265,6 +265,16 @@ function EyeIcon({ off }: { off: boolean }) {
   )
 }
 
+// Phosphor "ArrowsLeftRight" (regular), for the note↔prose convert toggle.
+// Inlined to match EyeIcon and keep the shape renderer import-light.
+function ArrowsLeftRightIcon() {
+  return (
+    <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true" focusable="false">
+      <path d="M213.66,181.66l-32,32a8,8,0,0,1-11.32-11.32L188.69,184H48a8,8,0,0,1,0-16H188.69l-18.35-18.34a8,8,0,0,1,11.32-11.32l32,32A8,8,0,0,1,213.66,181.66Zm-139.32-64a8,8,0,0,0,11.32-11.32L67.31,88H208a8,8,0,0,0,0-16H67.31L85.66,53.66A8,8,0,0,0,74.34,42.34l-32,32a8,8,0,0,0,0,11.32Z" />
+    </svg>
+  )
+}
+
 export class CardShapeUtil extends ShapeUtil<CardShape> {
   static override type = 'card' as const
   static override migrations = cardMigrations
@@ -589,7 +599,8 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                         type="button"
                         className="elves-convert-prose"
                         data-testid="convert-to-prose"
-                        title="Convert this note into a prose card in the draft"
+                        title="Convert to prose"
+                        aria-label="Convert to prose"
                         onPointerDown={stopEventPropagation}
                         onClick={(e) => {
                           stopEventPropagation(e)
@@ -599,7 +610,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                           })
                         }}
                       >
-                        Convert to prose
+                        <ArrowsLeftRightIcon />
                       </button>
                     )}
                     {/* The inverse: demote a prose card back to a note (out of the
@@ -609,7 +620,8 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                         type="button"
                         className="elves-convert-prose"
                         data-testid="convert-to-note"
-                        title="Convert this prose card back into a note"
+                        title="Convert to note"
+                        aria-label="Convert to note"
                         onPointerDown={stopEventPropagation}
                         onClick={(e) => {
                           stopEventPropagation(e)
@@ -619,7 +631,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                           })
                         }}
                       >
-                        Convert to note
+                        <ArrowsLeftRightIcon />
                       </button>
                     )}
                   </div>
