@@ -567,6 +567,20 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
               </>
             ) : (
               <>
+                {/* Every contributor's mark, stacked — the human and any agents
+                    who wrote part of this note's text, not just the last writer.
+                    Tucked into the top-right corner (absolute), mirroring the
+                    figure status chip. Notes only: prose is human by definition,
+                    so it carries no mark. Hidden in gist mode with the rest of
+                    the chrome. */}
+                {!showGist && kind === 'note' && (
+                  <AuthorMarks
+                    attribution={shape.props.attribution}
+                    verb="Written by"
+                    onHoverChange={onBlameHover}
+                    corner
+                  />
+                )}
                 {/* Zoomed out, hide the label/merged chrome so the gist owns the
                     whole card and reads at a glance. Both note and prose cards
                     carry a small-caps label. Prose is ALWAYS human-authored — an
@@ -575,12 +589,6 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                 {!showGist && (kind === 'note' || kind === 'prose') && (
                   <div className="elves-badge-row">
                     <span className="elves-badge" data-testid="card-badge">{kind === 'prose' ? 'Prose' : 'Note'}</span>
-                    {/* Every contributor's mark, stacked — the human and any agents
-                        who wrote part of this note's text, not just the last writer.
-                        Notes only: prose is human by definition, so no mark. */}
-                    {kind === 'note' && (
-                      <AuthorMarks attribution={shape.props.attribution} verb="Written by" onHoverChange={onBlameHover} />
-                    )}
                     {/* Promote a text note into the draft. Sits in the badge row
                         (only while the note is solely selected) so the action is
                         near the "Note" label it changes to "Prose". */}

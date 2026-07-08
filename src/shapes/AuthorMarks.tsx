@@ -20,6 +20,7 @@ export function AuthorMarks({
   attribution,
   verb = 'Written by',
   onHoverChange,
+  corner = false,
 }: {
   attribution: Attribution | null
   verb?: string
@@ -30,6 +31,12 @@ export function AuthorMarks({
    * cluster also takes a pointer cursor to hint it's interactive.
    */
   onHoverChange?: (hovered: boolean) => void
+  /**
+   * Tuck the cluster into the card's top-right corner (absolutely positioned)
+   * instead of flowing inline. Used on note cards so authorship sits opposite
+   * the "Note" label rather than crowding it.
+   */
+  corner?: boolean
 }) {
   const marks = contributors(attribution)
     .map((id) => authorInfo(id))
@@ -38,7 +45,7 @@ export function AuthorMarks({
   const interactive = !!onHoverChange
   return (
     <span
-      className={`elves-author-marks${interactive ? ' elves-author-marks--interactive' : ''}`}
+      className={`elves-author-marks${interactive ? ' elves-author-marks--interactive' : ''}${corner ? ' elves-author-marks--corner' : ''}`}
       data-testid="author-marks"
       onMouseEnter={onHoverChange ? () => onHoverChange(true) : undefined}
       onMouseLeave={onHoverChange ? () => onHoverChange(false) : undefined}
