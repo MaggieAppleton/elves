@@ -12,6 +12,7 @@ describe('card factories', () => {
     expect(p).toEqual({
       w: CARD_DEFAULT_W, h: CARD_DEFAULT_H, kind: 'prose',
       noteKind: null, origin: null, text: 'a point I wrote', authoredBy: null,
+      attribution: [{ author: 'user', length: 'a point I wrote'.length }],
       comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference: null,
       figureTitle: '', figureStatus: null,
       summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
@@ -59,7 +60,7 @@ describe('card factories', () => {
     const p = makeImageNoteCardProps('abc.png')
     expect(p).toEqual({
       w: 280, h: 200, kind: 'note', noteKind: 'image', origin: 'image',
-      text: '', authoredBy: null, comments: [], mergedInto: null, draftExcluded: false, assetId: 'abc.png', reference: null,
+      text: '', authoredBy: null, attribution: [], comments: [], mergedInto: null, draftExcluded: false, assetId: 'abc.png', reference: null,
       figureTitle: '', figureStatus: null,
       summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
     })
@@ -73,7 +74,9 @@ describe('card factories', () => {
       // The description lives in `text`; the title is its own field.
       text: 'A horizontal axis from rigid to malleable, with tools placed along it',
       figureTitle: 'Malleable software spectrum', figureStatus: 'idea',
-      authoredBy: null, comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference: null,
+      authoredBy: null,
+      attribution: [{ author: 'user', length: 'A horizontal axis from rigid to malleable, with tools placed along it'.length }],
+      comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference: null,
       summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
     })
     expect(isFigureCard(p)).toBe(true)
