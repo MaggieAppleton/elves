@@ -145,6 +145,16 @@
 }
 /* When the marks can reveal blame, hint it with a pointer cursor. */
 .elves-author-marks--interactive { cursor: help; }
+/* Top-right corner variant (note cards): tucked into the padding box opposite
+   the "Note" label, same inset as the figure status chip. pointer-events:all so
+   the hover-to-reveal-blame interaction fires over the canvas layer. */
+.elves-author-marks--corner {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  z-index: 2;
+  pointer-events: all;
+}
 
 /* Blame highlight: each agent-authored run of the body text carries its author's
    accent in `--blame-accent`, held back until the card body gains
