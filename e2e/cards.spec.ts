@@ -36,3 +36,34 @@ test('note card is muted and shows its Note badge', async ({ page }) => {
   await expect(source).toBeVisible()
   await expect(source.getByTestId('card-badge')).toHaveText('Note')
 })
+
+test('convert a text note to prose: badge flips and it enters the draft', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  // Make a text note and give it some words.
+  await page.getByTestId('new-note').click()
+  const note = page.locator('.elves-card--note').first()
+  await expect(note).toBeVisible()
+  const box = await note.boundingBox()
+  if (!box) throw new Error('note card not in DOM')
+  const cx = box.x + box.width / 2
+  const cy = box.y + box.height / 2
+  await page.mouse.dblclick(cx, cy)
+  await page.locator('.elves-card__editor').fill('a thought promoted into the piece')
+  await page.mouse.click(50, 50) // commit
+
+  // Select the note so its badge-row Convert action appears, then convert.
+  await page.mouse.click(cx, cy)
+  await page.getByTestId('convert-to-prose').click()
+
+  // The card is now prose: badge reads Prose, and the Note face is gone.
+  const prose = page.locator('.elves-card--prose').first()
+  await expect(prose).toBeVisible()
+  await expect(prose.getByTestId('card-badge')).toHaveText('Prose')
+  await expect(page.locator('.elves-card--note')).toHaveCount(0)
+
+  // Prose compiles into the linear draft (notes never do).
+  await page.getByTestId('draft-open').click()
+  await expect(page.getByTestId('draft-para')).toHaveText('a thought promoted into the piece')
+})
