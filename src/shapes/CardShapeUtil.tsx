@@ -4,11 +4,12 @@ import {
   stopEventPropagation,
   type Editor, type Geometry2d, type TLResizeInfo, type TLShapePartial,
 } from 'tldraw'
-import { useLayoutEffect, type CSSProperties, type ReactNode } from 'react'
+import { useLayoutEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import type { CardKind, NoteKind, Origin, Comment, Reference, FigureStatus, Attribution } from '../model/types'
-import { makeProseCardProps, canConvertNoteToProse, noteToProseProps } from '../model/cards'
+import { makeProseCardProps, canConvertNoteToProse, noteToProseProps, canConvertProseToNote, proseToNoteProps } from '../model/cards'
 import { reattribute, USER_AUTHOR } from '../model/attribution'
 import { AuthorMarks } from './AuthorMarks'
+import { BlameText, hasAgentRun } from './BlameText'
 import { nextFigureStatus } from '../model/figures'
 import { cardGist } from '../model/summary'
 import { visibleComments, resolveComment } from '../model/comments'
@@ -332,6 +333,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     // `text` is the user's own words, ready to join the draft. Image/reference
     // notes (annotation / structured data) and prose cards never show it.
     const showConvertToProse = selected && canConvertNoteToProse(shape.props)
+    const showConvertToNote = selected && canConvertProseToNote(shape.props)
     // Zoomed far out, a summarized card shows its gist so the piece reads at a
     // glance. getZoomLevel is reactive, so this re-renders as the user zooms;
     // the gist font counter-scales with zoom to stay a readable on-screen size.
@@ -344,6 +346,12 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     // so the glow appears and fades on its own. Lives entirely outside the
     // document — never persisted, never in undo history.
     const presence = presenceMode(shape.id)
+    // Blame reveal: hovering the stacked author marks tints each agent's runs in
+    // the card body (see BlameText). Only offered when there's a resolvable agent
+    // run to reveal — an all-human card's marks stay display-only.
+    const [blameActive, setBlameActive] = useState(false)
+    const blameHoverable = hasAgentRun(shape.props.attribution)
+    const onBlameHover = blameHoverable ? setBlameActive : undefined
     // The "N merged" chip is a button: it toggles the ephemeral peek that fans
     // the merged cards out to the right. stopEventPropagation keeps the click
     // from starting a canvas drag / selecting the card.
@@ -482,7 +490,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                     </svg>
                   </span>
                   <span className="elves-badge" data-testid="card-badge">Figure</span>
-                  <AuthorMarks attribution={shape.props.attribution} verb="Suggested by" />
+                  <AuthorMarks attribution={shape.props.attribution} verb="Suggested by" onHoverChange={onBlameHover} />
                 </div>
                 {/* Status chip — a button that cycles the figure's status. Tucked
                     into the top-right corner (absolute), pointer-events:all so the
@@ -548,7 +556,12 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                     >
                       {figureTitle || 'Untitled figure'}
                     </div>
-                    <div className="elves-figure__desc" data-testid="figure-desc">{text}</div>
+                    <div
+                    className={`elves-figure__desc${blameActive ? ' elves-blame-active' : ''}`}
+                    data-testid="figure-desc"
+                  >
+                    <BlameText text={text} attribution={shape.props.attribution} />
+                  </div>
                   </>
                 )}
               </>
@@ -556,14 +569,18 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
               <>
                 {/* Zoomed out, hide the label/merged chrome so the gist owns the
                     whole card and reads at a glance. Both note and prose cards
-                    carry a small-caps label; prose is user-only so it never
-                    shows an agent mark. */}
+                    carry a small-caps label. Prose is ALWAYS human-authored — an
+                    agent can never write prose — so it shows no author mark; only
+                    notes (which an agent may have written or co-written) do. */}
                 {!showGist && (kind === 'note' || kind === 'prose') && (
                   <div className="elves-badge-row">
                     <span className="elves-badge" data-testid="card-badge">{kind === 'prose' ? 'Prose' : 'Note'}</span>
                     {/* Every contributor's mark, stacked — the human and any agents
-                        who wrote part of this card's text, not just the last writer. */}
-                    <AuthorMarks attribution={shape.props.attribution} verb="Written by" />
+                        who wrote part of this note's text, not just the last writer.
+                        Notes only: prose is human by definition, so no mark. */}
+                    {kind === 'note' && (
+                      <AuthorMarks attribution={shape.props.attribution} verb="Written by" onHoverChange={onBlameHover} />
+                    )}
                     {/* Promote a text note into the draft. Sits in the badge row
                         (only while the note is solely selected) so the action is
                         near the "Note" label it changes to "Prose". */}
@@ -583,6 +600,26 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                         }}
                       >
                         Convert to prose
+                      </button>
+                    )}
+                    {/* The inverse: demote a prose card back to a note (out of the
+                        draft, editable by agents again). */}
+                    {showConvertToNote && (
+                      <button
+                        type="button"
+                        className="elves-convert-prose"
+                        data-testid="convert-to-note"
+                        title="Convert this prose card back into a note"
+                        onPointerDown={stopEventPropagation}
+                        onClick={(e) => {
+                          stopEventPropagation(e)
+                          this.editor.updateShape<CardShape>({
+                            id: shape.id, type: 'card',
+                            props: proseToNoteProps(shape.props),
+                          })
+                        }}
+                      >
+                        Convert to note
                       </button>
                     )}
                   </div>
@@ -616,7 +653,12 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                     {cardGist(shape.props)}
                   </div>
                 ) : (
-                  <div className="elves-card__text" data-testid="card-text">{text}</div>
+                  <div
+                    className={`elves-card__text${blameActive ? ' elves-blame-active' : ''}`}
+                    data-testid="card-text"
+                  >
+                    <BlameText text={text} attribution={shape.props.attribution} />
+                  </div>
                 )}
               </>
             )}

@@ -103,12 +103,42 @@ export function canConvertNoteToProse(p: { kind: CardKind; noteKind: NoteKind | 
 /**
  * Promote a text note into a prose card: it becomes part of the linear draft and
  * falls under the prose-is-protected boundary (claudeMayEditCardText). The note's
- * own metadata (noteKind, origin) is cleared to match a born-prose card, while
- * everything the user cares about carries over untouched — the text itself, its
- * comments, size, and authorship. Pure: callers persist the result themselves.
+ * own metadata (noteKind, origin) is cleared to match a born-prose card, and the
+ * card is claimed as the user's OWN: prose is always human-authored (an agent can
+ * never write prose), so authorship resets to the user and the whole text is
+ * reattributed to them — any agent draft the note carried is now the user's words.
+ * The text itself, its comments, and size carry over untouched. Pure: callers
+ * persist the result themselves.
  */
 export function noteToProseProps(p: CardProps): CardProps {
-  return { ...p, kind: 'prose', noteKind: null, origin: null }
+  return {
+    ...p,
+    kind: 'prose',
+    noteKind: null,
+    origin: null,
+    authoredBy: null,
+    attribution: seedAttribution(p.text, null),
+  }
+}
+
+/**
+ * Can this card be converted back into a note? Any prose card — the inverse of
+ * canConvertNoteToProse, letting the user demote a card out of the draft when it
+ * was promoted (or born) as prose but belongs as working material again.
+ */
+export function canConvertProseToNote(p: { kind: CardKind }): boolean {
+  return p.kind === 'prose'
+}
+
+/**
+ * Demote a prose card back into a text note: it leaves the linear draft and
+ * becomes working material an agent may edit again. It gets a born-note's
+ * metadata (noteKind 'text', origin 'typed'). Prose was human-authored, so the
+ * note stays the user's — authorship and attribution carry over unchanged. Pure:
+ * callers persist the result themselves.
+ */
+export function proseToNoteProps(p: CardProps): CardProps {
+  return { ...p, kind: 'note', noteKind: 'text', origin: 'typed' }
 }
 
 export function isProseCard(p: { kind: CardKind }): boolean {
