@@ -716,19 +716,19 @@ export default function App() {
         </button>
       )}
       <div className="elves-topbar">
-        {realtimeStatus !== 'connected' && (
-          <div
-            className="elves-realtime-status"
-            data-status={realtimeStatus}
-            title={
-              realtimeStatus === 'connecting'
+        <div
+          className="elves-realtime-status"
+          data-status={realtimeStatus}
+          title={
+            realtimeStatus === 'connected'
+              ? 'Connected — your changes are saving'
+              : realtimeStatus === 'connecting'
                 ? 'Connecting…'
                 : realtimeStatus === 'reconnecting'
                   ? 'Reconnecting — some agent changes may be delayed'
-                  : 'Disconnected — reconnecting shortly'
-            }
-          />
-        )}
+                  : 'Disconnected — the server is not running, so your changes are NOT being saved'
+          }
+        />
         <ProjectSwitcher
           projects={projects}
           currentId={currentProjectId}
