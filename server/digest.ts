@@ -38,7 +38,7 @@ export interface SectionDigest {
 
 /**
  * A question card on the map: an agent-authored question floating near a cluster.
- * `dismissed` is included so Claude sees its own answered/waved-off questions and
+ * `dismissed` is included so the agent sees its own answered/waved-off questions and
  * won't re-ask them — a dismissed question is an answered "no".
  */
 export interface QuestionDigest {
@@ -53,7 +53,7 @@ export interface QuestionDigest {
 /**
  * A group on the MAP — a mechanical "these cards travel together" binding
  * (a tldraw group). `cardIds` are its direct card members; `bounds` is the
- * union of their resolved page bounds so Claude can see where the bundle sits.
+ * union of their resolved page bounds so the agent can see where the bundle sits.
  */
 export interface GroupDigest {
   id: string
@@ -228,7 +228,7 @@ export function snapshotToCardMap(snapshot: CanvasSnapshot): CardMap {
 /**
  * One entry per tldraw group shape: its direct card members, count, and the
  * union of their resolved page bounds. Groups with no card members are dropped
- * (nothing for Claude to act on).
+ * (nothing for the agent to act on).
  */
 export function snapshotToGroups(snapshot: CanvasSnapshot): GroupDigest[] {
   const store = storeOf(snapshot)
@@ -253,6 +253,16 @@ export function snapshotToGroups(snapshot: CanvasSnapshot): GroupDigest[] {
       }
     })
     .filter((g): g is GroupDigest => g !== null)
+}
+
+/**
+ * Every group shape id present in the project, regardless of whether it still
+ * has card members — used only to check a referenced groupId actually lives
+ * here (snapshotToGroups drops empty groups, which would wrongly read as
+ * "not in project" for that check).
+ */
+export function snapshotToGroupIds(snapshot: CanvasSnapshot): string[] {
+  return groupShapes(snapshot).map((g: any) => g.id)
 }
 
 /** Full digests for a specific set of card ids — the drill-down after the map. */
@@ -302,7 +312,7 @@ export function snapshotToCanvasDigest(snapshot: CanvasSnapshot, assetsDir?: str
  * Compile the canvas into the LINEAR DRAFT — ordered blocks of `{ section,
  * cards: [{ id, text }] }`, reusing the same pure `compileDraft` the client pane
  * uses so `read_draft` and the pane can never disagree about reading order. This
- * is what surfaces the top-to-bottom-within-sections convention to Claude, which
+ * is what surfaces the top-to-bottom-within-sections convention to the agent, which
  * the position-only map can't. Read-only: no prose-boundary implications.
  */
 export function snapshotToDraft(snapshot: CanvasSnapshot): ReadDraftBlock[] {

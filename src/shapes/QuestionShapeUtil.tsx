@@ -98,7 +98,7 @@ export class QuestionShapeUtil extends ShapeUtil<QuestionShape> {
                   <agent.Logo aria-hidden="true" focusable="false" />
                 </span>
               )}
-              {/* Dismiss (✓): a plain user edit — Claude never dismisses. The
+              {/* Dismiss (✓): a plain user edit — an agent never dismisses. The
                   dismissed shape stays in the file (recoverable), just hidden by
                   App's getShapeVisibility. Revealed on hover (see question.css). */}
               <button

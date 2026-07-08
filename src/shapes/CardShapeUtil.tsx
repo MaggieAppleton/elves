@@ -2,7 +2,7 @@ import {
   ShapeUtil, TLBaseShape, HTMLContainer, Rectangle2d, T, RecordProps,
   createShapePropsMigrationSequence, createShapePropsMigrationIds, resizeBox,
   stopEventPropagation,
-  type Editor, type Geometry2d, type TLResizeInfo,
+  type Editor, type Geometry2d, type TLResizeInfo, type TLShapePartial,
 } from 'tldraw'
 import { useLayoutEffect, type CSSProperties, type ReactNode } from 'react'
 import type { CardKind, NoteKind, Origin, Comment, Reference, FigureStatus } from '../model/types'
@@ -11,7 +11,7 @@ import { nextFigureStatus } from '../model/figures'
 import { cardGist } from '../model/summary'
 import { visibleComments, resolveComment } from '../model/comments'
 import { assetUrl } from '../client/assets'
-import { measuredCardHeight, measuredReferenceHeight, measuredFigureHeight } from './autosize'
+import { measuredCardHeight, measuredReferenceHeight, measuredFigureHeight, PROSE_TEXT_MIN } from './autosize'
 import { shouldShowGist, gistFontSize } from './summaryView'
 import { mergedMembers, isExpanded, toggleExpanded } from './mergeView'
 import { ReferenceCardFace } from './ReferenceCardFace'
@@ -213,8 +213,12 @@ function AutosizeCard({
       const want = cur.props.kind === 'figure'
         ? measuredFigureHeight(editor, cur.props.figureTitle, cur.props.text, cur.props.w)
         : cur.props.noteKind === 'reference' && cur.props.reference
-        ? measuredReferenceHeight(editor, cur.props.reference, cur.props.w)
-        : measuredCardHeight(editor, cur.props.text, cur.props.w, cur.props.kind === 'note')
+        ? measuredReferenceHeight(editor, cur.props.reference, cur.props.text, cur.props.w)
+        : measuredCardHeight(
+            editor, cur.props.text, cur.props.w,
+            cur.props.kind === 'note' || cur.props.kind === 'prose',
+            cur.props.kind === 'prose' ? PROSE_TEXT_MIN : 0,
+          )
       if (Math.abs(want - cur.props.h) > 1) {
         editor.updateShape<CardShape>({ id: cur.id, type: 'card', props: { h: want } })
       }
@@ -257,7 +261,8 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
         type: T.nullable(T.literalEnum('needs-evidence', 'weak-argument', 'needs-citation', 'wants-figure')),
         text: T.string,
         resolved: T.boolean,
-        author: T.literalEnum('claude'),
+        // Any agent id (e.g. 'claude', 'codex'); resolved through the agent registry.
+        author: T.string,
       }),
     ),
     mergedInto: T.nullable(T.string),
@@ -408,11 +413,33 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                 data-testid="card-image"
               />
             ) : isReference ? (
-              // Reference cards render a type-adaptive face; the annotation text
-              // (shape.props.text) stays the user's own words, edited elsewhere.
+              // Reference cards render a type-adaptive face — bibliographic
+              // metadata (title/authors/etc.) is always read-only, sourced from
+              // the reference itself. The annotation (shape.props.text) is the
+              // user's own words underneath it: an editable textarea while
+              // editing, mirroring the prose/note pattern below, and a plain
+              // line of text otherwise.
               <>
                 {mergedBadge}
                 <ReferenceCardFace reference={reference} />
+                {isEditing ? (
+                  <textarea
+                    className="elves-ref__annotation-input"
+                    data-testid="ref-annotation-input"
+                    autoFocus
+                    defaultValue={text}
+                    placeholder="Add your own notes…"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onChange={(e) =>
+                      this.editor.updateShape<CardShape>({
+                        id: shape.id, type: 'card',
+                        props: { text: e.currentTarget.value },
+                      })
+                    }
+                  />
+                ) : text ? (
+                  <div className="elves-ref__annotation" data-testid="ref-annotation">{text}</div>
+                ) : null}
               </>
             ) : isFigure ? (
               // Figure cards plan a visual: a dashed sketch-frame with an image
@@ -505,11 +532,13 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
               </>
             ) : (
               <>
-                {/* Zoomed out, hide the Note/merged chrome so the gist owns the
-                    whole card and reads at a glance. */}
-                {!showGist && kind === 'note' && (
+                {/* Zoomed out, hide the label/merged chrome so the gist owns the
+                    whole card and reads at a glance. Both note and prose cards
+                    carry a small-caps label; prose is user-only so it never
+                    shows an agent mark. */}
+                {!showGist && (kind === 'note' || kind === 'prose') && (
                   <div className="elves-badge-row">
-                    <span className="elves-badge" data-testid="card-badge">Note</span>
+                    <span className="elves-badge" data-testid="card-badge">{kind === 'prose' ? 'Prose' : 'Note'}</span>
                     {/* Agent authorship: a small logo, tinted the agent's accent,
                         tucked right of the label so it reads "written by <agent>". */}
                     {agent && (
@@ -536,7 +565,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                       this.editor.updateShape<CardShape>({
                         id: shape.id,
                         type: 'card',
-                        props: { text: e.currentTarget.value },
+                        props: { text: e.currentTarget.value, authoredBy: null },
                       })
                     }
                   />
@@ -612,6 +641,17 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
 
   override canResize() { return true }
   override canEdit() { return true }
+  // Rotation has no role in this spatial-narrative model: resolvePageXY (the
+  // server/MCP compile in server/digest.ts) walks page x/y additively and is
+  // only exact when no ancestor is rotated. tldraw has no canRotate() flag, so
+  // we hide the interactive handle AND veto the rotate-90 actions (which don't
+  // check hideRotateHandle) by snapping every onRotate back to the shape's
+  // pre-rotation pose. Together these keep the Draft pane and read_draft from
+  // ever disagreeing on reading order. See issue #39.
+  override hideRotateHandle() { return true }
+  override onRotate(initial: CardShape): TLShapePartial<CardShape> {
+    return { id: initial.id, type: 'card', x: initial.x, y: initial.y, rotation: initial.rotation }
+  }
   override onResize(shape: CardShape, info: TLResizeInfo<CardShape>) {
     // Let the user set the width by dragging; height always fits the text at
     // that width, so a resize can't clip content or leave dead space.
@@ -621,8 +661,12 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     const h = shape.props.kind === 'figure'
       ? measuredFigureHeight(this.editor, shape.props.figureTitle, shape.props.text, w)
       : shape.props.noteKind === 'reference' && shape.props.reference
-      ? measuredReferenceHeight(this.editor, shape.props.reference, w)
-      : measuredCardHeight(this.editor, shape.props.text, w, shape.props.kind === 'note')
+      ? measuredReferenceHeight(this.editor, shape.props.reference, shape.props.text, w)
+      : measuredCardHeight(
+          this.editor, shape.props.text, w,
+          shape.props.kind === 'note' || shape.props.kind === 'prose',
+          shape.props.kind === 'prose' ? PROSE_TEXT_MIN : 0,
+        )
     return { ...next, props: { ...next.props, h } }
   }
 }

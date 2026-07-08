@@ -9,6 +9,12 @@ describe('comment helpers', () => {
     expect(makeComment('c2', 'no source', 'needs-evidence').type).toBe('needs-evidence')
   })
 
+  test('makeComment stamps the authoring agent id when given one', () => {
+    expect(makeComment('c1', 'thin here', null, 'codex').author).toBe('codex')
+    // Default stays 'claude' so existing callers/canvases are unaffected.
+    expect(makeComment('c2', 'thin here').author).toBe('claude')
+  })
+
   test('addComment appends immutably', () => {
     const a = makeComment('c1', 'a')
     const out = addComment([], a)

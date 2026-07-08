@@ -26,7 +26,7 @@ import {
 const COMMENT_TYPE = z.enum(['needs-evidence', 'weak-argument', 'needs-citation', 'wants-figure'])
 const REF_TYPE = z.enum(['paper', 'article', 'book', 'software', 'social', 'video', 'wiki', 'link'])
 
-// Every tool that touches a canvas requires this. Claude must know which project
+// Every tool that touches a canvas requires this. The agent must know which project
 // it is working in before doing anything; if it doesn't, it calls list_projects
 // and confirms with the user rather than guessing.
 const PROJECT = z
@@ -35,8 +35,19 @@ const PROJECT = z
     "The project id to operate on (from list_projects). If you don't already know it, call list_projects first and confirm with the user — never guess.",
   )
 
+// House style handed to EVERY agent that connects (Claude or otherwise), sent
+// once in the MCP initialize handshake so it colors every tool call — not just
+// this server's. The canvas is the user's draft; an agent works in its margins,
+// so the governing rule is brevity: everything you leave on the canvas is a
+// sticky note, never an essay.
+const INSTRUCTIONS = `You are a collaborator in the margins of someone's writing project — a canvas of cards holding their draft. The user writes the prose; you leave the marginalia: comments, questions, section labels, figure suggestions, reference cards.
+
+The one house rule that governs all of it: be SHORT. Everything you write on the canvas is a margin note, not a paragraph — terse, suggestive, and easy to glance past. A good comment or question is a sentence, occasionally two; a figure description names an idea in a line or two, never a spec. Say the one thing that matters and stop. When in doubt, cut it in half. A wall of text in the margin is worse than silence — the user skims it and loses trust in the rest.
+
+Be sparing as well as brief: a few pointed notes beat a dozen, and one precise question beats five vague ones. You annotate and suggest; you never write the user's prose for them.`
+
 export function createMcpServer(baseUrl: string): McpServer {
-  const server = new McpServer({ name: 'elves', version: '0.1.0' })
+  const server = new McpServer({ name: 'elves', version: '0.1.0' }, { instructions: INSTRUCTIONS })
 
   server.tool(
     'list_projects',
@@ -47,7 +58,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'read_map',
-    "Read a project's canvas MAP — the cheap, token-light first pass. Returns { cards, sections, questions, groups }. Each card is a small entry: id, kind (prose|note|figure), noteKind (text|image|reference), x/y position (x is narrative order: left=earlier, right=later), `gist` (a one-line summary of the card — a model-authored summary for long cards, else the card's own short text; for a figure card the gist is its title), `textLen` (character count of the full text), and — when set — `mergedInto`, `refType`, and `figureStatus` (idea|sketched|final, on figure cards). It does NOT include full card text, comment bodies, or reference metadata. A `figure` card is a placeholder for a PLANNED VISUAL (see create_figure_card) — use the map to see which visuals are already planned so you don't suggest a duplicate. Sections: id, text (a short thematic label), x/y, authoredBy (user|claude). Questions: id, text (a question you or another agent asked), x/y, authoredBy, and `dismissed` — the user hides a question once they've answered or waved it off; check these before asking, and NEVER re-ask a dismissed one (it's an answered \"no\"). Groups: id, cardIds, memberCount, bounds — a set of cards bound to travel together (see group_cards); each grouped card also carries a `groupId`. Call this FIRST (with the project id) to see the shape of the piece and get ids; then call read_cards for the few cards you actually need in full before commenting, merging, moving, renaming, questioning, or enriching.",
+    "Read a project's canvas MAP — the cheap, token-light first pass. Returns { cards, sections, questions, groups }. Each card is a small entry: id, kind (prose|note|figure), noteKind (text|image|reference), x/y position (x is narrative order: left=earlier, right=later), `gist` (a one-line summary of the card — a model-authored summary for long cards, else the card's own short text; for a figure card the gist is its title), `textLen` (character count of the full text), and — when set — `mergedInto`, `refType`, and `figureStatus` (idea|sketched|final, on figure cards). It does NOT include full card text, comment bodies, or reference metadata. A `figure` card is a placeholder for a PLANNED VISUAL (see create_figure_card) — use the map to see which visuals are already planned so you don't suggest a duplicate. Sections: id, text (a short thematic label), x/y, authoredBy (`user`, or an agent id such as `claude`). Questions: id, text (a question you or another agent asked), x/y, authoredBy, and `dismissed` — the user hides a question once they've answered or waved it off; check these before asking, and NEVER re-ask a dismissed one (it's an answered \"no\"). Groups: id, cardIds, memberCount, bounds — a set of cards bound to travel together (see group_cards); each grouped card also carries a `groupId`. Call this FIRST (with the project id) to see the shape of the piece and get ids; then call read_cards for the few cards you actually need in full before commenting, merging, moving, renaming, questioning, or enriching.",
     { project: PROJECT },
     async ({ project }) => ({
       content: [{ type: 'text', text: JSON.stringify(await readMapTool(baseUrl, project)) }],
@@ -74,7 +85,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'add_comment',
-    "Attach a comment to a card in a project. Use a typed comment to flag a weakness in the user's PROSE (needs-evidence, weak-argument, needs-citation), or `wants-figure` to point out a passage that would carry more as a visual (a spatial relationship described in words, a process/sequence, a comparison across several dimensions — anything the prose is straining to say linearly). Omit type for a freeform note. You never write or edit card text — only comments. (To drop an actual figure placeholder on the canvas, use create_figure_card.)",
+    "Attach a comment to a card in a project. Use a typed comment to flag a weakness in the user's PROSE (needs-evidence, weak-argument, needs-citation), or `wants-figure` to point out a passage that would carry more as a visual (a spatial relationship described in words, a process/sequence, a comparison across several dimensions — anything the prose is straining to say linearly). Omit type for a freeform note. Keep it SHORT — a margin note, one sentence or two at most, saying the single thing that matters; not a paragraph of feedback. You never write or edit card text — only comments. (To drop an actual figure placeholder on the canvas, use create_figure_card.)",
     { project: PROJECT, cardId: z.string(), text: z.string(), type: COMMENT_TYPE.nullish() },
     async ({ project, cardId, text, type }) => {
       await addCommentTool(baseUrl, project, { cardId, text, type: type ?? null })
@@ -160,7 +171,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'edit_card',
-    "Edit an existing WORKING-MATERIAL card in place — a note's body, a reference card's annotation, or a figure's description, all via `text`; plus a figure's working `title` (figures only). Pass only the field(s) you want to change; omit the rest to leave them untouched. Get the cardId from read_map. This edits everything EXCEPT a PROSE card — that holds the user's own draft, which is theirs alone to write, and the server refuses to edit it. Notes, references, and figures are working material Claude helps maintain. Prefer this over delete + recreate — it keeps the card's id, position, and authorship mark. (To change a reference card's bibliographic metadata rather than its annotation, that's not editable here; recreate it.)",
+    "Edit an existing WORKING-MATERIAL card in place — a note's body or a figure's description, via `text`; plus a figure's working `title` (figures only). Pass only the field(s) you want to change; omit the rest to leave them untouched. Get the cardId from read_map. This edits notes and figures, which are working material an agent helps maintain. It does NOT edit a PROSE card — that holds the user's own draft, theirs alone to write — nor a REFERENCE card's `text`, which is the user's own annotation; a reference's bibliographic facts are set once at creation and aren't editable here (recreate it to change them). Prefer this over delete + recreate — it keeps the card's id, position, and authorship mark.",
     { project: PROJECT, cardId: z.string(), text: z.string().optional(), title: z.string().optional() },
     async ({ project, cardId, text, title }) => {
       await editCardTool(baseUrl, project, { cardId, text, title })
@@ -170,7 +181,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'delete_card',
-    "Delete a card CLAUDE authored — a suggestion you dropped that the user wants gone: a figure placeholder, a note you transcribed, or one you're about to replace. Get the cardId from read_map. Scoped for safety: the server deletes a card only if it was agent-authored, so this can NEVER remove the user's own prose or notes — those stay theirs to delete by hand. Deletion is not reversible through the tools, so make sure the card is really yours to remove (check read_map/read_cards first). To fix a card's wording, prefer edit_card over delete + recreate.",
+    "Delete a card YOU authored — a suggestion you dropped that the user wants gone: a figure placeholder, a note you transcribed, or one you're about to replace. Get the cardId from read_map. Scoped for safety: the server deletes a card only if it was agent-authored, so this can NEVER remove the user's own prose or notes — those stay theirs to delete by hand. Deletion is not reversible through the tools, so make sure the card is really yours to remove (check read_map/read_cards first). To fix a card's wording, prefer edit_card over delete + recreate.",
     { project: PROJECT, cardId: z.string() },
     async ({ project, cardId }) => {
       await deleteCardTool(baseUrl, project, { cardId })

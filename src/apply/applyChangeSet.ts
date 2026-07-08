@@ -17,10 +17,14 @@ function newId(prefix: string): string {
 // (see src/client/presence.ts). Ids of cards created in the change-set are minted
 // locally below, so this return value is the only place they surface.
 
-function applyAddComment(editor: Editor, op: Extract<Op, { kind: 'add_comment' }>): TLShapeId[] {
+function applyAddComment(
+  editor: Editor,
+  op: Extract<Op, { kind: 'add_comment' }>,
+  author: string,
+): TLShapeId[] {
   const shape = editor.getShape(op.cardId as CardShape['id']) as CardShape | undefined
   if (!shape) return []
-  const comment = makeComment(newId('cmt'), op.comment.text, op.comment.type)
+  const comment = makeComment(newId('cmt'), op.comment.text, op.comment.type, author)
   editor.updateShape<CardShape>({
     id: shape.id, type: 'card',
     props: { comments: addComment(shape.props.comments, comment) },
@@ -30,6 +34,12 @@ function applyAddComment(editor: Editor, op: Extract<Op, { kind: 'add_comment' }
 
 function applyMerge(editor: Editor, op: Extract<Op, { kind: 'merge_notes' }>): TLShapeId[] {
   const { representativeId, hiddenIds } = planMerge(op.cardIds)
+  // The representative becomes the visible head of the merge cluster, so it
+  // must be a note itself — the server's changeset endpoint already rejects
+  // this case with a 409, but guard here too so this function never merges
+  // under a non-note representative if ever applied directly.
+  const rep = editor.getShape(representativeId as CardShape['id']) as CardShape | undefined
+  if (!rep || rep.props.kind !== 'note') return []
   for (const id of hiddenIds) {
     const shape = editor.getShape(id as CardShape['id']) as CardShape | undefined
     if (shape && shape.props.kind === 'note') {
@@ -37,7 +47,7 @@ function applyMerge(editor: Editor, op: Extract<Op, { kind: 'merge_notes' }>): T
     }
   }
   // Glow the visible survivor — the hidden members are removed from render.
-  return editor.getShape(representativeId as CardShape['id']) ? [representativeId as TLShapeId] : []
+  return [representativeId as TLShapeId]
 }
 
 function applyMove(editor: Editor, op: Extract<Op, { kind: 'move_cards' }>): TLShapeId[] {
@@ -45,7 +55,7 @@ function applyMove(editor: Editor, op: Extract<Op, { kind: 'move_cards' }>): TLS
   for (const m of op.moves) {
     const shape = editor.getShape(m.cardId as CardShape['id'])
     if (!shape) continue
-    // Claude passes absolute page coords; updateShape expects parent-local coords.
+    // The agent passes absolute page coords; updateShape expects parent-local coords.
     // getPointInParentSpace is identity for top-level cards, and converts for grouped ones.
     const local = editor.getPointInParentSpace(shape.id, { x: m.x, y: m.y })
     editor.updateShape({ id: shape.id, type: 'card', x: local.x, y: local.y })
@@ -65,7 +75,7 @@ function overlaps(a: Rect, b: Rect): boolean {
 
 /**
  * The placement guard, mirroring server/applyChangeSet.ts: a new card never
- * lands on top of an existing one. Claude picks x (its narrative order) and a y;
+ * lands on top of an existing one. The agent picks x (its narrative order) and a y;
  * if that rectangle covers any card we slide it straight DOWN — past the lowest
  * card it hits, plus a gap — keeping x so the card holds its place in the story.
  * In the tab the editor knows each card's REAL measured height, so clearance is
@@ -115,7 +125,7 @@ function applyCreateFigureCard(
   op: Extract<Op, { kind: 'create_figure_card' }>,
   author: string,
 ): TLShapeId[] {
-  // Stamp the change-set's author onto the figure so a Claude-suggested one
+  // Stamp the change-set's author onto the figure so an agent-suggested one
   // carries its authorship mark ("its suggestion, my call").
   const props = makeFigureCardProps(op.title, op.description, author)
   const at = placeClearOf(editor, op.x, op.y, props.w, props.h)
@@ -126,9 +136,12 @@ function applyCreateFigureCard(
 
 function applyEditCard(editor: Editor, op: Extract<Op, { kind: 'edit_card' }>): TLShapeId[] {
   const shape = editor.getShape(op.cardId as CardShape['id']) as CardShape | undefined
-  // Working material (note / reference / figure) is Claude's to edit; a prose
+  // Working material (note / reference / figure) is the agent's to edit; a prose
   // card holds the user's own draft and stays the user's alone.
-  if (!shape || !claudeMayEditCardText(shape.props.kind)) return []
+  // A reference's `text` is the user's own annotation — the agent writes its
+  // bibliographic facts at creation, never the annotation, so references are
+  // excluded here even though they're a 'note'-kind card.
+  if (!shape || !claudeMayEditCardText(shape.props.kind) || shape.props.noteKind === 'reference') return []
   const props: Partial<CardShape['props']> = {}
   // `text` is the card body; `title` is a figure's working title (figures only).
   if (op.text !== undefined) props.text = op.text
@@ -139,21 +152,25 @@ function applyEditCard(editor: Editor, op: Extract<Op, { kind: 'edit_card' }>): 
 
 function applyDeleteCard(editor: Editor, op: Extract<Op, { kind: 'delete_card' }>): TLShapeId[] {
   const shape = editor.getShape(op.cardId as CardShape['id']) as CardShape | undefined
-  // Claude may retract only cards it authored; the user's own cards are protected.
+  // An agent may retract only cards it authored; the user's own cards are protected.
   if (!shape || !shape.props.authoredBy) return []
   editor.deleteShape(shape.id)
   // The shape is gone, so there's nothing to glow — return nothing.
   return []
 }
 
-function applyCreateSection(editor: Editor, op: Extract<Op, { kind: 'create_section' }>): TLShapeId[] {
+function applyCreateSection(
+  editor: Editor,
+  op: Extract<Op, { kind: 'create_section' }>,
+  author: string,
+): TLShapeId[] {
   const id = createShapeId()
   editor.createShape<SectionShape>({
     id,
     type: 'section',
     x: op.x,
     y: op.y,
-    props: makeSectionProps(op.text, 'claude'),
+    props: makeSectionProps(op.text, author),
   })
   return [id]
 }
@@ -170,12 +187,16 @@ function applyMoveSections(editor: Editor, op: Extract<Op, { kind: 'move_section
   return moved
 }
 
-function applyEditSectionText(editor: Editor, op: Extract<Op, { kind: 'edit_section_text' }>): TLShapeId[] {
+function applyEditSectionText(
+  editor: Editor,
+  op: Extract<Op, { kind: 'edit_section_text' }>,
+  author: string,
+): TLShapeId[] {
   const shape = editor.getShape(op.sectionId as SectionShape['id']) as SectionShape | undefined
   if (!shape) return []
   editor.updateShape<SectionShape>({
     id: shape.id, type: 'section',
-    props: { text: op.text, authoredBy: 'claude' },
+    props: { text: op.text, authoredBy: author },
   })
   return [shape.id]
 }
@@ -185,7 +206,7 @@ function applyCreateQuestion(
   op: Extract<Op, { kind: 'create_question' }>,
   author: string,
 ): TLShapeId[] {
-  // Questions drop exactly where Claude asks (like sections) — no overlap slide;
+  // Questions drop exactly where the agent asks (like sections) — no overlap slide;
   // an editor's sticky note is meant to sit against the cluster it's about.
   const id = createShapeId()
   editor.createShape<QuestionShape>({
@@ -235,7 +256,7 @@ function applySetSummary(editor: Editor, op: Extract<Op, { kind: 'set_summary' }
 function applyOp(editor: Editor, op: Op, author: string): TLShapeId[] {
   switch (op.kind) {
     case 'add_comment':
-      return applyAddComment(editor, op)
+      return applyAddComment(editor, op, author)
     case 'merge_notes':
       return applyMerge(editor, op)
     case 'move_cards':
@@ -251,11 +272,11 @@ function applyOp(editor: Editor, op: Op, author: string): TLShapeId[] {
     case 'delete_card':
       return applyDeleteCard(editor, op)
     case 'create_section':
-      return applyCreateSection(editor, op)
+      return applyCreateSection(editor, op, author)
     case 'move_sections':
       return applyMoveSections(editor, op)
     case 'edit_section_text':
-      return applyEditSectionText(editor, op)
+      return applyEditSectionText(editor, op, author)
     case 'create_question':
       return applyCreateQuestion(editor, op, author)
     case 'group_cards':
@@ -274,7 +295,7 @@ function applyOp(editor: Editor, op: Op, author: string): TLShapeId[] {
  * so presence never enters history.
  */
 export function applyChangeSet(editor: Editor, cs: ChangeSet): TLShapeId[] {
-  const markId = editor.markHistoryStoppingPoint(`claude:${cs.id}`)
+  const markId = editor.markHistoryStoppingPoint(`${cs.author}:${cs.id}`)
   const affected = new Set<TLShapeId>()
   for (const op of cs.ops) {
     for (const id of applyOp(editor, op, cs.author)) affected.add(id)

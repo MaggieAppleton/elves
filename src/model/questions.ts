@@ -1,5 +1,5 @@
 /**
- * Question cards — an editor's sticky note. Claude (or another agent) drops a
+ * Question cards — an editor's sticky note. An agent drops a
  * short, pointed question near the cluster it's about; the user answers by
  * writing their OWN cards beside it, then dismisses it. A question never carries
  * draft prose — only a question — so it stays on the safe side of the "only I
@@ -19,7 +19,7 @@ export interface QuestionProps {
   /** Agent id that asked it (drives the accent + authorship mark). */
   authoredBy: string
   /** Dismissed by the user once answered (or waved off). Hidden but recoverable
-   * in-file — never deleted, so Claude still sees it in read_map and won't re-ask. */
+   * in-file — never deleted, so the agent still sees it in read_map and won't re-ask. */
   dismissed: boolean
 }
 

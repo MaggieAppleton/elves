@@ -39,3 +39,9 @@
   -webkit-user-select: text;
   cursor: text;
 }
+/* The "Section name" prompt shown in an as-yet-unnamed header — faint, so it
+   reads as an invitation to type rather than as the title itself. */
+.elves-section__editor::placeholder {
+  color: var(--elves-ink-faint);
+  opacity: 1;
+}

@@ -1,6 +1,17 @@
 import { describe, it, expect } from 'vitest'
 import type { Editor } from 'tldraw'
-import { measuredCardHeight, measuredSectionSize } from '../../src/shapes/autosize'
+import type { Reference } from '../../src/model/types'
+import {
+  measuredCardHeight, measuredReferenceHeight, measuredSectionSize,
+} from '../../src/shapes/autosize'
+
+function ref(overrides: Partial<Reference> = {}): Reference {
+  return {
+    url: 'https://example.com', refType: 'link', title: 'A source', authors: [], siteName: null,
+    year: null, venue: null, description: null, faviconAssetId: null, thumbnailAssetId: null,
+    doi: null, arxivId: null, fetchedBy: null, fetchedAt: null, ...overrides,
+  }
+}
 
 /**
  * The auto-size helpers only ever call `editor.textMeasure.measureText`, so we
@@ -52,6 +63,32 @@ describe('measuredCardHeight', () => {
     const { editor, calls } = fakeEditor()
     measuredCardHeight(editor, 'x', 10, false)
     expect(calls[0].maxWidth).toBe(40)
+  })
+})
+
+describe('measuredReferenceHeight', () => {
+  it('grows to fit a non-empty annotation (taller than an empty annotation)', () => {
+    const { editor } = fakeEditor()
+    const r = ref()
+    const bare = measuredReferenceHeight(editor, r, '', 250)
+    const annotated = measuredReferenceHeight(editor, r, 'a'.repeat(200), 250)
+    expect(annotated).toBeGreaterThan(bare)
+  })
+
+  it('grows with more annotation text (more wrapped lines => taller)', () => {
+    const { editor } = fakeEditor()
+    const r = ref()
+    const short = measuredReferenceHeight(editor, r, 'a'.repeat(20), 250)
+    const long = measuredReferenceHeight(editor, r, 'a'.repeat(400), 250)
+    expect(long).toBeGreaterThan(short)
+  })
+
+  it('measures the annotation at full card width (13px left/right padding)', () => {
+    const { editor, calls } = fakeEditor()
+    measuredReferenceHeight(editor, ref(), 'note', 250)
+    const annotationCall = calls.find((c) => c.text === 'note')
+    expect(annotationCall).toBeDefined()
+    expect(annotationCall!.maxWidth).toBe(250 - 26)
   })
 })
 

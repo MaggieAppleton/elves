@@ -21,7 +21,7 @@ export type RefFetcher = 'unfurl' | 'claude' | 'user'
 
 /**
  * Structured metadata for a reference note card (noteKind === 'reference').
- * These are bibliographic *facts* — the app (unfurl) or Claude (research) may
+ * These are bibliographic *facts* — the app (unfurl) or an agent (research) may
  * write them. They are distinct from the card's `text`, which stays the user's
  * own annotation about the source. Favicon/thumbnail are stored as local asset
  * files (ids only here), so a project stays a portable, offline folder.
@@ -53,7 +53,13 @@ export interface Comment {
   type: CommentType | null
   text: string
   resolved: boolean
-  author: 'claude'
+  /**
+   * The agent that wrote the comment, as an agent id (e.g. 'claude'). An open
+   * string, not a literal, so any agent's MCP server (see ELVES_AGENT) stamps its
+   * own id — the id resolves through the agent registry to the comment's accent
+   * and authorship mark.
+   */
+  author: string
 }
 
 export interface CardProps {
@@ -73,7 +79,7 @@ export interface CardProps {
    * maps a known id to its display metadata, and an unknown id renders no mark.
    */
   authoredBy: string | null
-  /** Claude-authored comments attached to this card. */
+  /** Agent-authored comments attached to this card. */
   comments: Comment[]
   /** If set, this note card was merged into the referenced representative card (hidden, recoverable). */
   mergedInto: string | null
@@ -94,7 +100,7 @@ export interface CardProps {
    * `text` holds the description (what the visual needs to show), so the title is
    * a separate field, like a heading above the body. Empty '' for non-figure
    * cards. Like a section label, a figure's title + description are a *plan/
-   * annotation*, never the user's prose — so Claude may author them (see
+   * annotation*, never the user's prose — so an agent may author them (see
    * changeSetWritesText's create_figure_card exception).
    */
   figureTitle: string
@@ -123,11 +129,11 @@ export const CARD_DEFAULT_W = 370
 export const CARD_DEFAULT_H = 120
 
 // Cards an agent adds through the MCP (any card whose `authoredBy` is stamped,
-// i.e. every Claude-written note and figure) are born at a comfortable measure.
+// i.e. every agent-written note and figure) are born at a comfortable measure.
 // An agent drops in a finished thought — a suggestion, a planned figure — that
 // reads better at a settled width without the user having to size it by hand
 // every time. Height still follows the text (measured client-side), so this only
-// sets how wide Claude's cards arrive.
+// sets how wide an agent's cards arrive.
 export const AGENT_CARD_DEFAULT_W = 370
 
 // Reference cards are a touch wider than notes to hold a title + a metadata row

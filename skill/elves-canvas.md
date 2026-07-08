@@ -60,8 +60,8 @@ required `project` id, and you must know which project before doing anything.**
 - **Sections** are a third kind of thing, but not a card: a big thematic label (a
   couple of words) that floats above a cluster of cards so the shape of the piece
   reads at a glance when the user zooms out. Sections have no comments, no origin —
-  just a short label and `authoredBy` (`user` | `claude`, whoever wrote the current
-  wording). Unlike card text, **you may write and rename section labels** — they're
+  just a short label and `authoredBy` (`user`, or an agent id such as `claude` —
+  whoever wrote the current wording). Unlike card text, **you may write and rename section labels** — they're
   organizational, not prose or reference material.
 - **Questions** are a fourth kind of thing: an editor's sticky note. You drop a
   short, pointed question near the cluster it's about; the user answers by writing

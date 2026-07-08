@@ -22,6 +22,22 @@ export class EmptyCanvasOverwriteError extends Error {
   }
 }
 
+/**
+ * Thrown when a write's caller-supplied guard (see `writeCanvas`'s `stillValid`
+ * argument) says the write's target is no longer valid — e.g. the project a
+ * canvas path belongs to was renamed (to a new directory) or deleted after the
+ * caller resolved its paths but before this write actually ran. The write must
+ * refuse rather than recreate the old directory (which would resurrect an
+ * orphaned folder containing only canvas.json, with the save missing from the
+ * project's real, renamed home).
+ */
+export class ProjectGoneError extends Error {
+  constructor() {
+    super('project no longer exists at this path')
+    this.name = 'ProjectGoneError'
+  }
+}
+
 export async function readCanvas(path: string): Promise<CanvasSnapshot> {
   let raw: string
   try {
@@ -39,30 +55,92 @@ export async function readCanvas(path: string): Promise<CanvasSnapshot> {
   return JSON.parse(raw) as CanvasSnapshot
 }
 
-// Serialize all writes through a single promise chain so two writes can never
-// interleave on disk, and give each write a unique temp file so even an
-// out-of-band writer (a second process, a manual script) can't collide on the
-// temp path — the collision that caused ENOENT-on-rename crashes.
-let writeChain: Promise<void> = Promise.resolve()
+// Serialize every read-modify-write against a canvas path through a single
+// per-path promise chain, so a read done to decide *what* to write can never go
+// stale by the time the write lands — closing the lost-update race where a
+// whole-snapshot save and a change-set (or two change-sets) both read the same
+// on-disk state and one silently overwrites the other's already-persisted work.
+//
+// Keyed by path (not global) so unrelated projects/canvases never wait on each
+// other. Each write still gets a unique temp file so even an out-of-band writer
+// (a second process, a manual script) can't collide on the temp path — the
+// collision that caused ENOENT-on-rename crashes.
+const pathChains = new Map<string, Promise<unknown>>()
 let tmpSeq = 0
 
-export function writeCanvas(path: string, data: CanvasSnapshot): Promise<void> {
-  // Chain off the previous write regardless of whether it resolved or rejected,
-  // so one failed write never stalls the queue for the next one.
-  const run = writeChain.then(
-    () => doWrite(path, data),
-    () => doWrite(path, data),
-  )
+/**
+ * Run `task` for `path` after every previously-enqueued task for that SAME
+ * path has settled (resolved or rejected) — the shared serialization primitive
+ * behind withCanvasLock and clearCanvas. A failed task never stalls the queue
+ * for the next caller: the chain always advances.
+ */
+function enqueue<T>(path: string, task: () => Promise<T>): Promise<T> {
+  const tail = pathChains.get(path) ?? Promise.resolve()
+  const run = tail.then(task, task)
   // The chain itself must stay unrejected (an unhandled rejection here would be
   // fatal); the caller still receives the real promise and sees success/failure.
-  writeChain = run.then(
+  const settled = run.then(
     () => undefined,
     () => undefined,
   )
+  pathChains.set(path, settled)
+  // Once this is the last-known task for the path, drop the map entry so it
+  // doesn't grow unboundedly across the life of the process.
+  void settled.then(() => {
+    if (pathChains.get(path) === settled) pathChains.delete(path)
+  })
   return run
 }
 
-async function doWrite(path: string, data: CanvasSnapshot): Promise<void> {
+/**
+ * Atomically run `fn(current)` against the canvas at `path` relative to every
+ * other call for the SAME path: no other reader-writer of this path can read
+ * between `fn`'s read and its write. `fn` receives the canvas as it stands at
+ * the moment this call reaches the front of the queue, and its return value is
+ * persisted — unless it returns `null`, meaning "nothing to write" (mirrors
+ * applyChangeSetToSnapshot's null-means-no-op contract).
+ *
+ * @param stillValid Optional guard checked immediately before the write, inside
+ *   this call's serialized per-path task — so no queue delay can widen the
+ *   window between a caller resolving `path` and the write actually touching
+ *   disk. If it resolves `false`, the write is refused with `ProjectGoneError`
+ *   instead of proceeding to (re)create `path`'s directory. store.ts itself has
+ *   no notion of "project" — callers that write into a project's directory (see
+ *   server/app.ts) pass a guard that re-checks the project still exists;
+ *   generic/standalone callers (and this module's own tests) may omit it.
+ */
+export function withCanvasLock<T extends CanvasSnapshot | null>(
+  path: string,
+  fn: (current: CanvasSnapshot) => T | Promise<T>,
+  stillValid?: () => Promise<boolean>,
+): Promise<T> {
+  return enqueue(path, async () => {
+    const current = await readCanvas(path)
+    const next = await fn(current)
+    if (next !== null) await doWrite(path, next, stillValid)
+    return next
+  })
+}
+
+export function writeCanvas(
+  path: string,
+  data: CanvasSnapshot,
+  stillValid?: () => Promise<boolean>,
+): Promise<void> {
+  return withCanvasLock(path, () => data, stillValid).then(() => undefined)
+}
+
+async function doWrite(
+  path: string,
+  data: CanvasSnapshot,
+  stillValid?: () => Promise<boolean>,
+): Promise<void> {
+  // Refuse to write — and never recreate a directory the caller's guard says
+  // is gone (e.g. a project renamed/deleted between path resolution and this
+  // write actually running).
+  if (stillValid && !(await stillValid())) {
+    throw new ProjectGoneError()
+  }
   await fs.mkdir(dirname(path), { recursive: true })
   // A save must never blank a canvas that holds a real document. An incoming
   // snapshot with no document (the EMPTY_CANVAS sentinel) may only land on a
@@ -84,6 +162,12 @@ async function doWrite(path: string, data: CanvasSnapshot): Promise<void> {
   // bad-but-valid write (a lossy change-set) is recoverable from `<path>.bak`
   // instead of being permanent. Runs inside the serialized write chain, so no
   // other write interleaves.
+  //
+  // FOLLOW-UP (out of scope for the network-boundary hardening in issue #29):
+  // this is a single rolling `.bak`, not integrity-checked or rotated — a
+  // corrupt write followed by another write still loses the last-known-good
+  // state. Rotating/checksummed backups are tracked separately and
+  // deliberately not implemented here.
   await backupExisting(path)
   const tmp = `${path}.${process.pid}.${tmpSeq++}.tmp`
   await fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf8')
@@ -132,19 +216,11 @@ async function backupExisting(path: string): Promise<void> {
  * Explicitly clear a canvas: preserve the current document as a `.bak`, then
  * remove the file so a subsequent read returns EMPTY_CANVAS. This is the
  * intentional counterpart to writeCanvas's guard — a *save* may never blank a
- * real document, but a deliberate clear may. Serialized on the same write chain
- * so it can never interleave with a write.
+ * real document, but a deliberate clear may. Serialized on the same per-path
+ * chain as withCanvasLock/writeCanvas so it can never interleave with a write.
  */
 export function clearCanvas(path: string): Promise<void> {
-  const run = writeChain.then(
-    () => doClear(path),
-    () => doClear(path),
-  )
-  writeChain = run.then(
-    () => undefined,
-    () => undefined,
-  )
-  return run
+  return enqueue(path, () => doClear(path))
 }
 
 async function doClear(path: string): Promise<void> {

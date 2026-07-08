@@ -133,16 +133,16 @@ export function isChangeSet(value: unknown): value is ChangeSet {
 }
 
 /**
- * Defense-in-depth for the core rule "Claude never writes the user's PROSE".
+ * Defense-in-depth for the core rule "an agent never writes the user's PROSE".
  * Returns true iff any op in the change-set would write into a prose card — the
  * one place the user's own draft lives. Everything else (notes, references,
- * figures) is working material Claude may create and edit. create_note_card
+ * figures) is working material an agent may create and edit. create_note_card
  * creates a new note card (allowed), so it returns false for it. The server calls
  * this before applying, so if a prose-writing op is ever added it must be added
  * here consciously.
  *
  * edit_section_text is a deliberate, conscious exception: section labels are
- * organizational headings, not prose or reference material, so Claude is
+ * organizational headings, not prose or reference material, so an agent is
  * explicitly permitted to write and rename them. That permission is scoped to
  * this one op — it does not touch card text in any way.
  *
@@ -164,13 +164,13 @@ export function isChangeSet(value: unknown): value is ChangeSet {
  * create_section: a figure card is a PLACEHOLDER PLAN for a visual — a working
  * title and a description of what the visual needs to show. That description is
  * an annotation about a planned illustration, not the user's prose or reference
- * material — a figure card holds no prose the user is writing. Claude may suggest
+ * material — a figure card holds no prose the user is writing. An agent may suggest
  * one as a placeholder the user refines or rejects (it renders with the agent
  * authorship mark), the same way it may write a section label. Scoped to this one
  * op; it never touches an existing card's `text`.
  *
  * create_question is likewise a machine annotation, the same safety class as
- * add_comment / create_section: it writes Claude's QUESTION — the agent's own
+ * add_comment / create_section: it writes the agent's QUESTION — the agent's own
  * words provoking what the user hasn't written yet — into a new question shape,
  * never the user's prose or any card's `text`. A question card by construction
  * holds only a question, never draft prose, so it sits squarely on the safe side
@@ -186,7 +186,7 @@ export function isChangeSet(value: unknown): value is ChangeSet {
  * not here. Scoped to this one op.
  *
  * delete_card removes a card wholesale; it writes no text at all. The server
- * handler restricts it to agent-authored cards (the suggestions Claude itself
+ * handler restricts it to agent-authored cards (the suggestions the agent itself
  * dropped), so it can never delete the user's own prose or notes. Same structural
  * safety class as move_cards / group_cards.
  */
@@ -247,6 +247,22 @@ export function referencedCardIds(cs: ChangeSet): string[] {
 }
 
 /**
+ * The representative id of every merge_notes op (cardIds[0]) — the card the
+ * hidden members merge under and that stays visible afterward. Callers with a
+ * canvas to check against (the server's changeset endpoint) use this to reject
+ * a change-set whose representative is not itself a note card: merge_notes is
+ * "note cards only", and a non-note representative would become the visible
+ * head of a merge cluster it has no business leading.
+ */
+export function mergeRepresentativeIds(cs: ChangeSet): string[] {
+  const ids: string[] = []
+  for (const op of cs.ops) {
+    if (op.kind === 'merge_notes' && op.cardIds.length > 0) ids.push(op.cardIds[0])
+  }
+  return ids
+}
+
+/**
  * Section ids an op references as an EXISTING section (move targets, rename
  * target). create_section mints a new id and references nothing, so it is
  * excluded — mirrors referencedCardIds for the section model.
@@ -256,6 +272,19 @@ export function referencedSectionIds(cs: ChangeSet): string[] {
   for (const op of cs.ops) {
     if (op.kind === 'move_sections') ids.push(...op.moves.map((m) => m.sectionId))
     else if (op.kind === 'edit_section_text') ids.push(op.sectionId)
+  }
+  return ids
+}
+
+/**
+ * Group ids an op references as an EXISTING group shape. group_cards mints a
+ * new group and references nothing, so only ungroup_cards contributes here —
+ * mirrors referencedCardIds/referencedSectionIds for the group model.
+ */
+export function referencedGroupIds(cs: ChangeSet): string[] {
+  const ids: string[] = []
+  for (const op of cs.ops) {
+    if (op.kind === 'ungroup_cards') ids.push(op.groupId)
   }
   return ids
 }

@@ -12,4 +12,8 @@ describe('section factory', () => {
     expect(p.text).toBe('Origins')
     expect(p.authoredBy).toBe('claude')
   })
+
+  test('authoredBy accepts any agent id, not just claude', () => {
+    expect(makeSectionProps('Origins', 'codex').authoredBy).toBe('codex')
+  })
 })

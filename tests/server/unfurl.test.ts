@@ -33,6 +33,11 @@ describe('decodeEntities', () => {
     expect(decodeEntities('x&#x27;y')).toBe("x'y")
     expect(decodeEntities('&lt;tag&gt;')).toBe('<tag>')
   })
+
+  test('leaves an out-of-range numeric entity literal instead of throwing', () => {
+    expect(() => decodeEntities('&#1234567890;')).not.toThrow()
+    expect(decodeEntities('&#1234567890;')).toBe('&#1234567890;')
+  })
 })
 
 describe('normalizeAuthor', () => {
@@ -73,6 +78,26 @@ describe('parseMetadata — title fallback', () => {
     const m = parseMetadata('<html><head><title>Just A Title</title></head></html>', 'https://example.com')
     expect(m.title).toBe('Just A Title')
     expect(m.siteName).toBe('example.com')
+  })
+})
+
+describe('parseMetadata — out-of-range numeric entity in <title>', () => {
+  const BAD_ENTITY_HTML = '<html><head><title>Broken &#1234567890; Title</title></head></html>'
+
+  test('parses metadata without throwing, leaving the bad entity literal', () => {
+    expect(() => parseMetadata(BAD_ENTITY_HTML, 'https://example.com')).not.toThrow()
+    const m = parseMetadata(BAD_ENTITY_HTML, 'https://example.com')
+    expect(m.title).toBe('Broken &#1234567890; Title')
+  })
+
+  test('unfurl still resolves (not a 500) when the page has a bad numeric entity', async () => {
+    const ref = await unfurl('https://example.com', {
+      fetchText: async () => ({ html: BAD_ENTITY_HTML, finalUrl: 'https://example.com' }),
+      fetchImage: async () => null,
+      saveImage: async () => null,
+      now: () => '2026-07-02T00:00:00.000Z',
+    })
+    expect(ref.title).toBe('Broken &#1234567890; Title')
   })
 })
 
