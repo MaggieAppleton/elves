@@ -1,0 +1,10 @@
+// Syncthing ignore file for the Elves data folder.
+// Copy this to the ROOT of your synced data folder as `.stignore`
+// (e.g. ~/Elves/.stignore) on each machine.
+
+// The server writes atomically via a unique temp file it renames into place.
+// Those temps are gone in milliseconds — telling Syncthing to ignore them
+// avoids pointless sync churn and "file disappeared" scan errors.
+*.tmp
+
+// Keep everything else — including `.bak` / *.backup.json — so backups sync too.
