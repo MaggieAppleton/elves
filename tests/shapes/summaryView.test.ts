@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import {
-  shouldShowGist, gistFontSize, GIST_ZOOM, GIST_FONT_MAX,
+  shouldShowGist, gistFontSize, gistTagFontSize, GIST_ZOOM, GIST_FONT_MAX, GIST_TAG_RATIO,
 } from '../../src/shapes/summaryView'
 
 const summarized = { noteKind: null, summary: 'a gist' } as const
@@ -38,5 +38,14 @@ test('gistFontSize is a consistent, clamped size across the zoom-out range', () 
   // clearly-readable size (well above the normal 15px card text).
   for (const z of [0.1, 0.2, 0.3, 0.45, 0.49]) {
     expect(gistFontSize(z)).toBe(GIST_FONT_MAX)
+  }
+})
+
+test('gist tag chip is a fixed, smaller ratio of the gist size at every zoom', () => {
+  // Derived from the gist size so the tag chip and gist line stay visually
+  // paired — always clearly smaller, never independently drifting.
+  for (const z of [0.1, 0.2, 0.3, 0.45, 0.6, 0.69]) {
+    expect(gistTagFontSize(z)).toBe(Math.round(gistFontSize(z) * GIST_TAG_RATIO))
+    expect(gistTagFontSize(z)).toBeLessThan(gistFontSize(z))
   }
 })

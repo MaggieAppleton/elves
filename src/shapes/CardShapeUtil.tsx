@@ -15,7 +15,7 @@ import { cardGist } from '../model/summary'
 import { visibleComments, resolveComment } from '../model/comments'
 import { assetUrl } from '../client/assets'
 import { measuredCardHeight, measuredReferenceHeight, measuredFigureHeight, PROSE_TEXT_MIN } from './autosize'
-import { shouldShowGist, gistFontSize } from './summaryView'
+import { shouldShowGist, gistFontSize, gistTagFontSize } from './summaryView'
 import { mergedMembers, isExpanded, toggleExpanded } from './mergeView'
 import { ReferenceCardFace } from './ReferenceCardFace'
 import { presenceMode } from '../client/presence'
@@ -683,6 +683,24 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
               </>
             )}
           </div>
+          {/* Zoomed out, the full comments are hidden with the rest of the card's
+              chrome (below), but their type tags stay: a compact, counter-scaled
+              chip per comment so the marginalia is still legible at a glance
+              without crowding the gist. Freeform (untyped) comments show a dot. */}
+          {showGist && comments.length > 0 && (
+            <div className="elves-comments elves-comments--gist" aria-hidden>
+              {comments.map((c) => (
+                <span
+                  key={c.id}
+                  className="elves-gist-tag"
+                  data-type={c.type ?? 'freeform'}
+                  style={{ fontSize: gistTagFontSize(zoom) }}
+                >
+                  {c.type ?? '•'}
+                </span>
+              ))}
+            </div>
+          )}
           {!showGist && comments.length > 0 && (
             <div className="elves-comments" onPointerDown={(e) => e.stopPropagation()}>
               {comments.map((c) => (
