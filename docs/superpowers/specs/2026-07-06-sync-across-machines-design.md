@@ -61,8 +61,9 @@ paths (different usernames). A committed value therefore can't work across both.
 
 - Add `dotenv` as a dependency.
 - Load it with a single `import 'dotenv/config'` at the top of the server entry
-  (`server/index.ts`) and the MCP entry (`mcp/index.ts`, if it reads the data root
-  directly rather than over HTTP — confirm during implementation).
+  (`server/index.ts`) only. **The MCP entry does not need it:** `mcp/index.ts`
+  reads `ELVES_URL` and talks to the running app over HTTP (`mcp/elvesClient.ts`),
+  so it never touches the data root and is unaffected by relocation.
 - Ship a committed **`.env.example`** documenting `ELVES_DATA` (and the other
   existing env vars: `PORT`, `VITE_SERVER_URL`, `OLLAMA_HOST`, `OLLAMA_MODEL`).
 - Each machine has its own gitignored **`.env`** with its own absolute
