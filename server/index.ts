@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { createServer } from './app'
 import { attachRealtime } from './realtime'
+import { createSelectionStore } from './selection'
 import { migrateLegacyCanvas } from './migrate'
 import { migrateSourceCardsToNotes } from './migrateNotes'
 import { listProjects, resyncProjectIds } from './projects'
@@ -35,7 +36,8 @@ async function main() {
   const { broadcast, broadcastPresence } = attachRealtime(httpServer)
   const summarizer = new OllamaSummarizer()
   const now = () => new Date().toISOString()
-  const app = createServer(dataRoot, broadcast, { summarizer, now }, broadcastPresence)
+  const selection = createSelectionStore()
+  const app = createServer(dataRoot, broadcast, { summarizer, now }, broadcastPresence, selection)
   httpServer.on('request', app)
 
   // Binds loopback-only by default (see server/host.ts) — set ELVES_HOST=0.0.0.0
