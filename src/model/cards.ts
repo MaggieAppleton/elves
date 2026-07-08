@@ -1,5 +1,5 @@
 import {
-  CardKind, CardProps, Origin, Reference, CARD_DEFAULT_W, CARD_DEFAULT_H,
+  CardKind, NoteKind, CardProps, Origin, Reference, CARD_DEFAULT_W, CARD_DEFAULT_H,
   REFERENCE_DEFAULT_W, REFERENCE_DEFAULT_H, FIGURE_DEFAULT_W, FIGURE_DEFAULT_H,
   AGENT_CARD_DEFAULT_W,
 } from './types'
@@ -75,6 +75,27 @@ export function makeFigureCardProps(
     comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference: null,
     figureTitle: title, figureStatus: 'idea', ...NO_SUMMARY,
   }
+}
+
+/**
+ * Can this card be converted into a prose card? Only a TEXT note — its `text` is
+ * the user's own words waiting to become part of the draft. Image and reference
+ * notes hold an annotation / structured data, not prose, and a card already prose
+ * has nowhere to go. See noteToProseProps for the transform itself.
+ */
+export function canConvertNoteToProse(p: { kind: CardKind; noteKind: NoteKind | null }): boolean {
+  return p.kind === 'note' && p.noteKind === 'text'
+}
+
+/**
+ * Promote a text note into a prose card: it becomes part of the linear draft and
+ * falls under the prose-is-protected boundary (claudeMayEditCardText). The note's
+ * own metadata (noteKind, origin) is cleared to match a born-prose card, while
+ * everything the user cares about carries over untouched — the text itself, its
+ * comments, size, and authorship. Pure: callers persist the result themselves.
+ */
+export function noteToProseProps(p: CardProps): CardProps {
+  return { ...p, kind: 'prose', noteKind: null, origin: null }
 }
 
 export function isProseCard(p: { kind: CardKind }): boolean {
