@@ -36,10 +36,10 @@ function fakeEditor(): { editor: Editor; calls: Array<Record<string, unknown>> }
 }
 
 describe('measuredCardHeight', () => {
-  it('measures at the content width (card width minus 28px padding)', () => {
+  it('measures at the content width (card width minus 30px = 1px border + 14px padding each side)', () => {
     const { editor, calls } = fakeEditor()
     measuredCardHeight(editor, 'hello', 250, true)
-    expect(calls[0].maxWidth).toBe(250 - 28)
+    expect(calls[0].maxWidth).toBe(250 - 30)
     expect(calls[0].fontSize).toBe(15)
   })
 
@@ -48,8 +48,8 @@ describe('measuredCardHeight', () => {
     // 'hello' (5 chars) fits one line at width 250 => textH = 15 * 1.45 = 21.75
     const source = measuredCardHeight(editor, 'hello', 250, true)
     const prose = measuredCardHeight(editor, 'hello', 250, false)
-    expect(source - prose).toBe(20) // the NOTE badge row
-    expect(prose).toBe(Math.ceil(21.75 + 24)) // text + vertical padding only
+    expect(source - prose).toBe(22) // the NOTE/PROSE badge row + gap
+    expect(prose).toBe(Math.ceil(21.75 + 26)) // text + vertical padding + border only
   })
 
   it('grows with more text (more wrapped lines => taller)', () => {

@@ -11,6 +11,8 @@
  * so a question is always visibly agent-authored and a second agent can drop its
  * own. Questions are never user-authored (you'd just write a note card).
  */
+import { CARD_DEFAULT_W } from './types'
+
 export interface QuestionProps {
   w: number
   h: number
@@ -23,7 +25,10 @@ export interface QuestionProps {
   dismissed: boolean
 }
 
-export const QUESTION_DEFAULT_W = 220
+// A question sits at the same measure as the user's cards, so an agent's ask
+// reads as a peer note in the margin rather than a cramped sticky. Height still
+// follows the text (measured client-side); this only sets the arrival width.
+export const QUESTION_DEFAULT_W = CARD_DEFAULT_W
 export const QUESTION_DEFAULT_H = 96
 
 export function makeQuestionProps(
