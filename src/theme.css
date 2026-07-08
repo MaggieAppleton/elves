@@ -431,10 +431,13 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .elves-tools-toggle,
   .elves-toolbar button { transition: none; }
+  .elves-realtime-status[data-status='disconnected'] { animation: none; }
 }
 
-/* Small, unobtrusive realtime connection indicator — only rendered when not
-   connected, so a healthy connection stays invisible. */
+/* Always-visible backend connection indicator: green when the WebSocket to the
+   server is live (so your changes are persisting), amber while reconnecting, and
+   a pulsing red when the server is down — the "localhost still loads but nothing
+   saves" trap this dot exists to catch. */
 .elves-realtime-status {
   width: 8px;
   height: 8px;
@@ -442,9 +445,20 @@ body {
   flex-shrink: 0;
   background: var(--elves-ink-faint);
 }
+.elves-realtime-status[data-status='connected'] { background: #4a9e5c; }
 .elves-realtime-status[data-status='connecting'] { background: var(--elves-ink-faint); }
 .elves-realtime-status[data-status='reconnecting'] { background: #d9a441; }
-.elves-realtime-status[data-status='disconnected'] { background: #d9534f; }
+.elves-realtime-status[data-status='disconnected'] {
+  background: #d9534f;
+  animation: elves-status-pulse 1.4s ease-in-out infinite;
+}
+
+/* Compositor-only pulse (opacity + scale) so the frame loop never triggers
+   layout or paint. */
+@keyframes elves-status-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(1.35); }
+}
 
 /* ---- Project switcher (top-right) -------------------------------------- */
 .elves-switcher {
