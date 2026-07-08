@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   makeProseCardProps, makeNoteCardProps, makeImageNoteCardProps, makeReferenceCardProps,
   makeFigureCardProps, isProseCard, isNoteCard, isFigureCard, claudeMayEditCardText,
-  canConvertNoteToProse, noteToProseProps,
+  canConvertNoteToProse, noteToProseProps, canConvertProseToNote, proseToNoteProps,
   CARD_DEFAULT_W, CARD_DEFAULT_H, FIGURE_DEFAULT_W, FIGURE_DEFAULT_H, AGENT_CARD_DEFAULT_W,
 } from '../../src/model/cards'
 import type { Comment } from '../../src/model/types'
@@ -132,7 +132,7 @@ describe('convert note → prose', () => {
     expect(isNoteCard(prose)).toBe(false)
   })
 
-  test('conversion preserves the text, comments, size, and authorship', () => {
+  test('conversion preserves the text, comments, and size', () => {
     const comments: Comment[] = [
       { id: 'c1', type: 'needs-citation', text: 'source?', resolved: false, author: 'claude' },
     ]
@@ -140,9 +140,17 @@ describe('convert note → prose', () => {
     const prose = noteToProseProps(note)
     expect(prose.text).toBe('written by an agent')
     expect(prose.comments).toBe(comments)
-    expect(prose.authoredBy).toBe('claude')
     expect(prose.w).toBe(512)
     expect(prose.h).toBe(240)
+  })
+
+  test('conversion claims the card as the user’s own: prose is always human-authored', () => {
+    // Prose can never be an agent's, so promoting an agent-drafted note makes it
+    // the user's — authorship clears and every character reattributes to the user.
+    const note = makeNoteCardProps('drafted by claude', 'transcribed', 'claude')
+    const prose = noteToProseProps(note)
+    expect(prose.authoredBy).toBeNull()
+    expect(prose.attribution).toEqual([{ author: 'user', length: 'drafted by claude'.length }])
   })
 
   test('after conversion the prose boundary protects the text from agent edits', () => {
@@ -150,6 +158,33 @@ describe('convert note → prose', () => {
     // off-limits to agent text edits, exactly like a born-prose card.
     const prose = noteToProseProps(makeNoteCardProps('now part of the draft'))
     expect(claudeMayEditCardText(prose.kind)).toBe(false)
+  })
+})
+
+describe('convert prose → note (the inverse)', () => {
+  test('any prose card can be demoted; notes and figures cannot', () => {
+    expect(canConvertProseToNote(makeProseCardProps('x'))).toBe(true)
+    expect(canConvertProseToNote(makeNoteCardProps('x'))).toBe(false)
+    expect(canConvertProseToNote(makeFigureCardProps('t', 'd'))).toBe(false)
+  })
+
+  test('demotion flips kind to a text note with born-note metadata', () => {
+    const note = proseToNoteProps(makeProseCardProps('back to working material'))
+    expect(note.kind).toBe('note')
+    expect(note.noteKind).toBe('text')
+    expect(note.origin).toBe('typed')
+    expect(isNoteCard(note)).toBe(true)
+    // A demoted note is working material an agent may edit again.
+    expect(claudeMayEditCardText(note.kind)).toBe(true)
+  })
+
+  test('round-trip note → prose → note preserves the text', () => {
+    const original = makeNoteCardProps('a thought', 'tana')
+    const back = proseToNoteProps(noteToProseProps(original))
+    expect(back.kind).toBe('note')
+    expect(back.text).toBe('a thought')
+    // Authorship stayed the user's through the round-trip (prose is always human).
+    expect(back.authoredBy).toBeNull()
   })
 })
 
