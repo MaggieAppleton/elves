@@ -9,7 +9,15 @@ export type Origin = 'tana' | 'image' | 'typed' | 'transcribed' | 'reference'
  */
 export type FigureStatus = 'idea' | 'sketched' | 'final'
 
-export type CommentType = 'needs-evidence' | 'weak-argument' | 'needs-citation' | 'wants-figure'
+export type CommentType =
+  | 'needs-evidence'
+  | 'weak-argument'
+  | 'needs-citation'
+  | 'wants-figure'
+  | 'counterpoint'
+  | 'tighten'
+  | 'unclear'
+  | 'structure'
 
 /** The kind of external thing a reference points at — drives its card face. */
 export type RefType =
@@ -60,6 +68,12 @@ export interface Comment {
    * and authorship mark.
    */
   author: string
+  /**
+   * The review pass this comment belongs to (a Review id, see
+   * src/model/reviews.ts), or null for a comment made outside any pass. Groups a
+   * pass's notes so the review panel can report "N notes, M open" per pass.
+   */
+  reviewId: string | null
 }
 
 export interface CardProps {

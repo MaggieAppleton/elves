@@ -100,6 +100,16 @@ export function addFigureUp(props: Record<string, unknown>): void {
   props.figureStatus = null
 }
 
+// Comments gained a nullable `reviewId` tying each to the review pass that made
+// it (see src/model/reviews.ts). Every existing comment predates review passes,
+// so default them to null — a comment made outside any pass.
+export function addCommentReviewIdUp(props: Record<string, unknown>): void {
+  const comments = props.comments
+  if (Array.isArray(comments)) {
+    props.comments = comments.map((c) => ({ reviewId: null, ...(c as Record<string, unknown>) }))
+  }
+}
+
 // Card kind 'source' was renamed to 'note', and its sub-kind prop `sourceKind`
 // to `noteKind`, when "note" became the canonical word for these cards. Idempotent
 // on purpose: the server pre-converts canvas.json on disk before serving, so this
@@ -123,7 +133,7 @@ export function renameSourceToNoteDown(props: Record<string, unknown>): void {
 
 const cardVersions = createShapePropsMigrationIds('card', {
   AddComments: 1, AddAssetId: 2, AddReference: 3, AddSummary: 4, RenameSourceToNote: 5,
-  AddAuthoredBy: 6, AddDraftExcluded: 7, AddFigure: 8,
+  AddAuthoredBy: 6, AddDraftExcluded: 7, AddFigure: 8, AddCommentReviewId: 9,
 })
 
 export const cardMigrations = createShapePropsMigrationSequence({
@@ -188,6 +198,19 @@ export const cardMigrations = createShapePropsMigrationSequence({
         const p = props as Record<string, unknown>
         delete p.figureTitle
         delete p.figureStatus
+      },
+    },
+    {
+      id: cardVersions.AddCommentReviewId,
+      up: (props) => addCommentReviewIdUp(props as Record<string, unknown>),
+      down: (props) => {
+        const p = props as Record<string, unknown>
+        if (Array.isArray(p.comments)) {
+          p.comments = p.comments.map((c) => {
+            const { reviewId: _drop, ...rest } = c as Record<string, unknown>
+            return rest
+          })
+        }
       },
     },
   ],
@@ -258,11 +281,16 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     comments: T.arrayOf(
       T.object({
         id: T.string,
-        type: T.nullable(T.literalEnum('needs-evidence', 'weak-argument', 'needs-citation', 'wants-figure')),
+        type: T.nullable(T.literalEnum(
+          'needs-evidence', 'weak-argument', 'needs-citation', 'wants-figure',
+          'counterpoint', 'tighten', 'unclear', 'structure',
+        )),
         text: T.string,
         resolved: T.boolean,
         // Any agent id (e.g. 'claude', 'codex'); resolved through the agent registry.
         author: T.string,
+        // The review pass that made it (a Review id), or null outside any pass.
+        reviewId: T.nullable(T.string),
       }),
     ),
     mergedInto: T.nullable(T.string),

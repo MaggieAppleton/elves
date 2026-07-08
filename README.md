@@ -20,7 +20,9 @@ It's a writing app where **agents collaborate with you but never write for you.*
 
 **Section headers.** Big thematic labels that float above a cluster of cards so the shape of the piece reads at a glance when you zoom out. You or an agent can write and rename them (an agent's show in its accent).
 
-**Comments.** An agent flags weak spots in your prose — `needs-evidence`, `weak-argument`, `needs-citation`, `wants-figure`, or a freeform note — each individually resolvable. Always agent-authored; it comments on your prose, never rewrites it.
+**Comments.** An agent flags weak spots in your prose — `needs-evidence`, `weak-argument`, `needs-citation`, `wants-figure`, `counterpoint`, `tighten`, `unclear`, `structure`, or a freeform note — each individually resolvable. Always agent-authored; it comments on your prose, never rewrites it.
+
+**Review passes.** Summon one of five reviewer personalities — Devil's Advocate, The Fact-Checker, The Trimmer, The First Reader, The Architect — for a bounded, in-character editorial pass: each reads for one thing only, works within a comment/question budget, and ends with a short verdict. Click **Review** in the topbar to summon one (with an optional focus note) and watch the pass move from pending to claimed to verdict, or ask your agent in chat ("play devil's advocate on my draft") and its MCP prompt does the same thing without the app. Either way, an agent picks up the pass and annotates the canvas — the app itself never runs a review.
 
 **Merge duplicates.** Near-identical note cards collapse under one representative (the rest hidden but recoverable) with an "N merged" badge.
 
@@ -36,7 +38,7 @@ It's a writing app where **agents collaborate with you but never write for you.*
 
 **Projects.** Keep several pieces at once, each a self-contained, portable folder; create / switch / rename from the toolbar.
 
-**Agents via MCP.** With the app running, an agent works the canvas through a scoped [MCP](https://modelcontextprotocol.io) server — Claude, Codex, GitHub Copilot, or any other MCP-capable tool. It **reads** with `list_projects`, `read_map` (a cheap, token-light map with a one-line gist per card, plus the section and group lists), `read_cards` (full text on demand), and `read_draft` (the piece as one linear draft). It **organizes and critiques** with `add_comment`, `merge_notes`, `move_cards`, `create_note_card` (transcribe), `create_reference`, `create_figure_card`, `create_question`, `create_section` / `edit_section_text` / `move_sections`, and `group_cards` / `ungroup_cards`. It can `edit_card` (a note's body, a reference's annotation, or a figure's title/description) and `delete_card` — but only for working-material cards it authored. Every tool targets a specific project, and **none can write your prose**.
+**Agents via MCP.** With the app running, an agent works the canvas through a scoped [MCP](https://modelcontextprotocol.io) server — Claude, Codex, GitHub Copilot, or any other MCP-capable tool. It **reads** with `list_projects`, `read_map` (a cheap, token-light map with a one-line gist per card, plus the section and group lists), `read_cards` (full text on demand), and `read_draft` (the piece as one linear draft). It **organizes and critiques** with `add_comment`, `merge_notes`, `move_cards`, `create_note_card` (transcribe), `create_reference`, `create_figure_card`, `create_question`, `create_section` / `edit_section_text` / `move_sections`, and `group_cards` / `ungroup_cards`. It runs **review passes** with `list_reviews`, `start_review`, `complete_review` — bounded, in-character editorial reads it discovers pending or opens ad-hoc. It can `edit_card` (a note's body, a reference's annotation, or a figure's title/description) and `delete_card` — but only for working-material cards it authored. Every tool targets a specific project, and **none can write your prose**.
 
 ## Requirements
 
@@ -98,8 +100,10 @@ at the `elves` server (see `.mcp.json`); in Claude Code, opening this project of
 so approve it. Then ask the agent things like *"read my canvas and flag weak spots"*,
 *"dedupe my note cards"*, *"transcribe this handwritten note"*, *"reorder these points for
 flow"*, *"read my draft top-to-bottom and tell me where it sags"*, *"suggest where a
-diagram would help"*, or *"ask me questions about the gaps"*. Its changes appear live and
-are undoable.
+diagram would help"*, *"ask me questions about the gaps"*, or *"play devil's advocate on
+my draft"* to summon a review pass. Its changes appear live and are undoable. A review you
+summon from the app's **Review** button starts out pending — the next agent you talk to
+picks it up via `list_reviews`, so it's fine to summon one before you've opened a chat.
 
 Each agent authors under its own id — set `ELVES_AGENT` when launching the MCP server
 (e.g. `ELVES_AGENT=codex`) so its cards carry its own authorship mark; it defaults to

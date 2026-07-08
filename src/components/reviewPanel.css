@@ -1,0 +1,253 @@
+/* ---- Review panel (topbar, beside the project switcher) -------------------
+   Summon a reviewer personality; watch a pass move pending → in-progress →
+   done; read its verdict. Mirrors the project switcher's quiet dropdown
+   language so the topbar reads as one family of controls. */
+
+.elves-review {
+  position: relative;
+}
+
+.elves-review__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--elves-card-font);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--elves-border);
+  background: var(--elves-surface);
+  color: var(--elves-ink);
+  cursor: pointer;
+  box-shadow: var(--elves-shadow-md), var(--elves-highlight);
+  transition: background-color 100ms ease;
+}
+.elves-review__button:hover { background: var(--elves-tertiary); }
+.elves-review__button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring);
+}
+.elves-review__icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--elves-ink-faint);
+}
+.elves-review__button:hover .elves-review__icon { color: inherit; }
+
+/* A quiet "something is live" dot on the button: hollow while a summon waits,
+   filled + breathing while an agent is actually reading. */
+.elves-review__badge {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.elves-review__badge[data-state='pending'] {
+  background: transparent;
+  border: 1.5px solid var(--elves-ink-faint);
+}
+.elves-review__badge[data-state='in-progress'] {
+  background: var(--elves-claude-accent);
+  animation: elves-review-breathe 1.6s ease-in-out infinite;
+}
+
+.elves-review__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 300px;
+  padding: 6px;
+  border-radius: 11px;
+  background: var(--elves-surface);
+  border: 1px solid var(--elves-border);
+  box-shadow: var(--elves-shadow-lg), var(--elves-highlight);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.elves-review__heading {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--elves-ink-faint);
+  padding: 6px 8px 4px;
+}
+
+.elves-review__focus {
+  font-family: var(--elves-card-font);
+  font-size: 12px;
+  color: var(--elves-ink);
+  background: var(--elves-bg);
+  border: 1px solid var(--elves-border);
+  border-radius: 8px;
+  padding: 7px 9px;
+  margin: 0 4px 4px;
+}
+.elves-review__focus::placeholder { color: var(--elves-ink-faint); }
+.elves-review__focus:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--elves-focus-ring);
+}
+
+.elves-review__persona {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  font-family: var(--elves-card-font);
+  padding: 7px 8px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 100ms ease;
+}
+.elves-review__persona:hover { background: var(--elves-tertiary); }
+.elves-review__persona:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring);
+}
+.elves-review__swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 3px;
+  opacity: 0.85;
+}
+.elves-review__persona-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.elves-review__persona-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--elves-ink);
+  line-height: 1.2;
+}
+.elves-review__persona-summary {
+  font-size: 11.5px;
+  color: var(--elves-ink-soft);
+  line-height: 1.35;
+}
+
+.elves-review__divider {
+  height: 1px;
+  background: var(--elves-border);
+  margin: 4px 2px;
+}
+
+.elves-review__pass {
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+.elves-review__pass-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.elves-review__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.elves-review__dot[data-status='pending'] {
+  background: transparent;
+  border: 1.5px solid var(--elves-ink-faint);
+}
+.elves-review__dot[data-status='in-progress'] {
+  background: var(--elves-claude-accent);
+  animation: elves-review-breathe 1.6s ease-in-out infinite;
+}
+.elves-review__dot[data-status='done'] { background: var(--elves-primary); }
+
+.elves-review__pass-name {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--elves-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.elves-review__pass-focus {
+  font-weight: 400;
+  color: var(--elves-ink-soft);
+}
+.elves-review__pass-state {
+  font-size: 11px;
+  color: var(--elves-ink-soft);
+  white-space: nowrap;
+}
+.elves-review__tally {
+  font-family: var(--elves-card-font);
+  font-size: 11px;
+  color: var(--elves-primary-strong);
+  background: var(--elves-primary-tint);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 2px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 100ms ease;
+}
+.elves-review__tally:hover { background: var(--elves-primary-tint-2); }
+
+.elves-review__dismiss {
+  font-family: var(--elves-card-font);
+  font-size: 13px;
+  line-height: 1;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--elves-ink-faint);
+  cursor: pointer;
+  transition: background-color 100ms ease, color 100ms ease;
+}
+.elves-review__dismiss:hover {
+  background: var(--elves-tertiary);
+  color: var(--elves-ink);
+}
+
+.elves-review__verdict {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--elves-ink-soft);
+  padding: 4px 0 2px 14px;
+}
+
+.elves-review__hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--elves-ink-faint);
+  padding: 4px 8px 6px;
+}
+
+@keyframes elves-review-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .elves-review__badge[data-state='in-progress'],
+  .elves-review__dot[data-status='in-progress'] {
+    animation: none;
+  }
+}

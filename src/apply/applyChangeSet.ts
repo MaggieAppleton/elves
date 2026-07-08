@@ -24,7 +24,9 @@ function applyAddComment(
 ): TLShapeId[] {
   const shape = editor.getShape(op.cardId as CardShape['id']) as CardShape | undefined
   if (!shape) return []
-  const comment = makeComment(newId('cmt'), op.comment.text, op.comment.type, author)
+  const comment = makeComment(
+    newId('cmt'), op.comment.text, op.comment.type, author, op.comment.reviewId ?? null,
+  )
   editor.updateShape<CardShape>({
     id: shape.id, type: 'card',
     props: { comments: addComment(shape.props.comments, comment) },

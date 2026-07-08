@@ -88,14 +88,31 @@ required `project` id, and you must know which project before doing anything.**
   can't tell you that *top-to-bottom within a section* is the load-bearing convention.
   `read_draft` hands you that order directly, with full prose text. Only prose cards
   compile (notes/images/references don't); merged and draft-excluded cards are skipped.
-- **`add_comment(project, cardId, text, type?)`** — flag a weakness in a PROSE card. Use a type:
+- **`add_comment(project, cardId, text, type?, reviewId?)`** — flag a weakness in a PROSE card. Use a type:
   - `needs-evidence` — a claim with nothing backing it.
   - `weak-argument` — reasoning that doesn't hold up or has an obvious counter.
   - `needs-citation` — a specific fact/quote that needs a source.
   - `wants-figure` — a passage that would carry more as a visual than as prose (see
     "Suggesting figures"). Use this to *point out* the opportunity in place; use
     `create_figure_card` to actually drop a placeholder.
+  - `counterpoint` — a specific objection the piece must address.
+  - `tighten` — compress this passage. May quote a suggested shorter phrasing in the
+    user's own register, offered as a suggestion — never applied.
+  - `unclear` — a cold reader loses the thread here.
+  - `structure` — an ordering/flow problem.
   - omit `type` for a freeform note. Keep comments short and specific.
+  - Pass `reviewId` when the comment belongs to a review pass (from `start_review`), so
+    the user's review panel can group it with the rest of that pass's notes.
+- **`list_reviews(project)`** — list the project's review passes with status
+  (`pending`/`in-progress`/`done`/`dismissed`), personality, focus, agent, verdict, and
+  commentCount. A `pending` pass is the user's summons from the app, waiting for you to
+  claim it. Check this when you start work on a canvas. See "Review passes" below.
+- **`start_review(project, reviewId?, personality?, focus?)`** — open a review pass and
+  get its brief. Pass `reviewId` to claim a pending pass; pass `personality` to open an
+  ad-hoc one when the user asks for that kind of read in chat. Returns the reviewId to
+  tag your comments with.
+- **`complete_review(project, reviewId, verdict)`** — close a pass with a one-to-three
+  sentence verdict, once per pass, after your last comment/question.
 - **`merge_notes(project, cardIds)`** — collapse duplicate note cards. The first id is
   kept; the rest hide under it (recoverable). Only merge cards that truly say the same thing.
 - **`move_cards(project, moves)`** — reorder. To bring a point earlier, give it a smaller x
@@ -129,6 +146,48 @@ required `project` id, and you must know which project before doing anything.**
   - **Check existing questions first** (open *and* dismissed in `read_map`). A dismissed
     question is one the user already answered or waved off — don't re-ask it. You place
     and (re)position questions, but you never dismiss or edit one; those are the user's.
+
+## Review passes
+
+A **review pass** is one bounded, in-character editorial read: you become a single
+reviewer personality, look at only what that personality reads for, work within its
+comment/question budget, and close the pass with a short verdict. It never moves,
+merges, edits, or creates cards (question cards within budget excepted) — a pass
+annotates, it doesn't change anything.
+
+The five personalities:
+- **Devil's Advocate** — argues back: the strongest objection the piece never answers
+  (`counterpoint`), and reasoning that doesn't hold (`weak-argument`).
+- **The Fact-Checker** — demands receipts: claims with nothing backing them
+  (`needs-evidence`) and facts/quotes needing a source (`needs-citation`).
+- **The Trimmer** — cuts the fat: redundancy, throat-clearing, hedges (`tighten`).
+- **The First Reader** — reads it cold: where a newcomer loses the thread (`unclear`).
+- **The Architect** — inspects the structure: ordering, bridges, sagging shape
+  (`structure`, plus `wants-figure` where a passage wants to be seen, not read).
+
+Workflow:
+1. **Check `list_reviews`** when you start work on a canvas (or whenever the user asks
+   "any reviews waiting?"). A `pending` pass is a summons from the app's Review button.
+2. **Claim it with `start_review(reviewId)`**, or open an ad-hoc pass with
+   `start_review(personality)` when the user asks for that kind of read in chat ("play
+   devil's advocate on this", "read it cold"). Don't open an ad-hoc pass when a pending
+   one of the same personality is already waiting — claim that instead.
+3. **Follow the brief it returns exactly** — it composes the personality's instructions,
+   its budget, and the shared pass rules (and the user's focus note, if any). Read the
+   draft first, in order, like a reader.
+4. **Tag every comment with the pass's `reviewId`** so the user's review panel groups
+   your notes with this pass.
+5. **Finish with `complete_review(reviewId, verdict)`** — one to three honest sentences,
+   including "this holds up" when it does — and tell the user the verdict in chat.
+
+Rules:
+- **Annotate only.** No moving, merging, editing, or deleting cards during a pass.
+- **Budgets are ceilings, not quotas.** Survey the whole piece, then spend your comments
+  on the strongest instances anywhere in it — two sharp notes beat eight dutiful ones.
+- **Never re-flag.** A card already carrying an unresolved comment of the same type is
+  flagged; a dismissed question is an answered "no".
+- **Stay in character.** Feedback outside your personality's remit is dropped, not
+  smuggled in as a freeform note — another reviewer covers it; that's why there's a cast.
 
 ## Transcribing handwritten notes (images)
 

@@ -1,5 +1,6 @@
 import { ChangeSet } from '../model/changeset'
 import { PresenceMessage } from '../model/presence'
+import { Review } from '../model/reviews'
 
 const BASE =
   (import.meta as any).env?.VITE_SERVER_URL ?? 'http://localhost:5199'
@@ -29,12 +30,17 @@ export interface ConnectRealtimeOptions {
   onReconnect?: () => void
   // Test seam: inject a fake socket instead of opening a real one.
   createSocket?: (url: string) => WebSocket
+  // Fires when a project's review-pass list changes (summoned / claimed /
+  // completed / dismissed) so the review panel updates live. Project metadata,
+  // never document state.
+  onReviews?: (projectId: string, reviews: Review[]) => void
 }
 
 // Messages are tagged with the project id; the caller decides whether the
-// change-set / presence signal is for the project it currently has open. Two
-// message kinds share the socket: `{ changeSet }` (durable document ops) and
-// `{ presence }` (ephemeral "the agent is looking here" — never persisted).
+// change-set / presence signal is for the project it currently has open. Three
+// message kinds share the socket: `{ changeSet }` (durable document ops),
+// `{ presence }` (ephemeral "the agent is looking here" — never persisted), and
+// `{ reviews }` (the project's review-pass list after a mutation).
 //
 // Reconnects with exponential backoff + jitter on any disconnect (server
 // restart, laptop sleep/wake, network blip) so the app doesn't silently stop
@@ -45,7 +51,7 @@ export function connectRealtime(
   onPresence?: (projectId: string, presence: PresenceMessage) => void,
   options: ConnectRealtimeOptions = {},
 ): () => void {
-  const { onStatus, onReconnect, createSocket = (u: string) => new WebSocket(u) } = options
+  const { onStatus, onReconnect, onReviews, createSocket = (u: string) => new WebSocket(u) } = options
   const url = BASE.replace(/^http/, 'ws') + '/ws'
 
   let disposed = false
@@ -91,6 +97,7 @@ export function connectRealtime(
         const msg = JSON.parse(e.data)
         if (msg.changeSet) onChangeSet(msg.projectId, msg.changeSet)
         else if (msg.presence) onPresence?.(msg.projectId, msg.presence)
+        else if (msg.reviews) onReviews?.(msg.projectId, msg.reviews)
       } catch (err) {
         console.error('Elves: bad realtime message', err)
       }

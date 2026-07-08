@@ -33,6 +33,8 @@ import {
   projectAliveGuard,
   ProjectError,
 } from './projects'
+import { readReviews, createReview, transitionReview, reviewsPathFor, ReviewError } from './reviews'
+import { isPersonalityId, isReviewStatus, PERSONALITY_IDS, type Review } from '../src/model/reviews'
 
 const UNFURL_UA = 'ElvesBot/0.1 (+local-first writing studio; reference unfurl)'
 const FETCH_TIMEOUT_MS = 8000
@@ -123,6 +125,7 @@ export function createServer(
   onChangeSet?: (projectId: string, cs: ChangeSet) => void,
   summarize?: SummarizeConfig,
   onPresence?: (projectId: string, presence: PresenceMessage) => void,
+  onReviews?: (projectId: string, reviews: Review[]) => void,
 ): CanvasServer {
   const app = express()
   // Origin allowlist (see server/origins.ts): only same-origin/no-Origin
@@ -505,6 +508,95 @@ export function createServer(
       }
       const reference = await unfurl(url, unfurlDepsFor(paths.assetsDir))
       res.json({ reference })
+    }),
+  )
+
+  // --- Review passes ----------------------------------------------------------
+  // Summonable editor personalities (see src/model/reviews.ts). A review is
+  // project metadata in reviews.json — not canvas content, not undoable — created
+  // pending by the UI summon (or in-progress by a chat-initiated agent pass),
+  // claimed and completed over these same endpoints by the MCP layer. Every
+  // mutation broadcasts the fresh list so open panels update live.
+
+  // The reviews path for a project that already passed requireProject — the id
+  // is valid by then, so the null branch is unreachable in practice.
+  function reviewsPath(id: string): string {
+    const path = reviewsPathFor(dataRoot, id)
+    if (!path) throw new Error(`no reviews path for project '${id}'`)
+    return path
+  }
+
+  async function broadcastReviews(id: string): Promise<void> {
+    if (onReviews) onReviews(id, await readReviews(reviewsPath(id)))
+  }
+
+  app.get(
+    '/projects/:id/reviews',
+    wrap(async (req, res) => {
+      const paths = await requireProject(req.params.id, res)
+      if (!paths) return
+      res.json({ reviews: await readReviews(reviewsPath(req.params.id)) })
+    }),
+  )
+
+  app.post(
+    '/projects/:id/reviews',
+    wrap(async (req, res) => {
+      const paths = await requireProject(req.params.id, res)
+      if (!paths) return
+      const { personality, focus, agent } = req.body ?? {}
+      if (!isPersonalityId(personality)) {
+        res.status(400).json({ error: 'unknown personality', valid: PERSONALITY_IDS })
+        return
+      }
+      if (focus !== undefined && focus !== null && typeof focus !== 'string') {
+        res.status(400).json({ error: 'focus must be a string' })
+        return
+      }
+      if (agent !== undefined && agent !== null && (typeof agent !== 'string' || !agent)) {
+        res.status(400).json({ error: 'agent must be a non-empty string' })
+        return
+      }
+      const review = await createReview(
+        reviewsPath(req.params.id),
+        { personality, focus: focus ?? null, agent: agent ?? null },
+        new Date().toISOString(),
+      )
+      await broadcastReviews(req.params.id)
+      res.json({ review })
+    }),
+  )
+
+  app.post(
+    '/projects/:id/reviews/:reviewId/status',
+    wrap(async (req, res) => {
+      const paths = await requireProject(req.params.id, res)
+      if (!paths) return
+      const { status, agent, verdict } = req.body ?? {}
+      if (!isReviewStatus(status)) {
+        res.status(400).json({ error: 'unknown status' })
+        return
+      }
+      try {
+        // Completion stamps the pass's comment footprint, so it needs the
+        // canvas as it stands; the other transitions never read the document.
+        const canvas = status === 'done' ? await readCanvas(paths.canvasPath) : null
+        const review = await transitionReview(
+          reviewsPath(req.params.id),
+          req.params.reviewId,
+          { status, agent: agent ?? null, verdict: verdict ?? null },
+          new Date().toISOString(),
+          canvas,
+        )
+        await broadcastReviews(req.params.id)
+        res.json({ review })
+      } catch (err) {
+        if (err instanceof ReviewError) {
+          res.status(err.status).json({ error: err.message })
+          return
+        }
+        throw err
+      }
     }),
   )
 

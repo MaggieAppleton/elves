@@ -5,8 +5,9 @@ export function makeComment(
   text: string,
   type: CommentType | null = null,
   author = 'claude',
+  reviewId: string | null = null,
 ): Comment {
-  return { id, type, text, resolved: false, author }
+  return { id, type, text, resolved: false, author, reviewId }
 }
 
 export function addComment(comments: Comment[], comment: Comment): Comment[] {

@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from 'ws'
 import type { Server } from 'node:http'
 import type { ChangeSet } from '../src/model/changeset'
 import type { PresenceMessage } from '../src/model/presence'
+import type { Review } from '../src/model/reviews'
 import { getAllowedOrigins, isOriginAllowed } from './origins'
 
 export function attachRealtime(httpServer: Server) {
@@ -42,5 +43,12 @@ export function attachRealtime(httpServer: Server) {
     send(JSON.stringify({ projectId, presence }))
   }
 
-  return { broadcast, broadcastPresence, wss }
+  // Review-pass state (see src/model/reviews.ts) — the fresh full list on every
+  // mutation, so an open review panel updates live without polling. Same socket,
+  // its own `reviews` key; project metadata, never the document.
+  function broadcastReviews(projectId: string, reviews: Review[]) {
+    send(JSON.stringify({ projectId, reviews }))
+  }
+
+  return { broadcast, broadcastPresence, broadcastReviews, wss }
 }

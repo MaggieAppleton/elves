@@ -108,6 +108,45 @@ describe('isChangeSet', () => {
     expect(isChangeSet(cs)).toBe(true)
   })
 
+  test('accepts the four review-pass comment types (counterpoint, tighten, unclear, structure)', () => {
+    for (const type of ['counterpoint', 'tighten', 'unclear', 'structure']) {
+      const cs = {
+        id: 'x', author: 'claude',
+        ops: [{ kind: 'add_comment', cardId: 'card1', comment: { type, text: 'a review note' } }],
+      }
+      expect(isChangeSet(cs)).toBe(true)
+    }
+  })
+
+  test('add_comment accepts a reviewId string, tagging the comment to a review pass', () => {
+    const cs = {
+      id: 'x', author: 'claude',
+      ops: [{ kind: 'add_comment', cardId: 'card1', comment: { type: 'counterpoint', text: 'the opposing view', reviewId: 'rev-1' } }],
+    }
+    expect(isChangeSet(cs)).toBe(true)
+  })
+
+  test('add_comment accepts a null reviewId (outside any pass) and an omitted one', () => {
+    const withNull = {
+      id: 'x', author: 'claude',
+      ops: [{ kind: 'add_comment', cardId: 'card1', comment: { type: null, text: 'a one-off note', reviewId: null } }],
+    }
+    expect(isChangeSet(withNull)).toBe(true)
+    const omitted = {
+      id: 'x', author: 'claude',
+      ops: [{ kind: 'add_comment', cardId: 'card1', comment: { type: null, text: 'a one-off note' } }],
+    }
+    expect(isChangeSet(omitted)).toBe(true)
+  })
+
+  test('add_comment rejects a non-string, non-null reviewId', () => {
+    const cs = {
+      id: 'x', author: 'claude',
+      ops: [{ kind: 'add_comment', cardId: 'card1', comment: { type: null, text: 'x', reviewId: 42 } }],
+    }
+    expect(isChangeSet(cs)).toBe(false)
+  })
+
   test('accepts create_question and rejects it without coords', () => {
     expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'create_question', text: 'why?', x: 0, y: 0 }] })).toBe(true)
     expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'create_question', text: 'why?' }] })).toBe(false) // missing x/y

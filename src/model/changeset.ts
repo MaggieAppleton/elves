@@ -1,7 +1,11 @@
 import { CommentType, Reference, RefType } from './types'
 
 export type Op =
-  | { kind: 'add_comment'; cardId: string; comment: { type: CommentType | null; text: string } }
+  | {
+      kind: 'add_comment'
+      cardId: string
+      comment: { type: CommentType | null; text: string; reviewId?: string | null }
+    }
   | { kind: 'merge_notes'; cardIds: string[] }
   | { kind: 'move_cards'; moves: { cardId: string; x: number; y: number }[] }
   | { kind: 'create_note_card'; text: string; x: number; y: number }
@@ -68,7 +72,8 @@ export interface ChangeSet {
 }
 
 const COMMENT_TYPES: readonly (CommentType | null)[] = [
-  'needs-evidence', 'weak-argument', 'needs-citation', 'wants-figure', null,
+  'needs-evidence', 'weak-argument', 'needs-citation', 'wants-figure',
+  'counterpoint', 'tighten', 'unclear', 'structure', null,
 ]
 
 function isOp(v: unknown): v is Op {
@@ -78,7 +83,8 @@ function isOp(v: unknown): v is Op {
     case 'add_comment': {
       const c = op.comment as Record<string, unknown> | undefined
       return typeof op.cardId === 'string' && !!c &&
-        typeof c.text === 'string' && COMMENT_TYPES.includes(c.type as CommentType | null)
+        typeof c.text === 'string' && COMMENT_TYPES.includes(c.type as CommentType | null) &&
+        (c.reviewId === undefined || isStringOrNull(c.reviewId))
     }
     case 'merge_notes':
       return Array.isArray(op.cardIds) && op.cardIds.every((id) => typeof id === 'string')

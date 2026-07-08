@@ -32,10 +32,10 @@ async function main() {
   }
 
   const httpServer = http.createServer()
-  const { broadcast, broadcastPresence } = attachRealtime(httpServer)
+  const { broadcast, broadcastPresence, broadcastReviews } = attachRealtime(httpServer)
   const summarizer = new OllamaSummarizer()
   const now = () => new Date().toISOString()
-  const app = createServer(dataRoot, broadcast, { summarizer, now }, broadcastPresence)
+  const app = createServer(dataRoot, broadcast, { summarizer, now }, broadcastPresence, broadcastReviews)
   httpServer.on('request', app)
 
   // Binds loopback-only by default (see server/host.ts) — set ELVES_HOST=0.0.0.0
