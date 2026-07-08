@@ -2,8 +2,10 @@ import { describe, expect, test } from 'vitest'
 import {
   makeProseCardProps, makeNoteCardProps, makeImageNoteCardProps, makeReferenceCardProps,
   makeFigureCardProps, isProseCard, isNoteCard, isFigureCard, claudeMayEditCardText,
+  canConvertNoteToProse, noteToProseProps,
   CARD_DEFAULT_W, CARD_DEFAULT_H, FIGURE_DEFAULT_W, FIGURE_DEFAULT_H, AGENT_CARD_DEFAULT_W,
 } from '../../src/model/cards'
+import type { Comment } from '../../src/model/types'
 import { blankReference } from '../../src/model/references'
 
 describe('card factories', () => {
@@ -106,6 +108,48 @@ describe('card factories', () => {
     expect(p.text).toBe('') // annotation stays the user's to write
     expect(p.reference).toEqual(reference)
     expect(isNoteCard(p)).toBe(true)
+  })
+})
+
+describe('convert note → prose', () => {
+  test('only a text note can be converted', () => {
+    expect(canConvertNoteToProse(makeNoteCardProps('a point'))).toBe(true)
+    // Image and reference notes hold an annotation / structured data, not prose.
+    expect(canConvertNoteToProse(makeImageNoteCardProps('a.png'))).toBe(false)
+    expect(canConvertNoteToProse(makeReferenceCardProps(blankReference('https://x', '2026-07-02T00:00:00.000Z')))).toBe(false)
+    // Prose and figure cards have nowhere to go.
+    expect(canConvertNoteToProse(makeProseCardProps('x'))).toBe(false)
+    expect(canConvertNoteToProse(makeFigureCardProps('t', 'd'))).toBe(false)
+  })
+
+  test('conversion flips kind to prose and clears note metadata', () => {
+    const note = makeNoteCardProps('my paragraph', 'tana')
+    const prose = noteToProseProps(note)
+    expect(prose.kind).toBe('prose')
+    expect(prose.noteKind).toBeNull()
+    expect(prose.origin).toBeNull()
+    expect(isProseCard(prose)).toBe(true)
+    expect(isNoteCard(prose)).toBe(false)
+  })
+
+  test('conversion preserves the text, comments, size, and authorship', () => {
+    const comments: Comment[] = [
+      { id: 'c1', type: 'needs-citation', text: 'source?', resolved: false, author: 'claude' },
+    ]
+    const note = { ...makeNoteCardProps('written by an agent', 'transcribed', 'claude'), comments, w: 512, h: 240 }
+    const prose = noteToProseProps(note)
+    expect(prose.text).toBe('written by an agent')
+    expect(prose.comments).toBe(comments)
+    expect(prose.authoredBy).toBe('claude')
+    expect(prose.w).toBe(512)
+    expect(prose.h).toBe(240)
+  })
+
+  test('after conversion the prose boundary protects the text from agent edits', () => {
+    // The whole point: a converted note now compiles into the draft AND becomes
+    // off-limits to agent text edits, exactly like a born-prose card.
+    const prose = noteToProseProps(makeNoteCardProps('now part of the draft'))
+    expect(claudeMayEditCardText(prose.kind)).toBe(false)
   })
 })
 
