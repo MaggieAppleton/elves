@@ -5,8 +5,10 @@ import {
   type Editor, type Geometry2d, type TLResizeInfo, type TLShapePartial,
 } from 'tldraw'
 import { useLayoutEffect, type CSSProperties, type ReactNode } from 'react'
-import type { CardKind, NoteKind, Origin, Comment, Reference, FigureStatus } from '../model/types'
+import type { CardKind, NoteKind, Origin, Comment, Reference, FigureStatus, Attribution } from '../model/types'
 import { makeProseCardProps, canConvertNoteToProse, noteToProseProps } from '../model/cards'
+import { reattribute, USER_AUTHOR } from '../model/attribution'
+import { AuthorMarks } from './AuthorMarks'
 import { nextFigureStatus } from '../model/figures'
 import { cardGist } from '../model/summary'
 import { visibleComments, resolveComment } from '../model/comments'
@@ -15,7 +17,6 @@ import { measuredCardHeight, measuredReferenceHeight, measuredFigureHeight, PROS
 import { shouldShowGist, gistFontSize } from './summaryView'
 import { mergedMembers, isExpanded, toggleExpanded } from './mergeView'
 import { ReferenceCardFace } from './ReferenceCardFace'
-import { agentInfo } from './agents'
 import { presenceMode } from '../client/presence'
 import './card.css'
 
@@ -27,6 +28,7 @@ export type CardShape = TLBaseShape<'card', {
   origin: Origin | null
   text: string
   authoredBy: string | null
+  attribution: Attribution | null
   comments: Comment[]
   mergedInto: string | null
   draftExcluded: boolean
@@ -100,6 +102,17 @@ export function addFigureUp(props: Record<string, unknown>): void {
   props.figureStatus = null
 }
 
+// Seeds per-character authorship from a card's last-writer + text. An existing
+// card has one author for its whole body — the human (authoredBy null → 'user')
+// or the agent that wrote it — so its attribution is one run of that author over
+// the full text length. Empty text carries an empty attribution (nothing to
+// attribute). Later edits split this into multiple runs (see reattribute).
+export function addAttributionUp(props: Record<string, unknown>): void {
+  const text = typeof props.text === 'string' ? props.text : ''
+  const author = typeof props.authoredBy === 'string' ? props.authoredBy : 'user'
+  props.attribution = text.length ? [{ author, length: text.length }] : []
+}
+
 // Card kind 'source' was renamed to 'note', and its sub-kind prop `sourceKind`
 // to `noteKind`, when "note" became the canonical word for these cards. Idempotent
 // on purpose: the server pre-converts canvas.json on disk before serving, so this
@@ -123,7 +136,7 @@ export function renameSourceToNoteDown(props: Record<string, unknown>): void {
 
 const cardVersions = createShapePropsMigrationIds('card', {
   AddComments: 1, AddAssetId: 2, AddReference: 3, AddSummary: 4, RenameSourceToNote: 5,
-  AddAuthoredBy: 6, AddDraftExcluded: 7, AddFigure: 8,
+  AddAuthoredBy: 6, AddDraftExcluded: 7, AddFigure: 8, AddAttribution: 9,
 })
 
 export const cardMigrations = createShapePropsMigrationSequence({
@@ -188,6 +201,13 @@ export const cardMigrations = createShapePropsMigrationSequence({
         const p = props as Record<string, unknown>
         delete p.figureTitle
         delete p.figureStatus
+      },
+    },
+    {
+      id: cardVersions.AddAttribution,
+      up: (props) => addAttributionUp(props as Record<string, unknown>),
+      down: (props) => {
+        delete (props as Record<string, unknown>).attribution
       },
     },
   ],
@@ -255,6 +275,8 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     origin: T.nullable(T.literalEnum('tana', 'image', 'typed', 'transcribed', 'reference')),
     text: T.string,
     authoredBy: T.nullable(T.string),
+    // Per-character authorship runs; nullable for legacy cards (see reattribute).
+    attribution: T.nullable(T.arrayOf(T.object({ author: T.string, length: T.number }))),
     comments: T.arrayOf(
       T.object({
         id: T.string,
@@ -322,9 +344,6 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     // so the glow appears and fades on its own. Lives entirely outside the
     // document — never persisted, never in undo history.
     const presence = presenceMode(shape.id)
-    // The agent (if any) that authored this note via the MCP — drives the small
-    // logo mark beside the NOTE label. null for human-authored or unknown ids.
-    const agent = agentInfo(shape.props.authoredBy)
     // The "N merged" chip is a button: it toggles the ephemeral peek that fans
     // the merged cards out to the right. stopEventPropagation keeps the click
     // from starting a canvas drag / selecting the card.
@@ -434,12 +453,16 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                     defaultValue={text}
                     placeholder="Add your own notes…"
                     onPointerDown={(e) => e.stopPropagation()}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      const value = e.currentTarget.value
                       this.editor.updateShape<CardShape>({
                         id: shape.id, type: 'card',
-                        props: { text: e.currentTarget.value },
+                        props: {
+                          text: value,
+                          attribution: reattribute(shape.props.text, value, shape.props.attribution, USER_AUTHOR),
+                        },
                       })
-                    }
+                    }}
                   />
                 ) : text ? (
                   <div className="elves-ref__annotation" data-testid="ref-annotation">{text}</div>
@@ -459,17 +482,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                     </svg>
                   </span>
                   <span className="elves-badge" data-testid="card-badge">Figure</span>
-                  {agent && (
-                    <span
-                      className="elves-agent-mark"
-                      data-testid="card-agent-mark"
-                      data-agent={agent.id}
-                      title={`Suggested by ${agent.name}`}
-                      style={{ color: agent.accent }}
-                    >
-                      <agent.Logo aria-hidden="true" focusable="false" />
-                    </span>
-                  )}
+                  <AuthorMarks attribution={shape.props.attribution} verb="Suggested by" />
                 </div>
                 {/* Status chip — a button that cycles the figure's status. Tucked
                     into the top-right corner (absolute), pointer-events:all so the
@@ -513,12 +526,17 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                       defaultValue={text}
                       placeholder="What should this visual show?"
                       onPointerDown={(e) => e.stopPropagation()}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const value = e.currentTarget.value
                         this.editor.updateShape<CardShape>({
                           id: shape.id, type: 'card',
-                          props: { text: e.currentTarget.value, authoredBy: null },
+                          props: {
+                            text: value,
+                            authoredBy: null,
+                            attribution: reattribute(shape.props.text, value, shape.props.attribution, USER_AUTHOR),
+                          },
                         })
-                      }
+                      }}
                     />
                   </>
                 ) : (
@@ -543,19 +561,9 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                 {!showGist && (kind === 'note' || kind === 'prose') && (
                   <div className="elves-badge-row">
                     <span className="elves-badge" data-testid="card-badge">{kind === 'prose' ? 'Prose' : 'Note'}</span>
-                    {/* Agent authorship: a small logo, tinted the agent's accent,
-                        tucked right of the label so it reads "written by <agent>". */}
-                    {agent && (
-                      <span
-                        className="elves-agent-mark"
-                        data-testid="card-agent-mark"
-                        data-agent={agent.id}
-                        title={`Written by ${agent.name}`}
-                        style={{ color: agent.accent }}
-                      >
-                        <agent.Logo aria-hidden="true" focusable="false" />
-                      </span>
-                    )}
+                    {/* Every contributor's mark, stacked — the human and any agents
+                        who wrote part of this card's text, not just the last writer. */}
+                    <AuthorMarks attribution={shape.props.attribution} verb="Written by" />
                     {/* Promote a text note into the draft. Sits in the badge row
                         (only while the note is solely selected) so the action is
                         near the "Note" label it changes to "Prose". */}
@@ -586,13 +594,18 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                     autoFocus
                     defaultValue={text}
                     onPointerDown={(e) => e.stopPropagation()}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      const value = e.currentTarget.value
                       this.editor.updateShape<CardShape>({
                         id: shape.id,
                         type: 'card',
-                        props: { text: e.currentTarget.value, authoredBy: null },
+                        props: {
+                          text: value,
+                          authoredBy: null,
+                          attribution: reattribute(shape.props.text, value, shape.props.attribution, USER_AUTHOR),
+                        },
                       })
-                    }
+                    }}
                   />
                 ) : showGist ? (
                   <div

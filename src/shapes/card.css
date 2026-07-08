@@ -128,6 +128,21 @@
   height: 13px;
   display: block;
 }
+/* Stacked authorship marks — every contributor to the card's text, not just the
+   last writer. The marks overlap slightly so several authors read as one compact
+   cluster; a hairline ring separates one glyph from the next where they tuck. */
+.elves-author-marks {
+  display: inline-flex;
+  align-items: center;
+}
+.elves-author-mark + .elves-author-mark {
+  margin-left: -3px;
+}
+.elves-author-mark svg {
+  /* A faint halo in the card's surface colour so an overlapped glyph stays
+     legible against the one behind it. */
+  filter: drop-shadow(0 0 1.5px var(--elves-surface-muted));
+}
 .elves-card__text { white-space: pre-wrap; flex: 1; overflow-wrap: anywhere; }
 /* The zoomed-out gist: a model-authored summary. Although it's model-written,
    it stands in for the card's own content at low zoom, so it reads in the card's

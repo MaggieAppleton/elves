@@ -11,6 +11,10 @@ export type FigureStatus = 'idea' | 'sketched' | 'final'
 
 export type CommentType = 'needs-evidence' | 'weak-argument' | 'needs-citation' | 'wants-figure'
 
+// Re-exported so CardProps' attribution field and the model layer share one type.
+export type { Attribution, AttributionRun } from './attribution'
+import type { Attribution } from './attribution'
+
 /** The kind of external thing a reference points at — drives its card face. */
 export type RefType =
   | 'paper' | 'article' | 'book' | 'software'
@@ -79,6 +83,16 @@ export interface CardProps {
    * maps a known id to its display metadata, and an unknown id renders no mark.
    */
   authoredBy: string | null
+  /**
+   * Per-character authorship of `text`: a list of runs (author + length) that
+   * concatenate to cover the text exactly (sum(length) === text.length). `author`
+   * is the sentinel `'user'` (human) or an agent id. Where `authoredBy` records
+   * only the LAST writer, this records EVERY contributor and the span each wrote,
+   * so a card can show all its authors (and, in a later view layer, highlight one
+   * author's spans). null on legacy cards not yet migrated; the engine
+   * (src/model/attribution) treats null as one `'user'` run. See reattribute.
+   */
+  attribution: Attribution | null
   /** Agent-authored comments attached to this card. */
   comments: Comment[]
   /** If set, this note card was merged into the referenced representative card (hidden, recoverable). */
