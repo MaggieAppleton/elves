@@ -123,6 +123,26 @@
      legible against the one behind it. */
   filter: drop-shadow(0 0 1.5px var(--elves-surface-muted));
 }
+/* When the marks can reveal blame, hint it with a pointer cursor. */
+.elves-author-marks--interactive { cursor: help; }
+
+/* Blame highlight: each agent-authored run of the body text carries its author's
+   accent in `--blame-accent`, held back until the card body gains
+   `.elves-blame-active` (hovering the author marks). Human runs are plain text
+   and get no span, so they never tint. A soft accent wash + accent ink keeps the
+   agent's words legible while making them unmistakably theirs. */
+.elves-blame-run {
+  border-radius: 3px;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.elves-blame-active .elves-blame-run {
+  color: var(--blame-accent);
+  background: color-mix(in oklch, var(--blame-accent) 14%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in oklch, var(--blame-accent) 14%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .elves-blame-run { transition: none; }
+}
 .elves-card__text { white-space: pre-wrap; flex: 1; overflow-wrap: anywhere; }
 /* The zoomed-out gist: a model-authored summary. Although it's model-written,
    it stands in for the card's own content at low zoom, so it reads in the card's

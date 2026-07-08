@@ -19,16 +19,30 @@ import { authorInfo } from './agents'
 export function AuthorMarks({
   attribution,
   verb = 'Written by',
+  onHoverChange,
 }: {
   attribution: Attribution | null
   verb?: string
+  /**
+   * Notified as the pointer enters (true) / leaves (false) the mark cluster.
+   * The card uses this to toggle its blame highlight — hover the authors to see
+   * who wrote what. Omit it and the marks are display-only. When set, the
+   * cluster also takes a pointer cursor to hint it's interactive.
+   */
+  onHoverChange?: (hovered: boolean) => void
 }) {
   const marks = contributors(attribution)
     .map((id) => authorInfo(id))
     .filter((info): info is NonNullable<typeof info> => !!info)
   if (marks.length === 0) return null
+  const interactive = !!onHoverChange
   return (
-    <span className="elves-author-marks" data-testid="author-marks">
+    <span
+      className={`elves-author-marks${interactive ? ' elves-author-marks--interactive' : ''}`}
+      data-testid="author-marks"
+      onMouseEnter={onHoverChange ? () => onHoverChange(true) : undefined}
+      onMouseLeave={onHoverChange ? () => onHoverChange(false) : undefined}
+    >
       {marks.map((info) => (
         <span
           key={info.id}
