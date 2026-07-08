@@ -6,7 +6,7 @@ import {
 } from 'tldraw'
 import { useLayoutEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import type { CardKind, NoteKind, Origin, Comment, Reference, FigureStatus, Attribution } from '../model/types'
-import { makeProseCardProps } from '../model/cards'
+import { makeProseCardProps, canConvertNoteToProse, noteToProseProps } from '../model/cards'
 import { reattribute, USER_AUTHOR } from '../model/attribution'
 import { AuthorMarks } from './AuthorMarks'
 import { BlameText, hasAgentRun } from './BlameText'
@@ -329,6 +329,10 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     const isProse = kind === 'prose'
     const selected = this.editor.getOnlySelectedShapeId() === shape.id
     const showExcludeToggle = isProse && (selected || draftExcluded)
+    // "Convert to prose" is offered only on a solely-selected TEXT note — its
+    // `text` is the user's own words, ready to join the draft. Image/reference
+    // notes (annotation / structured data) and prose cards never show it.
+    const showConvertToProse = selected && canConvertNoteToProse(shape.props)
     // Zoomed far out, a summarized card shows its gist so the piece reads at a
     // glance. getZoomLevel is reactive, so this re-renders as the user zooms;
     // the gist font counter-scales with zoom to stay a readable on-screen size.
@@ -572,6 +576,27 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                     {/* Every contributor's mark, stacked — the human and any agents
                         who wrote part of this card's text, not just the last writer. */}
                     <AuthorMarks attribution={shape.props.attribution} verb="Written by" onHoverChange={onBlameHover} />
+                    {/* Promote a text note into the draft. Sits in the badge row
+                        (only while the note is solely selected) so the action is
+                        near the "Note" label it changes to "Prose". */}
+                    {showConvertToProse && (
+                      <button
+                        type="button"
+                        className="elves-convert-prose"
+                        data-testid="convert-to-prose"
+                        title="Convert this note into a prose card in the draft"
+                        onPointerDown={stopEventPropagation}
+                        onClick={(e) => {
+                          stopEventPropagation(e)
+                          this.editor.updateShape<CardShape>({
+                            id: shape.id, type: 'card',
+                            props: noteToProseProps(shape.props),
+                          })
+                        }}
+                      >
+                        Convert to prose
+                      </button>
+                    )}
                   </div>
                 )}
                 {!showGist && mergedBadge}
