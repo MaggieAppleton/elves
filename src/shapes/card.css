@@ -95,16 +95,15 @@
   margin: -4px 0 0 -2px;
 }
 
-/* "Convert to prose" — a quiet text button in the badge row of a selected text
-   note. Matches the draft-exclude toggle's chip styling (tertiary fill, faint
-   ink) so the two card actions read as one family. */
+/* Note↔prose convert toggle — a quiet icon button (arrows-left-right) in the
+   badge row of a selected card. The action name lives in the hover tooltip
+   (title). Matches the draft-exclude toggle's chip styling (tertiary fill,
+   faint ink) so the two card actions read as one family. */
 .elves-convert-prose {
-  font: inherit;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  line-height: 1;
-  padding: 3px 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
   border: none;
   border-radius: 5px;
   background: var(--elves-tertiary);
@@ -113,6 +112,7 @@
   pointer-events: all;
   transition: background-color 100ms ease, color 100ms ease;
 }
+.elves-convert-prose svg { width: 13px; height: 13px; display: block; }
 .elves-convert-prose:hover { color: var(--elves-ink); background: var(--elves-border); }
 
 /* Agent authorship mark — a small single-colour logomark, tinted the agent's
