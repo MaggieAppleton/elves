@@ -23,6 +23,7 @@
     "@tldraw/tlschema": "3.15.6",
     "@tldraw/utils": "3.15.6",
     "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
     "express": "^4.19.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

@@ -1,3 +1,4 @@
+import 'dotenv/config'
 import http from 'node:http'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
