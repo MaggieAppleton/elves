@@ -4,7 +4,8 @@ import type { CardDigest, CardMap } from '../server/digest'
 import type { ReadDraftBlock } from '../src/model/draft'
 import { minimalReference } from '../server/unfurl'
 import {
-  readCardMap, readCards, readDraft, postChangeSet, unfurlReference, listProjects, type ProjectSummary,
+  readCardMap, readCards, readDraft, readSelection, postChangeSet, unfurlReference, listProjects,
+  type ProjectSummary, type SelectionResponse,
 } from './elvesClient'
 
 /** Fields an agent may supply to override / enrich the unfurl baseline. */
@@ -55,6 +56,10 @@ export function readCardsTool(
 
 export function readDraftTool(baseUrl: string, projectId: string): Promise<ReadDraftBlock[]> {
   return readDraft(baseUrl, projectId)
+}
+
+export function readSelectionTool(baseUrl: string): Promise<SelectionResponse> {
+  return readSelection(baseUrl)
 }
 
 export function addCommentTool(

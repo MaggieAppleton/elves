@@ -30,15 +30,18 @@ test('the MCP server exposes the scoped tools plus list_projects, and no text-ed
     'read_cards',
     'read_draft',
     'read_map',
+    'read_selection',
     'ungroup_cards',
   ])
   expect(names).not.toContain('edit_text')
   expect(names).not.toContain('read_canvas')
 
-  // Every canvas tool requires a `project`; list_projects does not.
+  // Every canvas tool requires a `project`; the projectless tools (list_projects,
+  // and read_selection — which reports which project the selection is in) do not.
+  const projectless = new Set(['list_projects', 'read_selection'])
   for (const t of tools) {
     const required = ((t.inputSchema as any).required ?? []) as string[]
-    if (t.name === 'list_projects') expect(required).not.toContain('project')
+    if (projectless.has(t.name)) expect(required).not.toContain('project')
     else expect(required).toContain('project')
   }
 

@@ -5,6 +5,7 @@ import {
   readMapTool,
   readCardsTool,
   readDraftTool,
+  readSelectionTool,
   addCommentTool,
   mergeNotesTool,
   moveCardsTool,
@@ -80,6 +81,15 @@ export function createMcpServer(baseUrl: string): McpServer {
     { project: PROJECT },
     async ({ project }) => ({
       content: [{ type: 'text', text: JSON.stringify({ blocks: await readDraftTool(baseUrl, project) }) }],
+    }),
+  )
+
+  server.tool(
+    'read_selection',
+    "Read what the user currently has SELECTED on the canvas. Call this FIRST whenever the user refers to their selection deictically — \"this\", \"these\", \"here\", \"the selected card(s)\", \"what I've got highlighted\" — where the referent is on the canvas, not in the chat. Takes NO arguments: it returns which `project` the selection is in, so you can resolve \"find more about this\" without knowing the project first (then use that id for read_cards, create_reference, etc.). Returns { project, selection, selectedAt }: `selection` is the selected shapes in the order the user picked them — each a card ({ id, type:'card', kind, gist }), a section ({ type:'section', text }), a question ({ type:'question', text }), or a group ({ type:'group', memberCount }). `gist` is a one-line summary (as in read_map); drill into full card text with read_cards. `selectedAt` is when the selection was made (ISO) — if it's old relative to the conversation, the user may have moved on, so confirm rather than assume. An empty `selection` (and absent `project`) means nothing is selected right now — ask the user what they mean rather than guessing.",
+    {},
+    async () => ({
+      content: [{ type: 'text', text: JSON.stringify(await readSelectionTool(baseUrl)) }],
     }),
   )
 

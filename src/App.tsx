@@ -29,6 +29,7 @@ import { uploadAsset, setAssetProject } from './client/assets'
 import { applyChangeSet } from './apply/applyChangeSet'
 import type { ChangeSet } from './model/changeset'
 import { connectRealtime, RealtimeStatus } from './client/realtime'
+import { trackSelection } from './client/selection'
 import { markDoing, markLooking, clearPresence } from './client/presence'
 import { shapeRecordsById, diffChangedIds } from './client/resync'
 import { ProjectSwitcher } from './components/ProjectSwitcher'
@@ -131,6 +132,11 @@ export default function App() {
   // Counts spawns via addCard/addSection so each new card/section cascades
   // away from the last instead of stacking invisibly at the viewport center.
   const spawnCountRef = useRef(0)
+  // Disposes the selection reporter (trackSelection). Held so a project switch
+  // can stop the outgoing editor's reactor before the new one starts, and the
+  // final unmount can too — a reactor left running against a torn-down store
+  // would fire on a disposed editor.
+  const selectionStopRef = useRef<(() => void) | null>(null)
 
   // Three view states — canvas only, split, draft only — plus the split ratio
   // (canvas fraction). tldraw stays MOUNTED in all three; draft-only just
@@ -234,6 +240,10 @@ export default function App() {
   useEffect(() => {
     clearPresence()
   }, [currentProjectId])
+
+  // Stop the selection reporter when the app unmounts (handleMount handles the
+  // switch-to-switch handoff; this covers the final teardown).
+  useEffect(() => () => selectionStopRef.current?.(), [])
 
   // Restore this project's saved view + split ratio when it opens.
   useEffect(() => {
@@ -481,6 +491,10 @@ export default function App() {
   const handleMount = (ed: Editor) => {
     editorRef.current = ed
     setEditor(ed)
+    // Stop the previous editor's selection reporter before this one starts, so a
+    // project switch never leaves a reactor firing against the torn-down store.
+    selectionStopRef.current?.()
+    selectionStopRef.current = null
     // A fresh mount hasn't loaded its canvas yet — hold off every save path.
     canvasLoadedRef.current = false
     // A click on empty canvas dismisses any open merged-card peek, like a popover.
@@ -516,6 +530,10 @@ export default function App() {
         const saver = createSaver(() => saveCanvas(pid, getSnapshot(ed.store)))
         const save = debounce(saver.request, 500)
         ed.store.listen(save, { source: 'user', scope: 'document' })
+        // Report this editor's selection to the server so the agent can resolve
+        // "this"/"these" (MCP read_selection). Tagged with the live project id so
+        // it's correct across switches; disposed on the next mount / unmount.
+        selectionStopRef.current = trackSelection(ed, { getProjectId: () => projectIdRef.current })
         ed.registerExternalContentHandler('files', async ({ files, point }) => {
           for (const file of files) {
             if (file.type.startsWith('image/')) await addImageCard(ed, file, point)

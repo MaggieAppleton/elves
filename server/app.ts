@@ -18,6 +18,7 @@ import {
   snapshotToGroupIds,
 } from './digest'
 import { applyChangeSetToSnapshot } from './applyChangeSet'
+import { enrichSelection, type SelectionStore } from './selection'
 import { reconcileCanvasFile, type Summarizer } from './summarize'
 import { extForMime, saveAsset, resolveAssetPath } from './assets'
 import { unfurl, type UnfurlDeps, type FetchedImage } from './unfurl'
@@ -123,6 +124,7 @@ export function createServer(
   onChangeSet?: (projectId: string, cs: ChangeSet) => void,
   summarize?: SummarizeConfig,
   onPresence?: (projectId: string, presence: PresenceMessage) => void,
+  selection?: SelectionStore,
 ): CanvasServer {
   const app = express()
   // Origin allowlist (see server/origins.ts): only same-origin/no-Origin
@@ -352,6 +354,56 @@ export function createServer(
       // silent by design.
       if (ids.length) onPresence?.(req.params.id, { cardIds: ids, mode: 'looking' })
       res.json({ cards: snapshotToCardsById(await readCanvas(paths.canvasPath), ids, paths.assetsDir) })
+    }),
+  )
+
+  // --- Selection awareness --------------------------------------------------
+  // The browser reports its current canvas selection here (ephemeral, in-memory,
+  // never persisted — see server/selection.ts). A single global slot: the last
+  // report wins, carrying its project id so the agent can resolve "this" without
+  // already knowing which project it's in. Dormant when no SelectionStore is
+  // wired (tests that don't exercise selection), so those suites stay hermetic.
+  app.post(
+    '/projects/:id/selection',
+    wrap(async (req, res) => {
+      const paths = await requireProject(req.params.id, res)
+      if (!paths) return
+      const shapeIds = req.body?.shapeIds
+      if (!Array.isArray(shapeIds) || !shapeIds.every((i) => typeof i === 'string')) {
+        res.status(400).json({ error: 'shapeIds must be a string array' })
+        return
+      }
+      selection?.set(req.params.id, shapeIds, now())
+      res.json({ ok: true })
+    }),
+  )
+
+  // Read the user's current selection — global, no project id required. The
+  // agent calls this when the user says "this" / "these" / "the selected card".
+  // Reported ids are enriched against the project's live canvas map (gists for
+  // cards, text for sections/questions, member counts for groups); ids that no
+  // longer exist are dropped. No selection yet, or the project it referenced is
+  // gone, returns an empty list rather than an error — an absent selection is a
+  // normal state, not a failure.
+  app.get(
+    '/selection',
+    wrap(async (_req, res) => {
+      const current = selection?.get()
+      if (!current) {
+        res.json({ selection: [] })
+        return
+      }
+      const canvasPath = canvasPathFor(dataRoot, current.projectId)
+      if (!canvasPath || !(await getProject(dataRoot, current.projectId))) {
+        res.json({ selection: [] })
+        return
+      }
+      const map = snapshotToCardMap(await readCanvas(canvasPath))
+      res.json({
+        project: current.projectId,
+        selection: enrichSelection(map, current.shapeIds),
+        selectedAt: current.selectedAt,
+      })
     }),
   )
 
