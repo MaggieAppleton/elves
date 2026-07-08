@@ -18,12 +18,21 @@ import { SECTION_PLACEHOLDER } from '../model/sections'
 const FONT_FAMILY = "'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif"
 
 // --- Cards ---------------------------------------------------------------
-// card.css: font 15px / line-height 1.45; padding 12px (top/bottom) 14px (l/r).
+// card.css: font 15px / line-height 1.45; padding 12px (top/bottom) 14px (l/r);
+// 1px border. The card is box-sizing:border-box, so the border eats into the
+// declared w/h — the text column is (w − border − padding) wide, not (w − padding).
+// Getting this 2px too generous lets a line "fit" the measurement that actually
+// wraps on screen, adding a whole extra line and clipping the card. So every inset
+// below counts the 1px border on each side alongside the padding.
 // A note card also carries a "NOTE" badge row (badge + 6px flex gap) above
 // the text; prose cards don't.
-const CARD_PAD_X = 28 // 14 left + 14 right
-const CARD_PAD_Y = 24 // 12 top + 12 bottom
-const CARD_BADGE_ROW = 20 // NOTE/PROSE badge line + gap (labelled cards)
+const CARD_PAD_X = 30 // 1 border + 14 pad, each side
+const CARD_PAD_Y = 26 // 1 border + 12 pad, top and bottom
+// NOTE/PROSE badge line + its 6px flex gap. Sized for the tallest state: when the
+// card is selected the row also holds the convert-to-prose icon button (~19px, less
+// the row's -4px margin, + 6px gap ≈ 21), and autosize doesn't re-measure on
+// selection — so the reserve must already cover it or the last line clips on select.
+const CARD_BADGE_ROW = 22
 
 export function measuredCardHeight(
   editor: Editor,
@@ -190,12 +199,14 @@ export function measuredSectionSize(
 }
 
 // --- Question cards ------------------------------------------------------
-// question.css: font 14px / line-height 1.4; padding 12px; a header row (the "?"
-// glyph + agent mark, ~18px + 6px gap) sits above the text. Width is fixed (a
-// small sticky note), so only height follows the text.
-const QUESTION_PAD_X = 24 // 12 left + 12 right
-const QUESTION_PAD_Y = 24 // 12 top + 12 bottom
-const QUESTION_HEADER_ROW = 24 // "?" + agent mark row + its gap
+// question.css: font 14px / line-height 1.4; padding 12px; 1px border. Like the
+// cards above it is box-sizing:border-box, so the border eats into the declared
+// w/h — count it in both insets or the text column measures too wide and wraps to
+// an extra clipped line. A fixed-height header row (the "?" glyph + agent mark,
+// 18px + 6px gap) sits above the text; only height follows the text.
+const QUESTION_PAD_X = 26 // 1 border + 12 pad, each side
+const QUESTION_PAD_Y = 26 // 1 border + 12 pad, top and bottom
+const QUESTION_HEADER_ROW = 24 // 18px header + 6px gap
 
 export function measuredQuestionHeight(editor: Editor, text: string, width: number): number {
   const { h } = editor.textMeasure.measureText(text || ' ', {
