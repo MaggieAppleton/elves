@@ -6,3 +6,5 @@ playwright-report
 test-results
 .claude
 .playwright-mcp
+.env
+!.env.example
