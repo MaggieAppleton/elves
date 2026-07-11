@@ -279,22 +279,8 @@ function AutosizeCard({
   return <>{children}</>
 }
 
-// An eye (in the draft) / struck-through eye (excluded), for the draft-exclude
-// toggle. Phosphor-style single-path glyphs, sized by the button's font.
-function EyeIcon({ off }: { off: boolean }) {
-  return (
-    <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true" focusable="false">
-      {off ? (
-        <path d="M228,175a8,8,0,0,1-10.92-3l-19-33.2A123.23,123.23,0,0,1,162,155.46l5.87,35.22a8,8,0,0,1-6.58,9.21,8.4,8.4,0,0,1-1.32.11,8,8,0,0,1-7.88-6.69l-5.77-34.58a133.06,133.06,0,0,1-36.68,0l-5.77,34.58A8,8,0,0,1,96,200.11L101.85,165A123.31,123.31,0,0,1,57,138.76L38,172a8,8,0,1,1-13.9-7.9l20.15-35.25A153.06,153.06,0,0,1,28.68,113.4a8,8,0,1,1,11.16-11.46c16.83,16.39,42.34,35.9,88.16,35.9s71.33-19.51,88.16-35.9a8,8,0,0,1,11.16,11.46,153.06,153.06,0,0,1-15.53,15.41L232,164.09A8,8,0,0,1,228,175Z" />
-      ) : (
-        <path d="M247.31,124.76c-.35-.79-8.82-19.58-27.65-38.41C194.57,61.26,162.88,48,128,48S61.43,61.26,36.34,86.35C17.51,105.18,9,124,8.69,124.76a8,8,0,0,0,0,6.5c.35.79,8.82,19.57,27.65,38.4C61.43,194.74,93.12,208,128,208s66.57-13.26,91.66-38.34c18.83-18.83,27.3-37.61,27.65-38.4A8,8,0,0,0,247.31,124.76ZM128,168a40,40,0,1,1,40-40A40,40,0,0,1,128,168Z" />
-      )}
-    </svg>
-  )
-}
-
 // Phosphor "ArrowsLeftRight" (regular), for the note↔prose convert toggle.
-// Inlined to match EyeIcon and keep the shape renderer import-light.
+// Inlined to keep the shape renderer import-light.
 function ArrowsLeftRightIcon() {
   return (
     <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true" focusable="false">
@@ -365,13 +351,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     const isReference = noteKind === 'reference' && !!reference
     const isFigure = kind === 'figure'
     const isEditing = this.editor.getEditingShapeId() === shape.id
-    // The draft-exclude affordance is only meaningful on PROSE cards (the linear
-    // draft is prose-only in v1). Show it when the card is the sole selection (so
-    // you can opt it out) or whenever it's already excluded (so it's always
-    // visible WHY that card isn't compiling into the draft).
-    const isProse = kind === 'prose'
     const selected = this.editor.getOnlySelectedShapeId() === shape.id
-    const showExcludeToggle = isProse && (selected || draftExcluded)
     // "Convert to prose" is offered only on a solely-selected TEXT note — its
     // `text` is the user's own words, ready to join the draft. Image/reference
     // notes (annotation / structured data) and prose cards never show it.
@@ -427,30 +407,6 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
               opacity transition, not a hard cut); the halo itself is driven by
               the wrap's data-presence attribute. aria-hidden — it's ambient. */}
           <div className="elves-presence" aria-hidden="true" data-testid="presence-glow" />
-          {/* Draft-exclude toggle: keep this prose aside out of the linear draft
-              (and read_draft). The button carries its own state — an eye when in
-              the draft, struck-through when excluded — and stays visible while
-              excluded so the marker explains itself. */}
-          {showExcludeToggle && (
-            <button
-              type="button"
-              className="elves-draft-exclude"
-              data-testid="draft-exclude-toggle"
-              data-excluded={draftExcluded}
-              aria-pressed={draftExcluded}
-              title={draftExcluded ? 'Excluded from the draft — click to include' : 'Exclude from the draft'}
-              onPointerDown={stopEventPropagation}
-              onClick={(e) => {
-                stopEventPropagation(e)
-                this.editor.updateShape<CardShape>({
-                  id: shape.id, type: 'card', props: { draftExcluded: !draftExcluded },
-                })
-              }}
-            >
-              <EyeIcon off={draftExcluded} />
-              {draftExcluded && <span className="elves-draft-exclude__label">Not in draft</span>}
-            </button>
-          )}
           {/* A short paper stack peeking out behind the representative signals
               "there's more collapsed here". Fixed 1–2 edges, quiet until the
               badge is engaged; hidden while fanned out or zoomed to gist. */}
@@ -610,38 +566,29 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
               </>
             ) : (
               <>
-                {/* Every contributor's mark, stacked — the human and any agents
-                    who wrote part of this note's text, not just the last writer.
-                    Tucked into the top-right corner (absolute), mirroring the
-                    figure status chip. Notes only: prose is human by definition,
-                    so it carries no mark. Hidden in gist mode with the rest of
-                    the chrome. */}
-                {!showGist && kind === 'note' && (
-                  <AuthorMarks
-                    attribution={shape.props.attribution}
-                    verb="Written by"
-                    onHoverChange={onBlameHover}
-                    corner
-                  />
-                )}
-                {/* Zoomed out, hide the label/merged chrome so the gist owns the
-                    whole card and reads at a glance. Both note and prose cards
-                    carry a small-caps label. Prose is ALWAYS human-authored — an
-                    agent can never write prose — so it shows no author mark; only
-                    notes (which an agent may have written or co-written) do. */}
+                {/* Top-right corner cluster: authorship mark(s) and the note↔prose
+                    convert toggle sit together, opposite the "Note"/"Prose" label.
+                    Author marks stack every contributor to a NOTE's text (prose is
+                    human by definition, so it carries no mark); the convert toggle
+                    appears only while the card is solely selected. Hidden in gist
+                    mode with the rest of the chrome. */}
                 {!showGist && (kind === 'note' || kind === 'prose') && (
-                  <div className="elves-badge-row">
-                    <span className="elves-badge" data-testid="card-badge">{kind === 'prose' ? 'Prose' : 'Note'}</span>
-                    {/* Promote a text note into the draft. Sits in the badge row
-                        (only while the note is solely selected) so the action is
-                        near the "Note" label it changes to "Prose". */}
+                  <div className="elves-card__corner">
+                    {kind === 'note' && (
+                      <AuthorMarks
+                        attribution={shape.props.attribution}
+                        verb="Written by"
+                        onHoverChange={onBlameHover}
+                      />
+                    )}
+                    {/* Promote a text note into the draft (note → prose). */}
                     {showConvertToProse && (
                       <button
                         type="button"
                         className="elves-convert-prose"
                         data-testid="convert-to-prose"
-                        title="Convert to prose"
-                        aria-label="Convert to prose"
+                        title="Switch to prose"
+                        aria-label="Switch to prose"
                         onPointerDown={stopEventPropagation}
                         onClick={(e) => {
                           stopEventPropagation(e)
@@ -661,8 +608,8 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                         type="button"
                         className="elves-convert-prose"
                         data-testid="convert-to-note"
-                        title="Convert to note"
-                        aria-label="Convert to note"
+                        title="Switch to note"
+                        aria-label="Switch to note"
                         onPointerDown={stopEventPropagation}
                         onClick={(e) => {
                           stopEventPropagation(e)
@@ -675,6 +622,14 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                         <ArrowsLeftRightIcon />
                       </button>
                     )}
+                  </div>
+                )}
+                {/* Zoomed out, hide the label/merged chrome so the gist owns the
+                    whole card and reads at a glance. Both note and prose cards
+                    carry a small-caps label. */}
+                {!showGist && (kind === 'note' || kind === 'prose') && (
+                  <div className="elves-badge-row">
+                    <span className="elves-badge" data-testid="card-badge">{kind === 'prose' ? 'Prose' : 'Note'}</span>
                   </div>
                 )}
                 {!showGist && mergedBadge}

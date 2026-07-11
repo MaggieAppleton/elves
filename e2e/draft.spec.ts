@@ -46,26 +46,6 @@ test('a prose card shows up live in the draft pane in split view', async ({ page
   await expect(para).toHaveText('the opening point')
 })
 
-test('excluding a prose card drops it from the draft and marks it on the canvas', async ({ page }) => {
-  await page.goto('/')
-  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
-
-  const card = await addProse(page, 'an aside, not the piece')
-  await page.getByTestId('draft-open').click()
-  await expect(page.getByTestId('draft-para')).toHaveText('an aside, not the piece')
-
-  // Select the card so its draft-exclude toggle appears, then exclude it.
-  const box = await card.boundingBox()
-  if (!box) throw new Error('card gone')
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
-  await page.getByTestId('draft-exclude-toggle').click()
-
-  // Gone from the draft; marked as excluded on the canvas.
-  await expect(page.getByTestId('draft-para')).toHaveCount(0)
-  await expect(page.locator('.elves-card--excluded')).toBeVisible()
-  await expect(page.getByTestId('draft-exclude-toggle')).toHaveAttribute('data-excluded', 'true')
-})
-
 test('clicking a draft paragraph in draft-only view opens split (draft → canvas nav)', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
