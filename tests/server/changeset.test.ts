@@ -286,6 +286,35 @@ test('applyChangeSetToSnapshot stamps the change-set author onto an added commen
   expect(card.props.comments[0].author).toBe('codex')
 })
 
+test('applyChangeSetToSnapshot writes a set_comment_summary onto the matching comment only', () => {
+  const snap = cardSnapshot('shape:a') as any
+  snap.document.store['shape:a'].props.comments = [
+    { id: 'cmt-1', type: null, text: 'first', resolved: false, author: 'claude', summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null },
+    { id: 'cmt-2', type: null, text: 'second', resolved: false, author: 'claude', summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null },
+  ]
+  const cs = {
+    id: 'x', author: 'claude',
+    ops: [{ kind: 'set_comment_summary' as const, cardId: 'shape:a', commentId: 'cmt-1', summary: 'a gist', summaryOfHash: 'abc', summaryBy: 'ollama/llama3.2', summaryAt: 'T' }],
+  }
+  const next = applyChangeSetToSnapshot(snap, cs) as any
+  const comments = next.document.store['shape:a'].props.comments
+  expect(comments.find((c: any) => c.id === 'cmt-1')).toMatchObject({ summary: 'a gist', summaryOfHash: 'abc', summaryBy: 'ollama/llama3.2', summaryAt: 'T' })
+  expect(comments.find((c: any) => c.id === 'cmt-2')).toMatchObject({ summary: null })
+})
+
+test('applyChangeSetToSnapshot ignores a set_comment_summary for an unknown comment id', () => {
+  const snap = cardSnapshot('shape:a') as any
+  snap.document.store['shape:a'].props.comments = [
+    { id: 'cmt-1', type: null, text: 'first', resolved: false, author: 'claude', summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null },
+  ]
+  const cs = {
+    id: 'x', author: 'claude',
+    ops: [{ kind: 'set_comment_summary' as const, cardId: 'shape:a', commentId: 'cmt-ghost', summary: 'a gist', summaryOfHash: 'abc', summaryBy: 'ollama', summaryAt: 'T' }],
+  }
+  const next = applyChangeSetToSnapshot(snap, cs) as any
+  expect(next.document.store['shape:a'].props.comments[0].summary).toBeNull()
+})
+
 // A canvas holding an agent-authored figure and note, plus a user-authored prose
 // card, so the edit/delete guards can be exercised across the boundary.
 function mixedCardsSnapshot() {

@@ -6,7 +6,10 @@ export function makeComment(
   type: CommentType | null = null,
   author = 'claude',
 ): Comment {
-  return { id, type, text, resolved: false, author }
+  return {
+    id, type, text, resolved: false, author,
+    summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+  }
 }
 
 export function addComment(comments: Comment[], comment: Comment): Comment[] {

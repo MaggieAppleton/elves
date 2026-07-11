@@ -206,6 +206,28 @@ describe('applyChangeSet affected-id contract', () => {
     ]))).toEqual(['card:a'])
   })
 
+  test('set_comment_summary → [cardId], writing the summary onto the matching comment only', () => {
+    const ed = fakeEditor([noteCard('card:a', {
+      comments: [
+        { id: 'cmt-1', type: null, text: 'first', resolved: false, author: 'claude', summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null },
+        { id: 'cmt-2', type: null, text: 'second', resolved: false, author: 'claude', summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null },
+      ],
+    })])
+    expect(applyChangeSet(ed as unknown as Editor, cs([
+      { kind: 'set_comment_summary', cardId: 'card:a', commentId: 'cmt-1', summary: 's', summaryOfHash: 'h', summaryBy: 'ollama', summaryAt: 't' },
+    ]))).toEqual(['card:a'])
+    const comments = (ed._shapes.get('card:a') as any).props.comments
+    expect(comments.find((c: any) => c.id === 'cmt-1')).toMatchObject({ summary: 's', summaryOfHash: 'h', summaryBy: 'ollama', summaryAt: 't' })
+    expect(comments.find((c: any) => c.id === 'cmt-2')).toMatchObject({ summary: null })
+  })
+
+  test('set_comment_summary on a missing card → []', () => {
+    const ed = fakeEditor([])
+    expect(applyChangeSet(ed as unknown as Editor, cs([
+      { kind: 'set_comment_summary', cardId: 'card:ghost', commentId: 'cmt-1', summary: 's', summaryOfHash: 'h', summaryBy: 'ollama', summaryAt: 't' },
+    ]))).toEqual([])
+  })
+
   test('multi-op change-set unions and dedupes affected ids', () => {
     const ed = fakeEditor([noteCard('card:a'), noteCard('card:b')])
     const ids = applyChangeSet(ed as unknown as Editor, cs([

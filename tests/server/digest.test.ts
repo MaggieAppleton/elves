@@ -7,6 +7,7 @@ import {
   snapshotToCardMap,
   snapshotToCardsById,
   snapshotToSummarizableCards,
+  snapshotToSummarizableComments,
   snapshotToGroups,
   snapshotToDraft,
   resolvePageXY,
@@ -257,6 +258,36 @@ test('snapshotToSummarizableCards exposes just the summary decision fields', () 
     { id: 'shape:short', kind: 'prose', noteKind: null, text: 'a short point', summary: null, summaryOfHash: null },
     { id: 'shape:long', kind: 'prose', noteKind: null, text: LONG, summary: 'a model gist', summaryOfHash: 'abc' },
   ])
+})
+
+test('snapshotToSummarizableComments exposes one entry per comment, keyed by card + comment id', () => {
+  const snapshot = {
+    document: { store: {
+      'shape:a': {
+        id: 'shape:a', typeName: 'shape', type: 'card', x: 0, y: 0,
+        props: {
+          w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text: 'x', mergedInto: null,
+          comments: [
+            { id: 'cmt-1', type: null, text: 'first comment', resolved: false, author: 'claude', summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null },
+            { id: 'cmt-2', type: 'weak-argument', text: 'second comment', resolved: false, author: 'claude', summary: 'a gist', summaryOfHash: 'abc', summaryBy: 'ollama/llama3.2', summaryAt: 'T' },
+          ],
+        },
+      },
+      'shape:b': {
+        id: 'shape:b', typeName: 'shape', type: 'card', x: 30, y: 0,
+        props: { w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text: 'y', mergedInto: null, comments: [] },
+      },
+    } },
+    session: null,
+  }
+  expect(snapshotToSummarizableComments(snapshot)).toEqual([
+    { cardId: 'shape:a', commentId: 'cmt-1', text: 'first comment', summary: null, summaryOfHash: null },
+    { cardId: 'shape:a', commentId: 'cmt-2', text: 'second comment', summary: 'a gist', summaryOfHash: 'abc' },
+  ])
+})
+
+test('snapshotToSummarizableComments returns [] for an empty canvas', () => {
+  expect(snapshotToSummarizableComments({ document: null, session: null })).toEqual([])
 })
 
 // A canvas with two grouped cards (A, B) and one ungrouped card (C).

@@ -347,6 +347,17 @@ export function applyChangeSetToSnapshot(
         }
         break
       }
+      case 'set_comment_summary': {
+        const shape = findCardShape(store, op.cardId)
+        const comment = shape?.props.comments?.find((c: any) => c.id === op.commentId)
+        if (comment) {
+          comment.summary = op.summary
+          comment.summaryOfHash = op.summaryOfHash
+          comment.summaryBy = op.summaryBy
+          comment.summaryAt = op.summaryAt
+        }
+        break
+      }
     }
   }
   return next
