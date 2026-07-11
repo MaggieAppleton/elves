@@ -8,3 +8,4 @@ test-results
 .playwright-mcp
 .env
 !.env.example
+.DS_Store

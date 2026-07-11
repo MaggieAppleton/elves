@@ -21,8 +21,10 @@ import {
   createFigureCardTool,
   moveSectionsTool,
   editSectionTextTool,
+  readSelectionTool,
   listProjectsTool,
 } from '../../mcp/tools'
+import { createSelectionStore } from '../../server/selection'
 
 let servers: http.Server[] = []
 let dirs: string[] = []
@@ -260,4 +262,38 @@ test('editSectionTextTool posts an edit_section_text change-set', async () => {
   const { changeSet } = await received
   expect(changeSet.ops).toEqual([{ kind: 'edit_section_text', sectionId: 'shape:s', text: 'The turn' }])
   ws.close()
+})
+
+// A server wired with a selection store, so read_selection has state to read.
+async function liveElvesWithSelection(): Promise<{ base: string }> {
+  const dataRoot = await fs.mkdtemp(join(tmpdir(), 'elves-mcp-sel-'))
+  dirs.push(dataRoot)
+  await createProject(dataRoot, 'Essay', '2026-07-02T10:00:00.000Z') // id: 'essay'
+  const httpServer = http.createServer()
+  const app = createServer(dataRoot, undefined, undefined, undefined, createSelectionStore())
+  httpServer.on('request', app)
+  await new Promise<void>((r) => httpServer.listen(0, r))
+  servers.push(httpServer)
+  const { port } = httpServer.address() as import('node:net').AddressInfo
+  return { base: `http://localhost:${port}` }
+}
+
+test('readSelectionTool returns the enriched selection (with project) reported by the browser', async () => {
+  const { base } = await liveElvesWithSelection()
+  await seedSection(base, 'shape:s') // seeds a canvas containing section shape:s
+  await fetch(`${base}/projects/essay/selection`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ shapeIds: ['shape:s'] }),
+  })
+
+  const result = await readSelectionTool(base)
+  expect(result.project).toBe('essay')
+  expect(result.selection).toEqual([{ id: 'shape:s', type: 'section', text: expect.any(String) }])
+  expect(typeof result.selectedAt).toBe('string')
+})
+
+test('readSelectionTool returns an empty selection when nothing is selected', async () => {
+  const { base } = await liveElvesWithSelection()
+  expect(await readSelectionTool(base)).toEqual({ selection: [] })
 })

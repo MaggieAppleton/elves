@@ -2,6 +2,7 @@ import { expect, test } from 'vitest'
 import {
   addCommentsUp, addAssetIdUp, addReferenceUp, addSummaryUp,
   renameSourceToNoteUp, renameSourceToNoteDown, addAuthoredByUp, addDraftExcludedUp, addFigureUp,
+  addAttributionUp,
 } from '../../src/shapes/CardShapeUtil'
 
 test('migration adds comments[] and mergedInto to a pre-Phase-2 card', () => {
@@ -109,4 +110,39 @@ test('AddFigure migration defaults an existing card to the non-figure shape', ()
   addFigureUp(props)
   expect(props.figureTitle).toBe('')
   expect(props.figureStatus).toBeNull()
+})
+
+test('AddAttribution seeds one authorship run over an agent-authored card body', () => {
+  // An existing card has one author for its whole text — here an agent — so its
+  // attribution is one run of that author covering the full text length.
+  const props: Record<string, unknown> = {
+    w: 240, h: 120, kind: 'note', noteKind: 'text', origin: 'transcribed', text: 'hello',
+    authoredBy: 'claude', comments: [], mergedInto: null, assetId: null, reference: null,
+    draftExcluded: false, figureTitle: '', figureStatus: null,
+    summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+  }
+  addAttributionUp(props)
+  expect(props.attribution).toEqual([{ author: 'claude', length: 5 }])
+})
+
+test('AddAttribution maps a human-authored card (authoredBy null) to the user sentinel', () => {
+  const props: Record<string, unknown> = {
+    w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text: 'my words',
+    authoredBy: null, comments: [], mergedInto: null, assetId: null, reference: null,
+    draftExcluded: false, figureTitle: '', figureStatus: null,
+    summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+  }
+  addAttributionUp(props)
+  expect(props.attribution).toEqual([{ author: 'user', length: 8 }])
+})
+
+test('AddAttribution gives an empty-text card an empty attribution', () => {
+  const props: Record<string, unknown> = {
+    w: 240, h: 120, kind: 'note', noteKind: 'image', origin: 'image', text: '',
+    authoredBy: null, comments: [], mergedInto: null, assetId: 'a.png', reference: null,
+    draftExcluded: false, figureTitle: '', figureStatus: null,
+    summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+  }
+  addAttributionUp(props)
+  expect(props.attribution).toEqual([])
 })

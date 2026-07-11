@@ -47,3 +47,16 @@ export function gistFontSize(zoom: number): number {
   const compensated = GIST_ON_SCREEN_PX / Math.max(zoom, 0.01)
   return Math.round(Math.min(compensated, GIST_FONT_MAX))
 }
+
+/**
+ * The gist comment-tag chip's font size, in card-space px. Zoomed out, a
+ * summarized card hides its full comments but keeps a small type chip
+ * ("WEAK-ARGUMENT" etc.) so the marginalia is still legible at a glance. We
+ * derive it straight from the gist size (a fixed ratio) rather than a second
+ * counter-scale curve, so the chip and the gist line stay visually paired at
+ * every zoom and share the gist's already-tuned cap — one source of truth.
+ */
+export const GIST_TAG_RATIO = 0.55
+export function gistTagFontSize(zoom: number): number {
+  return Math.round(gistFontSize(zoom) * GIST_TAG_RATIO)
+}

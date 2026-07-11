@@ -95,6 +95,26 @@
   margin: -4px 0 0 -2px;
 }
 
+/* Note↔prose convert toggle — a quiet icon button (arrows-left-right) in the
+   badge row of a selected card. The action name lives in the hover tooltip
+   (title). Matches the draft-exclude toggle's chip styling (tertiary fill,
+   faint ink) so the two card actions read as one family. */
+.elves-convert-prose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  border: none;
+  border-radius: 5px;
+  background: var(--elves-tertiary);
+  color: var(--elves-ink-faint);
+  cursor: pointer;
+  pointer-events: all;
+  transition: background-color 100ms ease, color 100ms ease;
+}
+.elves-convert-prose svg { width: 13px; height: 13px; display: block; }
+.elves-convert-prose:hover { color: var(--elves-ink); background: var(--elves-border); }
+
 /* Agent authorship mark — a small single-colour logomark, tinted the agent's
    accent (set inline via `color`, the SVG uses currentColor). Sized a touch
    taller than the 10px NOTE cap-height so it reads without shouting. */
@@ -107,6 +127,51 @@
   width: 13px;
   height: 13px;
   display: block;
+}
+/* Stacked authorship marks — every contributor to the card's text, not just the
+   last writer. The marks overlap slightly so several authors read as one compact
+   cluster; a hairline ring separates one glyph from the next where they tuck. */
+.elves-author-marks {
+  display: inline-flex;
+  align-items: center;
+}
+.elves-author-mark + .elves-author-mark {
+  margin-left: -3px;
+}
+.elves-author-mark svg {
+  /* A faint halo in the card's surface colour so an overlapped glyph stays
+     legible against the one behind it. */
+  filter: drop-shadow(0 0 1.5px var(--elves-surface-muted));
+}
+/* When the marks can reveal blame, hint it with a pointer cursor. */
+.elves-author-marks--interactive { cursor: help; }
+/* Top-right corner variant (note cards): tucked into the padding box opposite
+   the "Note" label, same inset as the figure status chip. pointer-events:all so
+   the hover-to-reveal-blame interaction fires over the canvas layer. */
+.elves-author-marks--corner {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  z-index: 2;
+  pointer-events: all;
+}
+
+/* Blame highlight: each agent-authored run of the body text carries its author's
+   accent in `--blame-accent`, held back until the card body gains
+   `.elves-blame-active` (hovering the author marks). Human runs are plain text
+   and get no span, so they never tint. A soft accent wash + accent ink keeps the
+   agent's words legible while making them unmistakably theirs. */
+.elves-blame-run {
+  border-radius: 3px;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.elves-blame-active .elves-blame-run {
+  color: var(--blame-accent);
+  background: color-mix(in oklch, var(--blame-accent) 14%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in oklch, var(--blame-accent) 14%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .elves-blame-run { transition: none; }
 }
 .elves-card__text { white-space: pre-wrap; flex: 1; overflow-wrap: anywhere; }
 /* The zoomed-out gist: a model-authored summary. Although it's model-written,
@@ -582,6 +647,33 @@
 .elves-comment[data-type="wants-figure"]   .elves-comment__type { color: var(--elves-cc-figure-label); }
 
 .elves-comment__text { overflow-wrap: anywhere; white-space: pre-wrap; color: var(--elves-ink); }
+
+/* Gist mode: comments collapse to a wrapping row of type chips. Sizing (font)
+   is counter-scaled inline (gistTagFontSize) so chips hold a readable on-screen
+   size as you zoom out; the box metrics are in em so padding/radius track that
+   font. Non-interactive — zoomed this far out you're navigating, not resolving. */
+.elves-comments--gist {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0.4em;
+  margin-top: 6px;
+  pointer-events: none;
+}
+.elves-gist-tag {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  line-height: 1;
+  padding: 0.35em 0.6em;
+  border-radius: 0.5em;
+  color: var(--elves-cc-freeform-label);
+  background: var(--elves-cc-freeform-bg);
+  border: 1px solid var(--elves-cc-freeform-border);
+}
+.elves-gist-tag[data-type="needs-evidence"] { color: var(--elves-cc-evidence-label); background: var(--elves-cc-evidence-bg); border-color: var(--elves-cc-evidence-border); }
+.elves-gist-tag[data-type="weak-argument"]  { color: var(--elves-cc-weak-label);     background: var(--elves-cc-weak-bg);     border-color: var(--elves-cc-weak-border); }
+.elves-gist-tag[data-type="needs-citation"] { color: var(--elves-cc-citation-label); background: var(--elves-cc-citation-bg); border-color: var(--elves-cc-citation-border); }
+.elves-gist-tag[data-type="wants-figure"]   { color: var(--elves-cc-figure-label);   background: var(--elves-cc-figure-bg);   border-color: var(--elves-cc-figure-border); }
 .elves-comment__resolve {
   flex-shrink: 0;
   margin: -3px -4px 0 0;   /* tuck the × up into the top-right corner */
