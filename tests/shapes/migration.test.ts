@@ -2,7 +2,7 @@ import { expect, test } from 'vitest'
 import {
   addCommentsUp, addAssetIdUp, addReferenceUp, addSummaryUp,
   renameSourceToNoteUp, renameSourceToNoteDown, addAuthoredByUp, addDraftExcludedUp, addFigureUp,
-  addAttributionUp,
+  addAttributionUp, addCommentSummaryUp,
 } from '../../src/shapes/CardShapeUtil'
 
 test('migration adds comments[] and mergedInto to a pre-Phase-2 card', () => {
@@ -145,4 +145,32 @@ test('AddAttribution gives an empty-text card an empty attribution', () => {
   }
   addAttributionUp(props)
   expect(props.attribution).toEqual([])
+})
+
+test('AddCommentSummary migration adds the four null summary fields to every existing comment', () => {
+  const props: Record<string, unknown> = {
+    w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text: 'x',
+    comments: [
+      { id: 'c1', type: null, text: 'a', resolved: false, author: 'claude' },
+      { id: 'c2', type: 'weak-argument', text: 'b', resolved: true, author: 'claude' },
+    ],
+    mergedInto: null, assetId: null, reference: null, authoredBy: null,
+    draftExcluded: false, figureTitle: '', figureStatus: null,
+    summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+    attribution: [],
+  }
+  addCommentSummaryUp(props)
+  const comments = props.comments as Record<string, unknown>[]
+  for (const c of comments) {
+    expect(c).toMatchObject({ summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null })
+  }
+  // The rest of each comment is untouched.
+  expect(comments[0]).toMatchObject({ id: 'c1', text: 'a' })
+  expect(comments[1]).toMatchObject({ id: 'c2', text: 'b', resolved: true })
+})
+
+test('AddCommentSummary migration is a no-op on a card with no comments', () => {
+  const props: Record<string, unknown> = { comments: [] }
+  addCommentSummaryUp(props)
+  expect(props.comments).toEqual([])
 })

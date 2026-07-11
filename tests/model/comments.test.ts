@@ -2,9 +2,10 @@ import { describe, expect, test } from 'vitest'
 import { makeComment, addComment, resolveComment, visibleComments } from '../../src/model/comments'
 
 describe('comment helpers', () => {
-  test('makeComment defaults to freeform, unresolved, claude-authored', () => {
+  test('makeComment defaults to freeform, unresolved, claude-authored, unsummarized', () => {
     expect(makeComment('c1', 'thin here')).toEqual({
       id: 'c1', type: null, text: 'thin here', resolved: false, author: 'claude',
+      summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
     })
     expect(makeComment('c2', 'no source', 'needs-evidence').type).toBe('needs-evidence')
   })

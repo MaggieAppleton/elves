@@ -64,6 +64,19 @@ export interface Comment {
    * and authorship mark.
    */
   author: string
+  /**
+   * A model-authored one-phrase gist of a long comment, shown zoomed out in
+   * place of the full text (see commentGist in model/summary). Mirrors a
+   * card's `summary` field exactly — same staleness/provenance shape, just
+   * scoped to one comment instead of a whole card. null when not yet generated.
+   */
+  summary: string | null
+  /** Hash of the `text` this summary was built from, for staleness detection. */
+  summaryOfHash: string | null
+  /** Provenance of the summary, e.g. 'ollama/llama3.2'. */
+  summaryBy: string | null
+  /** ISO timestamp of when the summary was generated. */
+  summaryAt: string | null
 }
 
 export interface CardProps {

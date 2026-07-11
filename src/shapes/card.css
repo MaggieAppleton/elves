@@ -648,32 +648,6 @@
 
 .elves-comment__text { overflow-wrap: anywhere; white-space: pre-wrap; color: var(--elves-ink); }
 
-/* Gist mode: comments collapse to a wrapping row of type chips. Sizing (font)
-   is counter-scaled inline (gistTagFontSize) so chips hold a readable on-screen
-   size as you zoom out; the box metrics are in em so padding/radius track that
-   font. Non-interactive — zoomed this far out you're navigating, not resolving. */
-.elves-comments--gist {
-  flex-direction: row;
-  flex-wrap: wrap;
-  gap: 0.4em;
-  margin-top: 6px;
-  pointer-events: none;
-}
-.elves-gist-tag {
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  line-height: 1;
-  padding: 0.35em 0.6em;
-  border-radius: 0.5em;
-  color: var(--elves-cc-freeform-label);
-  background: var(--elves-cc-freeform-bg);
-  border: 1px solid var(--elves-cc-freeform-border);
-}
-.elves-gist-tag[data-type="needs-evidence"] { color: var(--elves-cc-evidence-label); background: var(--elves-cc-evidence-bg); border-color: var(--elves-cc-evidence-border); }
-.elves-gist-tag[data-type="weak-argument"]  { color: var(--elves-cc-weak-label);     background: var(--elves-cc-weak-bg);     border-color: var(--elves-cc-weak-border); }
-.elves-gist-tag[data-type="needs-citation"] { color: var(--elves-cc-citation-label); background: var(--elves-cc-citation-bg); border-color: var(--elves-cc-citation-border); }
-.elves-gist-tag[data-type="wants-figure"]   { color: var(--elves-cc-figure-label);   background: var(--elves-cc-figure-bg);   border-color: var(--elves-cc-figure-border); }
 .elves-comment__resolve {
   flex-shrink: 0;
   margin: -3px -4px 0 0;   /* tuck the × up into the top-right corner */

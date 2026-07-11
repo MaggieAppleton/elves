@@ -86,3 +86,41 @@ export function cardGist(card: SummarizableCard): string {
   if (card.kind === 'figure') return card.figureTitle?.trim() ? card.figureTitle : mechanicalGist(card.text)
   return card.summary ?? mechanicalGist(card.text)
 }
+
+/**
+ * The minimal comment shape this module reasons about — a comment mirrors a
+ * card's summary decision fields exactly (see SummarizableCard), minus the
+ * card-only `kind`/`noteKind`/`figureTitle`: a comment is always plain text,
+ * so it has no non-summarizable kind to exclude.
+ */
+export interface SummarizableComment {
+  text: string
+  summary: string | null
+  summaryOfHash: string | null
+}
+
+/**
+ * Every non-empty comment is summarizable — unlike a card there's no image/
+ * reference/figure kind to exclude, so this is just "does it have any text".
+ */
+export function isCommentSummarizable(comment: SummarizableComment): boolean {
+  return comment.text.trim().length > 0
+}
+
+/** `summaryState` for a comment — same generate/clear/ok decision as a card. */
+export function commentSummaryState(comment: SummarizableComment): SummaryState {
+  if (isCommentSummarizable(comment)) {
+    if (comment.summary === null || comment.summaryOfHash !== summaryHash(comment.text)) return 'generate'
+    return 'ok'
+  }
+  return comment.summary !== null ? 'clear' : 'ok'
+}
+
+/**
+ * The gist to display for a comment: the model summary if present, else a
+ * mechanical truncation of its own text — the same fallback `cardGist` uses,
+ * so a comment reads exactly as legibly as a card does when zoomed out.
+ */
+export function commentGist(comment: SummarizableComment): string {
+  return comment.summary ?? mechanicalGist(comment.text)
+}

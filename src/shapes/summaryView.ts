@@ -4,9 +4,9 @@ import type { NoteKind } from '../model/types'
  * At or below this zoom level a card is small enough that its full text is hard
  * to read, so a summarized card shows its gist instead — the shape of the whole
  * piece (section labels + one-line gists) becomes legible at a glance. tldraw
- * zoom is 1 = 100%, so 0.7 means the gist appears once you zoom out past 70%.
+ * zoom is 1 = 100%, so 0.6 means the gist appears once you zoom out past 60%.
  */
-export const GIST_ZOOM = 0.7
+export const GIST_ZOOM = 0.6
 
 /**
  * Whether a card should render its gist rather than its full text right now.

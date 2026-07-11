@@ -134,7 +134,10 @@ describe('convert note → prose', () => {
 
   test('conversion preserves the text, comments, and size', () => {
     const comments: Comment[] = [
-      { id: 'c1', type: 'needs-citation', text: 'source?', resolved: false, author: 'claude' },
+      {
+        id: 'c1', type: 'needs-citation', text: 'source?', resolved: false, author: 'claude',
+        summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+      },
     ]
     const note = { ...makeNoteCardProps('written by an agent', 'transcribed', 'claude'), comments, w: 512, h: 240 }
     const prose = noteToProseProps(note)

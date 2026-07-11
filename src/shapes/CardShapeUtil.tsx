@@ -11,11 +11,11 @@ import { reattribute, USER_AUTHOR } from '../model/attribution'
 import { AuthorMarks } from './AuthorMarks'
 import { BlameText, hasAgentRun } from './BlameText'
 import { nextFigureStatus } from '../model/figures'
-import { cardGist } from '../model/summary'
+import { cardGist, commentGist } from '../model/summary'
 import { visibleComments, resolveComment } from '../model/comments'
 import { assetUrl } from '../client/assets'
 import { measuredCardHeight, measuredReferenceHeight, measuredFigureHeight, PROSE_TEXT_MIN } from './autosize'
-import { shouldShowGist, gistFontSize, gistTagFontSize } from './summaryView'
+import { shouldShowGist, gistFontSize } from './summaryView'
 import { mergedMembers, isExpanded, toggleExpanded } from './mergeView'
 import { ReferenceCardFace } from './ReferenceCardFace'
 import { presenceMode } from '../client/presence'
@@ -103,6 +103,19 @@ export function addFigureUp(props: Record<string, unknown>): void {
   props.figureStatus = null
 }
 
+// Every comment predating this field gets a comment-level summary, mirroring
+// addSummaryUp for the card itself: default to "no summary generated yet" so
+// reconciliation treats it exactly like a freshly-added comment.
+export function addCommentSummaryUp(props: Record<string, unknown>): void {
+  const comments = Array.isArray(props.comments) ? (props.comments as Record<string, unknown>[]) : []
+  for (const c of comments) {
+    c.summary = null
+    c.summaryOfHash = null
+    c.summaryBy = null
+    c.summaryAt = null
+  }
+}
+
 // Seeds per-character authorship from a card's last-writer + text. An existing
 // card has one author for its whole body — the human (authoredBy null → 'user')
 // or the agent that wrote it — so its attribution is one run of that author over
@@ -137,7 +150,7 @@ export function renameSourceToNoteDown(props: Record<string, unknown>): void {
 
 const cardVersions = createShapePropsMigrationIds('card', {
   AddComments: 1, AddAssetId: 2, AddReference: 3, AddSummary: 4, RenameSourceToNote: 5,
-  AddAuthoredBy: 6, AddDraftExcluded: 7, AddFigure: 8, AddAttribution: 9,
+  AddAuthoredBy: 6, AddDraftExcluded: 7, AddFigure: 8, AddAttribution: 9, AddCommentSummary: 10,
 })
 
 export const cardMigrations = createShapePropsMigrationSequence({
@@ -209,6 +222,21 @@ export const cardMigrations = createShapePropsMigrationSequence({
       up: (props) => addAttributionUp(props as Record<string, unknown>),
       down: (props) => {
         delete (props as Record<string, unknown>).attribution
+      },
+    },
+    {
+      id: cardVersions.AddCommentSummary,
+      up: (props) => addCommentSummaryUp(props as Record<string, unknown>),
+      down: (props) => {
+        const comments = (props as Record<string, unknown>).comments
+        if (Array.isArray(comments)) {
+          for (const c of comments as Record<string, unknown>[]) {
+            delete c.summary
+            delete c.summaryOfHash
+            delete c.summaryBy
+            delete c.summaryAt
+          }
+        }
       },
     },
   ],
@@ -296,6 +324,11 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
         resolved: T.boolean,
         // Any agent id (e.g. 'claude', 'codex'); resolved through the agent registry.
         author: T.string,
+        // A comment's own model-authored gist, mirroring a card's summary fields.
+        summary: T.nullable(T.string),
+        summaryOfHash: T.nullable(T.string),
+        summaryBy: T.nullable(T.string),
+        summaryAt: T.nullable(T.string),
       }),
     ),
     mergedInto: T.nullable(T.string),
@@ -683,25 +716,12 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
               </>
             )}
           </div>
-          {/* Zoomed out, the full comments are hidden with the rest of the card's
-              chrome (below), but their type tags stay: a compact, counter-scaled
-              chip per comment so the marginalia is still legible at a glance
-              without crowding the gist. Freeform (untyped) comments show a dot. */}
-          {showGist && comments.length > 0 && (
-            <div className="elves-comments elves-comments--gist" aria-hidden>
-              {comments.map((c) => (
-                <span
-                  key={c.id}
-                  className="elves-gist-tag"
-                  data-type={c.type ?? 'freeform'}
-                  style={{ fontSize: gistTagFontSize(zoom) }}
-                >
-                  {c.type ?? '•'}
-                </span>
-              ))}
-            </div>
-          )}
-          {!showGist && comments.length > 0 && (
+          {/* Comments keep their full-size box at every zoom, including type
+              label and resolve button — zoomed out past the gist threshold,
+              only the BODY swaps to the comment's own model gist (same
+              treatment the card's own text gets just above), sized up with
+              gistFontSize so it stays legible. */}
+          {comments.length > 0 && (
             <div className="elves-comments" onPointerDown={(e) => e.stopPropagation()}>
               {comments.map((c) => (
                 <div
@@ -711,7 +731,12 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                 >
                   <div className="elves-comment__body">
                     {c.type && <span className="elves-comment__type">{c.type}</span>}
-                    <span className="elves-comment__text">{c.text}</span>
+                    <span
+                      className="elves-comment__text"
+                      style={showGist ? { fontSize: gistFontSize(zoom) } : undefined}
+                    >
+                      {showGist ? commentGist(c) : c.text}
+                    </span>
                   </div>
                   <button
                     className="elves-comment__resolve"

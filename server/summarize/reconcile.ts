@@ -1,10 +1,19 @@
 import type { ChangeSet, Op } from '../../src/model/changeset'
-import { SummarizableCard, summaryHash, summaryState } from '../../src/model/summary'
+import {
+  SummarizableCard, SummarizableComment, summaryHash, summaryState, commentSummaryState,
+} from '../../src/model/summary'
 import type { Summarizer } from './summarizer'
 
 /** A card as reconciliation sees it: the summary decision fields plus its id. */
 export interface ReconcileCard extends SummarizableCard {
   id: string
+}
+
+/** A comment as reconciliation sees it: the summary decision fields plus the
+ * ids needed to address it — its own commentId and its owning cardId. */
+export interface ReconcileComment extends SummarizableComment {
+  cardId: string
+  commentId: string
 }
 
 /**
@@ -41,6 +50,41 @@ export async function reconcileSummaries(
         ops.push({
           kind: 'set_summary', cardId: card.id,
           summary, summaryOfHash: summaryHash(card.text),
+          summaryBy: summarizer.label, summaryAt: now(),
+        })
+      }
+    }
+  }
+  if (!ops.length) return null
+  return { id: `sum-${crypto.randomUUID()}`, author: 'claude', ops }
+}
+
+/**
+ * Same reconciliation as reconcileSummaries, one level down: a comment is a
+ * first-class summarizable unit too, so it gets the identical generate/clear
+ * decision and the same set_comment_summary op, keyed by both its cardId and
+ * its own commentId (a card can hold many comments, so cardId alone doesn't
+ * address one).
+ */
+export async function reconcileCommentSummaries(
+  comments: ReconcileComment[],
+  summarizer: Summarizer,
+  now: () => string,
+): Promise<ChangeSet | null> {
+  const ops: Op[] = []
+  for (const comment of comments) {
+    const state = commentSummaryState(comment)
+    if (state === 'clear') {
+      ops.push({
+        kind: 'set_comment_summary', cardId: comment.cardId, commentId: comment.commentId,
+        summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+      })
+    } else if (state === 'generate') {
+      const summary = await summarizer.summarize(comment.text)
+      if (summary) {
+        ops.push({
+          kind: 'set_comment_summary', cardId: comment.cardId, commentId: comment.commentId,
+          summary, summaryOfHash: summaryHash(comment.text),
           summaryBy: summarizer.label, summaryAt: now(),
         })
       }

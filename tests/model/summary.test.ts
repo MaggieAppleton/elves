@@ -5,7 +5,11 @@ import {
   summaryState,
   mechanicalGist,
   cardGist,
+  isCommentSummarizable,
+  commentSummaryState,
+  commentGist,
   type SummarizableCard,
+  type SummarizableComment,
 } from '../../src/model/summary'
 
 const LONG = 'A '.repeat(120) + 'the end.'
@@ -79,4 +83,41 @@ test('cardGist for a figure is its title — never a summary of the description'
   )
   // An untitled figure falls back to a mechanical gist of its description.
   expect(cardGist(card({ kind: 'figure', figureTitle: '', text: SHORT }))).toBe(SHORT)
+})
+
+// --- Comments: the same summary machinery, one level down --------------------
+
+function comment(over: Partial<SummarizableComment> = {}): SummarizableComment {
+  return { text: LONG, summary: null, summaryOfHash: null, ...over }
+}
+
+test('isCommentSummarizable: any non-empty comment yes, empty/whitespace no', () => {
+  expect(isCommentSummarizable(comment())).toBe(true)
+  expect(isCommentSummarizable(comment({ text: SHORT }))).toBe(true) // short comments too
+  expect(isCommentSummarizable(comment({ text: '   ' }))).toBe(false)
+})
+
+test('commentSummaryState: generate when summarizable and missing/stale, at any length', () => {
+  expect(commentSummaryState(comment())).toBe('generate')
+  expect(commentSummaryState(comment({ text: SHORT }))).toBe('generate')
+  expect(commentSummaryState(comment({ summary: 'old gist', summaryOfHash: summaryHash('different text') })))
+    .toBe('generate')
+})
+
+test('commentSummaryState: ok when the summary matches the current text', () => {
+  expect(commentSummaryState(comment({ summary: 'a gist', summaryOfHash: summaryHash(LONG) }))).toBe('ok')
+})
+
+test('commentSummaryState: clear when emptied but still carrying a stale summary', () => {
+  const c = comment({ text: '   ', summary: 'stale gist', summaryOfHash: summaryHash(LONG) })
+  expect(commentSummaryState(c)).toBe('clear')
+})
+
+test('commentSummaryState: ok when empty and no summary', () => {
+  expect(commentSummaryState(comment({ text: '' }))).toBe('ok')
+})
+
+test('commentGist uses the model summary when present, else a mechanical gist of its own text', () => {
+  expect(commentGist(comment({ summary: 'model gist' }))).toBe('model gist')
+  expect(commentGist(comment({ text: SHORT }))).toBe(SHORT)
 })

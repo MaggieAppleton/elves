@@ -259,6 +259,27 @@ function applySetSummary(editor: Editor, op: Extract<Op, { kind: 'set_summary' }
   return [shape.id]
 }
 
+function applySetCommentSummary(
+  editor: Editor,
+  op: Extract<Op, { kind: 'set_comment_summary' }>,
+): TLShapeId[] {
+  const shape = editor.getShape(op.cardId as CardShape['id']) as CardShape | undefined
+  if (!shape) return []
+  const comments = shape.props.comments.map((c) =>
+    c.id === op.commentId
+      ? {
+          ...c,
+          summary: op.summary,
+          summaryOfHash: op.summaryOfHash,
+          summaryBy: op.summaryBy,
+          summaryAt: op.summaryAt,
+        }
+      : c,
+  )
+  editor.updateShape<CardShape>({ id: shape.id, type: 'card', props: { comments } })
+  return [shape.id]
+}
+
 function applyOp(editor: Editor, op: Op, author: string): TLShapeId[] {
   switch (op.kind) {
     case 'add_comment':
@@ -291,6 +312,8 @@ function applyOp(editor: Editor, op: Op, author: string): TLShapeId[] {
       return applyUngroupCards(editor, op)
     case 'set_summary':
       return applySetSummary(editor, op)
+    case 'set_comment_summary':
+      return applySetCommentSummary(editor, op)
   }
 }
 
