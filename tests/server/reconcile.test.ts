@@ -270,3 +270,47 @@ test('reconcileCanvasFile summarizes a comment alongside its card in one combine
   expect(cards.body.cards[0].summary).toBe('a gist')
   expect(cards.body.cards[0].comments[0].summary).toBe('a gist')
 })
+
+test('a summary left pending is retried once the summarizer recovers', async () => {
+  const d = await fs.mkdtemp(join(tmpdir(), 'elves-sum-'))
+  dirs.push(d)
+  await createProject(d, 'Essay', '2026-07-02T10:00:00.000Z')
+
+  let up = false
+  const flaky = new FakeSummarizer(() => (up ? 'a gist' : null))
+  let changeSetCount = 0
+  const onChangeSet = () => { changeSetCount += 1 }
+  const app = createServer(d, onChangeSet, {
+    summarizer: flaky, now: () => 'T', debounceMs: 1, retryBaseMs: 5, retryMaxMs: 10,
+  })
+
+  const snap = {
+    document: { store: { 'shape:a': {
+      id: 'shape:a', typeName: 'shape', type: 'card', x: 0, y: 0,
+      props: { w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text: LONG, comments: [], mergedInto: null },
+    } } },
+    session: null,
+  }
+  await request(app).post('/projects/essay/canvas').send(snap)
+
+  // Give the debounced reconcile time to run while the summarizer is down.
+  await new Promise((r) => setTimeout(r, 30))
+  let cards = await request(app).post('/projects/essay/cards').send({ ids: ['shape:a'] })
+  expect(cards.body.cards[0].summary).toBeNull()
+  expect(flaky.calls.length).toBeGreaterThan(0)
+  const callsWhileDown = flaky.calls.length
+
+  // The summarizer recovers — no further save or restart needed.
+  up = true
+  await new Promise((r) => setTimeout(r, 100))
+
+  cards = await request(app).post('/projects/essay/cards').send({ ids: ['shape:a'] })
+  expect(cards.body.cards[0].summary).toBe('a gist')
+  expect(changeSetCount).toBeGreaterThan(0)
+
+  // Once filled, no further retry should fire — call count stays put.
+  const callsAfterFilled = flaky.calls.length
+  await new Promise((r) => setTimeout(r, 60))
+  expect(flaky.calls.length).toBe(callsAfterFilled)
+  expect(callsAfterFilled).toBeGreaterThan(callsWhileDown)
+})
