@@ -36,7 +36,7 @@ It's a writing app where **agents collaborate with you but never write for you.*
 
 **Projects.** Keep several pieces at once, each a self-contained, portable folder; create / switch / rename from the toolbar.
 
-**Agents via MCP.** With the app running, an agent works the canvas through a scoped [MCP](https://modelcontextprotocol.io) server — Claude, Codex, GitHub Copilot, or any other MCP-capable tool. It **reads** with `list_projects`, `read_map` (a cheap, token-light map with a one-line gist per card, plus the section and group lists), `read_cards` (full text on demand), and `read_draft` (the piece as one linear draft). It **organizes and critiques** with `add_comment`, `merge_notes`, `move_cards`, `create_note_card` (transcribe), `create_reference`, `create_figure_card`, `create_question`, `create_section` / `edit_section_text` / `move_sections`, and `group_cards` / `ungroup_cards`. It can `edit_card` (a note's body, a reference's annotation, or a figure's title/description) and `delete_card` — but only for working-material cards it authored. Every tool targets a specific project, and **none can write your prose**.
+**Agents via MCP.** With the app running, an agent works the canvas through a scoped [MCP](https://modelcontextprotocol.io) server — Claude, Codex, GitHub Copilot, or any other MCP-capable tool. It **reads** with `list_projects`, `read_map` (a cheap, token-light map with a one-line gist per card, plus the section and group lists), `read_cards` (full text on demand), `read_draft` (the piece as one linear draft), and `read_selection` (the cards you've selected on the canvas right now). It **organizes and critiques** with `add_comment`, `merge_notes`, `move_cards`, `create_note_card` (transcribe), `create_reference`, `create_figure_card`, `create_question`, `create_section` / `edit_section_text` / `move_sections`, and `group_cards` / `ungroup_cards`. It can `edit_card` (a note's body, a reference's annotation, or a figure's title/description) and `delete_card` — but only for working-material cards it authored. Every tool targets a specific project, and **none can write your prose**.
 
 ## Requirements
 
@@ -188,6 +188,7 @@ startup naming the files so you can review and delete them.
 | `npm run test:watch` | Unit tests in watch mode. |
 | `npm run e2e` | Run the Playwright end-to-end tests. |
 | `npm run typecheck` | Type-check with `tsc --noEmit`. |
+| `npm run mcp` | Run the MCP server standalone (usually launched by your agent, not by hand). |
 
 ## Testing
 
@@ -205,7 +206,6 @@ The e2e suite runs its own server against a throwaway `.e2e/data` root, so it wo
 src/
   App.tsx                 # tldraw canvas + projects + persistence + realtime + image upload + view toggle
   main.tsx                # React entry
-  meta.ts                 # shared build/version metadata
   theme.css               # --elves-card-font and layout
   components/ProjectSwitcher.tsx # top-right project menu (list / switch / new / rename)
   components/DraftDrawerControls.tsx # draft-drawer chevrons: Canvas · Split · Draft (⌘/Ctrl + \)
@@ -215,7 +215,7 @@ src/
   model/figures.ts        # figure-card status cycle (idea → sketched → final)
   model/questions.ts      # question-card model (agent-authored, dismissable)
   model/references.ts     # pure reference display helpers + guessRefType (type-adaptive faces)
-  model/presence.ts       # agent presence (where an agent is looking / working)
+  model/presence.ts       # the PresenceMessage wire-type (ephemeral "looking" glow, never persisted)
   apply/applyChangeSet.ts # applies a change-set as one undoable tldraw step
   client/persistence.ts   # projects API + load/save a project's canvas
   client/realtime.ts      # websocket client receiving {projectId, change-set}
@@ -229,6 +229,8 @@ server/
   store.ts                # atomic read/write of a canvas.json
   digest.ts               # the token-light card map + per-card digests (read_map / read_cards)
   projects.ts             # project registry: create / list / rename, slug + path guards
+  conflicts.ts            # detect Syncthing sync conflicts and warn on startup
+  selection.ts            # per-project canvas selection state (read_selection)
   migrate.ts              # one-time legacy canvas -> projects/my-first-essay
   migrateNotes.ts         # one-time "source" -> "note" card migration
   assets.ts               # image files on disk (path-traversal-safe)
