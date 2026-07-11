@@ -40,39 +40,21 @@
 }
 .elves-card--excluded .elves-card__text { opacity: 0.6; }
 
-/* Draft-exclude toggle — top-right of the card. Icon-only when the card is in
-   the draft (shown on selection); grows a "Not in draft" label when excluded so
-   the marker reads on its own. pointer-events:all because the card container is
-   pointer-events:none (clicks otherwise fall through to the canvas). */
-.elves-draft-exclude {
+/* Top-right corner cluster — the card's authorship mark(s) and the note↔prose
+   convert toggle, tucked into the padding box opposite the "Note"/"Prose" label
+   (same inset as the figure status chip). pointer-events:all because the card
+   container is pointer-events:none (clicks otherwise fall through to the canvas);
+   this is inherited by the mark and button inside. */
+.elves-card__corner {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 12px;
+  right: 14px;
   z-index: 3;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font: inherit;
-  font-size: 10px;
-  font-weight: 600;
-  padding: 3px 5px;
-  border: none;
-  border-radius: 5px;
-  background: var(--elves-tertiary);
-  color: var(--elves-ink-faint);
-  cursor: pointer;
+  gap: 6px;
   pointer-events: all;
-  transition: background-color 100ms ease, color 100ms ease;
 }
-.elves-draft-exclude svg { width: 13px; height: 13px; display: block; }
-.elves-draft-exclude:hover { color: var(--elves-ink); background: var(--elves-border); }
-.elves-draft-exclude[data-excluded="true"] {
-  color: var(--elves-ink-soft);
-  background: var(--elves-surface);
-  border: 1px dashed var(--elves-border-strong);
-  padding: 2px 6px 2px 5px;
-}
-.elves-draft-exclude__label { letter-spacing: 0.02em; line-height: 1; }
 
 /* "NOTE" label — plain small-caps text, no container, tucked toward the
    top-left corner of the card. */
@@ -102,9 +84,9 @@
 }
 
 /* Note↔prose convert toggle — a quiet icon button (arrows-left-right) in the
-   badge row of a selected card. The action name lives in the hover tooltip
-   (title). Matches the draft-exclude toggle's chip styling (tertiary fill,
-   faint ink) so the two card actions read as one family. */
+   card's top-right corner cluster, next to the authorship mark, shown only while
+   the card is solely selected. The action name lives in the hover tooltip
+   (title): a quiet tertiary-fill chip that brightens on hover. */
 .elves-convert-prose {
   display: inline-flex;
   align-items: center;
