@@ -6,7 +6,20 @@ import type { Attribution } from '../../src/model/types'
 
 /** Strip tags to recover the visible text, verifying nothing is dropped. */
 function visibleText(html: string): string {
-  return html.replace(/<[^>]+>/g, '')
+  let text = ''
+  let inTag = false
+  for (const char of html) {
+    if (char === '<') {
+      inTag = true
+      continue
+    }
+    if (char === '>') {
+      inTag = false
+      continue
+    }
+    if (!inTag) text += char
+  }
+  return text
 }
 
 describe('BlameText — run-split body with per-author spans', () => {
