@@ -167,8 +167,8 @@ export function createServer(
     try {
       const canvasPath = canvasPathFor(dataRoot, projectId)
       if (canvasPath && (await getProject(dataRoot, projectId))) {
-        const cs = await reconcileCanvasFile(canvasPath, summarize.summarizer, now)
-        if (cs) onChangeSet?.(projectId, cs)
+        const { changeSet } = await reconcileCanvasFile(canvasPath, summarize.summarizer, now)
+        if (changeSet) onChangeSet?.(projectId, changeSet)
       }
     } catch (err) {
       console.error('[elves] summary reconcile failed:', err)
