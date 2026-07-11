@@ -93,6 +93,12 @@
   gap: 5px;
   align-self: flex-start;
   margin: -4px 0 0 -2px;
+  /* Reserve the height of the tallest thing this row ever holds — the
+     convert-to-prose icon button (padding 3 + 13px icon = 19px), which only
+     appears on selection. Without this the row is just the ~14px label when
+     unselected and grows on select, pushing the label and the flex:1 body text
+     down. Holding 19px in every state keeps the label and text top fixed. */
+  min-height: 19px;
 }
 
 /* Note↔prose convert toggle — a quiet icon button (arrows-left-right) in the
@@ -187,6 +193,14 @@
 }
 .elves-card__editor {
   flex: 1;
+  /* Match the read-view .elves-card__text box EXACTLY so entering edit doesn't
+     shift the text: a <textarea> ships UA default padding and content-box, while
+     the read <div> has neither — reset both, and mirror its wrapping so a long
+     unbreakable run wraps identically in both views. */
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
   border: none;
   outline: none;
   resize: none;
