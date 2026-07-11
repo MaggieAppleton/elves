@@ -55,6 +55,21 @@ test('/ is a literal slash while typing in the box, not a re-trigger', async ({ 
   await expect(input).toHaveValue('a/b')
 })
 
+test('/ while editing a card is a literal slash, not a box trigger', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  // A new prose card drops straight into editing (its textarea is focused).
+  await page.getByTestId('new-prose').click()
+  const editor = page.locator('.elves-card__editor')
+  await expect(editor).toBeFocused()
+
+  await page.keyboard.type('a/b')
+  // The slash typed into the card, and the box never opened.
+  await expect(editor).toHaveValue('a/b')
+  await expect(page.locator('.elves-agentbox')).toBeHidden()
+})
+
 test('Esc closes the box', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
