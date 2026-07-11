@@ -73,3 +73,33 @@ test('merge_notes hides duplicates under the representative and marks provenance
   await page.keyboard.press('Control+z')
   await expect(page.getByTestId('merged-badge')).toHaveCount(0)
 })
+
+test('deleting a merged card from the fan-out removes it permanently', async ({ page, request }) => {
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await page.getByTestId('new-note').click()
+  await page.getByTestId('new-note').click()
+  await expect.poll(async () => (await serverCardIds(request, projectId)).length).toBe(2)
+  const ids = await serverCardIds(request, projectId)
+
+  await request.post(`${BASE}/projects/${projectId}/changeset`, {
+    data: { id: 'mg2', author: 'claude', ops: [{ kind: 'merge_notes', cardIds: ids }] },
+  })
+  // Reload so the client loads the merged state from disk: this test is about
+  // deleting a merged card, not about realtime delivery of the merge, so we
+  // reach the merged state deterministically rather than waiting on the push.
+  await page.reload()
+  await expect(page.getByTestId('merged-badge')).toBeVisible()
+  await expect.poll(async () => (await cardById(request, ids[1]))?.props?.mergedInto).toBe(ids[0])
+
+  // Open the fan-out and delete the single merged member.
+  await page.getByTestId('merged-badge').click()
+  await expect(page.getByTestId('merge-fan-card')).toHaveCount(1)
+  await page.getByTestId('delete-merged-card').click()
+
+  // The merged card is gone from the server, and with no members left the
+  // representative reverts to a plain note (badge disappears).
+  await expect.poll(async () => await cardById(request, ids[1])).toBeFalsy()
+  await expect(page.getByTestId('merged-badge')).toHaveCount(0)
+  await expect(page.locator('.elves-card--note:visible')).toHaveCount(1)
+})

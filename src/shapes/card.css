@@ -255,6 +255,7 @@
   pointer-events: all;
 }
 .elves-merge-fan__card {
+  position: relative;
   box-sizing: border-box;
   padding: 12px 14px;
   border-radius: 10px;
@@ -270,6 +271,29 @@
   user-select: text;
   -webkit-user-select: text;
 }
+/* Trash button tucked into the merged card's top-right corner, revealed on
+   hover so the peek stays clean until you reach for it. */
+.elves-merge-fan__delete {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--elves-ink-faint);
+  border-radius: 5px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 100ms ease, background-color 100ms ease, color 100ms ease;
+}
+.elves-merge-fan__delete svg { width: 14px; height: 14px; display: block; }
+.elves-merge-fan__card:hover .elves-merge-fan__delete { opacity: 1; }
+.elves-merge-fan__delete:hover { color: var(--elves-ink); background: var(--elves-border); }
 
 .elves-card__image {
   flex: 1;
