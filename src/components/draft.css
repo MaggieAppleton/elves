@@ -99,18 +99,47 @@
   cursor: pointer;
   transition: background-color 90ms ease, border-color 90ms ease;
 }
+/* Hover / selected: a light wash of the brand green (not the old warm tan), so
+   the paragraph you're about to edit reads as "live" in the app's accent. */
 .elves-draft__para:hover {
-  background: var(--elves-tertiary);
-  border-left-color: var(--elves-border-strong);
+  background: var(--elves-primary-tint);
+  border-left-color: var(--elves-primary);
 }
 .elves-draft__para:focus-visible {
   outline: none;
-  background: var(--elves-tertiary);
+  background: var(--elves-primary-tint);
+  border-left-color: var(--elves-primary);
   box-shadow: 0 0 0 2px var(--elves-focus-ring);
 }
 .elves-draft__para--empty {
   color: var(--elves-ink-faint);
   font-style: italic;
+}
+
+/* The paragraph opened for editing: a textarea sharing the reading column's
+   exact type + box (font, line-height, left bleed) so nothing shifts when you
+   click in. A stronger green wash + green rail mark it as the active card, the
+   canvas twin of the selected prose card. */
+.elves-draft__editor {
+  display: block;
+  box-sizing: border-box;
+  width: calc(100% + 12px);
+  margin: 0 0 15px -12px;
+  padding: 3px 10px 3px 12px;
+  font-family: var(--elves-card-font);
+  font-size: 16px;
+  line-height: 1.72;
+  color: var(--elves-ink);
+  background: var(--elves-primary-tint-2);
+  border: none;
+  border-left: 2px solid var(--elves-primary);
+  border-radius: 7px;
+  resize: none;
+  overflow: hidden;
+  outline: none;
+}
+.elves-draft__editor:focus-visible {
+  box-shadow: 0 0 0 2px var(--elves-focus-ring);
 }
 
 /* Unresolved-comment marker: a small count, no bodies (v1). */
