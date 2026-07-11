@@ -228,6 +228,23 @@ describe('applyChangeSet affected-id contract', () => {
     ]))).toEqual([])
   })
 
+  test('set_question_summary writes the gist onto the question shape', () => {
+    const ed = fakeEditor([{ id: 'shape:q1', type: 'question', x: 0, y: 0, props: { text: 'a long question?', summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null } }])
+    expect(applyChangeSet(ed as unknown as Editor, cs([
+      { kind: 'set_question_summary', questionId: 'shape:q1', summary: 'gist', summaryOfHash: 'h', summaryBy: 'b', summaryAt: 'T' },
+    ]))).toEqual(['shape:q1'])
+    const q = ed._shapes.get('shape:q1') as any
+    expect(q.props.summary).toBe('gist')
+    expect(q.props.summaryOfHash).toBe('h')
+  })
+
+  test('set_question_summary is a no-op when the question is gone', () => {
+    const ed = fakeEditor([])
+    expect(applyChangeSet(ed as unknown as Editor, cs([
+      { kind: 'set_question_summary', questionId: 'shape:missing', summary: 'g', summaryOfHash: 'h', summaryBy: 'b', summaryAt: 'T' },
+    ]))).toEqual([])
+  })
+
   test('multi-op change-set unions and dedupes affected ids', () => {
     const ed = fakeEditor([noteCard('card:a'), noteCard('card:b')])
     const ids = applyChangeSet(ed as unknown as Editor, cs([

@@ -280,6 +280,24 @@ function applySetCommentSummary(
   return [shape.id]
 }
 
+function applySetQuestionSummary(
+  editor: Editor,
+  op: Extract<Op, { kind: 'set_question_summary' }>,
+): TLShapeId[] {
+  const shape = editor.getShape(op.questionId as QuestionShape['id']) as QuestionShape | undefined
+  if (!shape) return []
+  editor.updateShape<QuestionShape>({
+    id: shape.id, type: 'question',
+    props: {
+      summary: op.summary,
+      summaryOfHash: op.summaryOfHash,
+      summaryBy: op.summaryBy,
+      summaryAt: op.summaryAt,
+    },
+  })
+  return [shape.id]
+}
+
 function applyOp(editor: Editor, op: Op, author: string): TLShapeId[] {
   switch (op.kind) {
     case 'add_comment':
@@ -314,6 +332,8 @@ function applyOp(editor: Editor, op: Op, author: string): TLShapeId[] {
       return applySetSummary(editor, op)
     case 'set_comment_summary':
       return applySetCommentSummary(editor, op)
+    case 'set_question_summary':
+      return applySetQuestionSummary(editor, op)
   }
 }
 
