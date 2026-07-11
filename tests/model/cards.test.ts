@@ -2,8 +2,10 @@ import { describe, expect, test } from 'vitest'
 import {
   makeProseCardProps, makeNoteCardProps, makeImageNoteCardProps, makeReferenceCardProps,
   makeFigureCardProps, isProseCard, isNoteCard, isFigureCard, claudeMayEditCardText,
+  canConvertNoteToProse, noteToProseProps, canConvertProseToNote, proseToNoteProps,
   CARD_DEFAULT_W, CARD_DEFAULT_H, FIGURE_DEFAULT_W, FIGURE_DEFAULT_H, AGENT_CARD_DEFAULT_W,
 } from '../../src/model/cards'
+import type { Comment } from '../../src/model/types'
 import { blankReference } from '../../src/model/references'
 
 describe('card factories', () => {
@@ -12,6 +14,7 @@ describe('card factories', () => {
     expect(p).toEqual({
       w: CARD_DEFAULT_W, h: CARD_DEFAULT_H, kind: 'prose',
       noteKind: null, origin: null, text: 'a point I wrote', authoredBy: null,
+      attribution: [{ author: 'user', length: 'a point I wrote'.length }],
       comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference: null,
       figureTitle: '', figureStatus: null,
       summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
@@ -59,7 +62,7 @@ describe('card factories', () => {
     const p = makeImageNoteCardProps('abc.png')
     expect(p).toEqual({
       w: 280, h: 200, kind: 'note', noteKind: 'image', origin: 'image',
-      text: '', authoredBy: null, comments: [], mergedInto: null, draftExcluded: false, assetId: 'abc.png', reference: null,
+      text: '', authoredBy: null, attribution: [], comments: [], mergedInto: null, draftExcluded: false, assetId: 'abc.png', reference: null,
       figureTitle: '', figureStatus: null,
       summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
     })
@@ -73,7 +76,9 @@ describe('card factories', () => {
       // The description lives in `text`; the title is its own field.
       text: 'A horizontal axis from rigid to malleable, with tools placed along it',
       figureTitle: 'Malleable software spectrum', figureStatus: 'idea',
-      authoredBy: null, comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference: null,
+      authoredBy: null,
+      attribution: [{ author: 'user', length: 'A horizontal axis from rigid to malleable, with tools placed along it'.length }],
+      comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference: null,
       summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
     })
     expect(isFigureCard(p)).toBe(true)
@@ -103,6 +108,87 @@ describe('card factories', () => {
     expect(p.text).toBe('') // annotation stays the user's to write
     expect(p.reference).toEqual(reference)
     expect(isNoteCard(p)).toBe(true)
+  })
+})
+
+describe('convert note → prose', () => {
+  test('only a text note can be converted', () => {
+    expect(canConvertNoteToProse(makeNoteCardProps('a point'))).toBe(true)
+    // Image and reference notes hold an annotation / structured data, not prose.
+    expect(canConvertNoteToProse(makeImageNoteCardProps('a.png'))).toBe(false)
+    expect(canConvertNoteToProse(makeReferenceCardProps(blankReference('https://x', '2026-07-02T00:00:00.000Z')))).toBe(false)
+    // Prose and figure cards have nowhere to go.
+    expect(canConvertNoteToProse(makeProseCardProps('x'))).toBe(false)
+    expect(canConvertNoteToProse(makeFigureCardProps('t', 'd'))).toBe(false)
+  })
+
+  test('conversion flips kind to prose and clears note metadata', () => {
+    const note = makeNoteCardProps('my paragraph', 'tana')
+    const prose = noteToProseProps(note)
+    expect(prose.kind).toBe('prose')
+    expect(prose.noteKind).toBeNull()
+    expect(prose.origin).toBeNull()
+    expect(isProseCard(prose)).toBe(true)
+    expect(isNoteCard(prose)).toBe(false)
+  })
+
+  test('conversion preserves the text, comments, and size', () => {
+    const comments: Comment[] = [
+      {
+        id: 'c1', type: 'needs-citation', text: 'source?', resolved: false, author: 'claude',
+        reviewId: null,
+        summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+      },
+    ]
+    const note = { ...makeNoteCardProps('written by an agent', 'transcribed', 'claude'), comments, w: 512, h: 240 }
+    const prose = noteToProseProps(note)
+    expect(prose.text).toBe('written by an agent')
+    expect(prose.comments).toBe(comments)
+    expect(prose.w).toBe(512)
+    expect(prose.h).toBe(240)
+  })
+
+  test('conversion claims the card as the user’s own: prose is always human-authored', () => {
+    // Prose can never be an agent's, so promoting an agent-drafted note makes it
+    // the user's — authorship clears and every character reattributes to the user.
+    const note = makeNoteCardProps('drafted by claude', 'transcribed', 'claude')
+    const prose = noteToProseProps(note)
+    expect(prose.authoredBy).toBeNull()
+    expect(prose.attribution).toEqual([{ author: 'user', length: 'drafted by claude'.length }])
+  })
+
+  test('after conversion the prose boundary protects the text from agent edits', () => {
+    // The whole point: a converted note now compiles into the draft AND becomes
+    // off-limits to agent text edits, exactly like a born-prose card.
+    const prose = noteToProseProps(makeNoteCardProps('now part of the draft'))
+    expect(claudeMayEditCardText(prose.kind)).toBe(false)
+  })
+})
+
+describe('convert prose → note (the inverse)', () => {
+  test('any prose card can be demoted; notes and figures cannot', () => {
+    expect(canConvertProseToNote(makeProseCardProps('x'))).toBe(true)
+    expect(canConvertProseToNote(makeNoteCardProps('x'))).toBe(false)
+    expect(canConvertProseToNote(makeFigureCardProps('t', 'd'))).toBe(false)
+  })
+
+  test('demotion flips kind to a text note with born-note metadata', () => {
+    const note = proseToNoteProps(makeProseCardProps('back to working material'))
+    expect(note.kind).toBe('note')
+    expect(note.noteKind).toBe('text')
+    expect(note.origin).toBe('typed')
+    expect(isNoteCard(note)).toBe(true)
+    // A demoted note is working material an agent may edit again.
+    expect(claudeMayEditCardText(note.kind)).toBe(true)
+  })
+
+  test('round-trip note → prose → note preserves the text', () => {
+    const original = makeNoteCardProps('a thought', 'tana')
+    const back = proseToNoteProps(noteToProseProps(original))
+    expect(back.kind).toBe('note')
+    expect(back.text).toBe('a thought')
+    // Authorship stayed the user's through the round-trip (prose is always human).
+    expect(back.authoredBy).toBeNull()
   })
 })
 

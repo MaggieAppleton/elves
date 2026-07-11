@@ -6,34 +6,65 @@
      (green) is used sparingly — selection, primary state, meaningful status.
      ========================================================================= */
 
-  /* ---- Neutral layer cake (warm paper) ---- */
-  --elves-bg:            oklch(0.9718 0.0066 106.5);  /* canvas — soft warm off-white (≈ #F6F6F1) */
-  --elves-surface:       oklch(0.992 0.008 90);   /* primary/elevated card + panel face */
-  --elves-surface-muted: oklch(0.942 0.008 106.5); /* note cards — bg hue/chroma, a touch darker */
-  --elves-tertiary:      oklch(0.922 0.014 84);   /* hover / pressed / selected fill */
+  /* =========================================================================
+     NEUTRAL RAMP — one canonical ladder, lightest → darkest.
 
-  /* ---- Text ---- */
-  --elves-ink:       oklch(0.28 0.018 68);        /* primary — warm near-black */
-  --elves-ink-soft:  oklch(0.48 0.018 70);        /* secondary — labels, muted body */
-  --elves-ink-faint: oklch(0.62 0.016 72);        /* tertiary — metadata, hints */
+     A single temperature journey: the light end is a desaturated green-yellow
+     (warm paper with a faint sage cast), rotating smoothly toward warm rust-red
+     at the dark end (near-black ink). Nothing is a pure grey — every rung carries
+     a little warmth — but chroma stays very low (≤0.019) so it reads as neutral,
+     never coloured. The hue (H) DECREASES monotonically as it darkens; chroma (C)
+     rises from ~0 at the white end to a gentle peak through the mid-tones, easing
+     back toward the near-black end. Lightness (L) steps are even and small so
+     adjacent layers separate clearly but subtly.
 
-  /* ---- Borders as translucent ink (sit correctly on any surface) ---- */
-  --elves-border:        oklch(0.28 0.018 68 / 0.10);
-  --elves-border-strong: oklch(0.28 0.018 68 / 0.16);
-  --elves-border-subtle: oklch(0.28 0.018 68 / 0.055);
+     Consume via the semantic aliases below, not these rungs directly.
+     ========================================================================= */
+  --elves-n-0:  oklch(0.988 0.006 122);  /* elevated surface — warm near-white, sage cast */
+  --elves-n-1:  oklch(0.972 0.008 118);  /* canvas */
+  --elves-n-2:  oklch(0.950 0.010 112);  /* recessed surface — note cards, insets */
+  --elves-n-3:  oklch(0.920 0.013 104);  /* hover / pressed / selected fill */
+  --elves-n-4:  oklch(0.875 0.015 94);   /* stronger fill / solid divider */
+  --elves-n-5:  oklch(0.780 0.017 82);   /* heavy hairline / disabled surface */
+  --elves-n-6:  oklch(0.660 0.018 70);   /* faint ink boundary */
+  --elves-n-7:  oklch(0.620 0.018 64);   /* tertiary ink — metadata, hints */
+  --elves-n-8:  oklch(0.480 0.019 56);   /* secondary ink — labels, muted body */
+  --elves-n-9:  oklch(0.370 0.019 50);   /* strong secondary ink */
+  --elves-n-10: oklch(0.280 0.018 44);   /* primary ink — warm rust near-black */
+  --elves-n-11: oklch(0.215 0.017 42);   /* strongest ink — headings, borders/shadow base */
 
-  /* ---- Soft, warm, layered shadows (tactile depth, not drama) ---- */
+  /* ---- Semantic surfaces (the layer cake) ---- */
+  --elves-bg:            var(--elves-n-1);  /* canvas */
+  --elves-surface:       var(--elves-n-0);  /* elevated card + panel face (brighter than canvas) */
+  --elves-surface-muted: var(--elves-n-2);  /* note cards — a touch darker than canvas, recedes */
+  --elves-tertiary:      var(--elves-n-3);  /* hover / pressed / selected fill */
+
+  /* ---- Semantic text ---- */
+  --elves-ink:       var(--elves-n-10);  /* primary — warm near-black */
+  --elves-ink-soft:  var(--elves-n-8);   /* secondary — labels, muted body */
+  --elves-ink-faint: var(--elves-n-7);   /* tertiary — metadata, hints */
+
+  /* ---- Borders as translucent ink (sit correctly on any surface) ----
+     Based on the darkest rung's warm-rust hue so the hairline shares the ink's
+     temperature; alpha does the layering, so one colour reads right everywhere. */
+  --elves-border:        oklch(0.215 0.017 42 / 0.10);
+  --elves-border-strong: oklch(0.215 0.017 42 / 0.16);
+  --elves-border-subtle: oklch(0.215 0.017 42 / 0.055);
+
+  /* ---- Soft, warm, layered shadows (tactile depth, not drama) ----
+     Same warm-rust ink base as the borders, so cast shadows read as the paper's
+     own warmth deepening rather than a neutral-grey drop. */
   --elves-shadow-sm:
-    0 1px 2px oklch(0.28 0.02 68 / 0.06),
-    0 0 0 0.5px oklch(0.28 0.02 68 / 0.045);
+    0 1px 2px oklch(0.215 0.017 42 / 0.06),
+    0 0 0 0.5px oklch(0.215 0.017 42 / 0.045);
   --elves-shadow-md:
-    0 1px 2px oklch(0.28 0.02 68 / 0.05),
-    0 4px 12px oklch(0.28 0.02 68 / 0.07),
-    0 0 0 0.5px oklch(0.28 0.02 68 / 0.05);
+    0 1px 2px oklch(0.215 0.017 42 / 0.05),
+    0 4px 12px oklch(0.215 0.017 42 / 0.07),
+    0 0 0 0.5px oklch(0.215 0.017 42 / 0.05);
   --elves-shadow-lg:
-    0 2px 8px oklch(0.28 0.02 68 / 0.06),
-    0 10px 32px oklch(0.28 0.02 68 / 0.12),
-    0 0 0 0.5px oklch(0.28 0.02 68 / 0.06);
+    0 2px 8px oklch(0.215 0.017 42 / 0.06),
+    0 10px 32px oklch(0.215 0.017 42 / 0.12),
+    0 0 0 0.5px oklch(0.215 0.017 42 / 0.06);
   /* White inset top highlight — gives raised controls a touchable, lit edge */
   --elves-highlight: inset 0 1px 0 oklch(1 0 0 / 0.65);
 
@@ -158,9 +189,9 @@ body {
   --color-panel: var(--elves-surface);
   --color-panel-contrast: var(--elves-surface);
   --color-divider: var(--elves-border-subtle);
-  --color-muted-0: oklch(0.28 0.02 68 / 0.03);
-  --color-muted-1: oklch(0.28 0.02 68 / 0.06);
-  --color-muted-2: oklch(0.28 0.02 68 / 0.10);
+  --color-muted-0: oklch(0.215 0.017 42 / 0.03);
+  --color-muted-1: oklch(0.215 0.017 42 / 0.06);
+  --color-muted-2: oklch(0.215 0.017 42 / 0.10);
   --color-hint: var(--elves-primary-tint-2);
   --color-text:   var(--elves-ink);
   --color-text-0: var(--elves-ink);
@@ -452,10 +483,13 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .elves-tools-toggle,
   .elves-toolbar button { transition: none; }
+  .elves-realtime-status[data-status='disconnected'] { animation: none; }
 }
 
-/* Small, unobtrusive realtime connection indicator — only rendered when not
-   connected, so a healthy connection stays invisible. */
+/* Always-visible backend connection indicator: green when the WebSocket to the
+   server is live (so your changes are persisting), amber while reconnecting, and
+   a pulsing red when the server is down — the "localhost still loads but nothing
+   saves" trap this dot exists to catch. */
 .elves-realtime-status {
   width: 8px;
   height: 8px;
@@ -463,9 +497,20 @@ body {
   flex-shrink: 0;
   background: var(--elves-ink-faint);
 }
+.elves-realtime-status[data-status='connected'] { background: #4a9e5c; }
 .elves-realtime-status[data-status='connecting'] { background: var(--elves-ink-faint); }
 .elves-realtime-status[data-status='reconnecting'] { background: #d9a441; }
-.elves-realtime-status[data-status='disconnected'] { background: #d9534f; }
+.elves-realtime-status[data-status='disconnected'] {
+  background: #d9534f;
+  animation: elves-status-pulse 1.4s ease-in-out infinite;
+}
+
+/* Compositor-only pulse (opacity + scale) so the frame loop never triggers
+   layout or paint. */
+@keyframes elves-status-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(1.35); }
+}
 
 /* ---- Project switcher (top-right) -------------------------------------- */
 .elves-switcher {

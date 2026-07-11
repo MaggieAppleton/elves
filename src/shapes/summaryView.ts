@@ -4,9 +4,9 @@ import type { NoteKind } from '../model/types'
  * At or below this zoom level a card is small enough that its full text is hard
  * to read, so a summarized card shows its gist instead — the shape of the whole
  * piece (section labels + one-line gists) becomes legible at a glance. tldraw
- * zoom is 1 = 100%, so 0.7 means the gist appears once you zoom out past 70%.
+ * zoom is 1 = 100%, so 0.6 means the gist appears once you zoom out past 60%.
  */
-export const GIST_ZOOM = 0.7
+export const GIST_ZOOM = 0.6
 
 /**
  * Whether a card should render its gist rather than its full text right now.
@@ -46,4 +46,17 @@ export const GIST_FONT_MAX = 25
 export function gistFontSize(zoom: number): number {
   const compensated = GIST_ON_SCREEN_PX / Math.max(zoom, 0.01)
   return Math.round(Math.min(compensated, GIST_FONT_MAX))
+}
+
+/**
+ * The gist comment-tag chip's font size, in card-space px. Zoomed out, a
+ * summarized card hides its full comments but keeps a small type chip
+ * ("WEAK-ARGUMENT" etc.) so the marginalia is still legible at a glance. We
+ * derive it straight from the gist size (a fixed ratio) rather than a second
+ * counter-scale curve, so the chip and the gist line stay visually paired at
+ * every zoom and share the gist's already-tuned cap — one source of truth.
+ */
+export const GIST_TAG_RATIO = 0.55
+export function gistTagFontSize(zoom: number): number {
+  return Math.round(gistFontSize(zoom) * GIST_TAG_RATIO)
 }

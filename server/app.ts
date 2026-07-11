@@ -18,6 +18,8 @@ import {
   snapshotToGroupIds,
 } from './digest'
 import { applyChangeSetToSnapshot } from './applyChangeSet'
+import { enrichSelection, type SelectionStore } from './selection'
+import type { AgentRunner, AgentEvent } from './agentRun'
 import { reconcileCanvasFile, type Summarizer } from './summarize'
 import { extForMime, saveAsset, resolveAssetPath } from './assets'
 import { unfurl, type UnfurlDeps, type FetchedImage } from './unfurl'
@@ -125,6 +127,8 @@ export function createServer(
   onChangeSet?: (projectId: string, cs: ChangeSet) => void,
   summarize?: SummarizeConfig,
   onPresence?: (projectId: string, presence: PresenceMessage) => void,
+  selection?: SelectionStore,
+  agent?: AgentRunner,
   onReviews?: (projectId: string, reviews: Review[]) => void,
 ): CanvasServer {
   const app = express()
@@ -357,6 +361,128 @@ export function createServer(
       res.json({ cards: snapshotToCardsById(await readCanvas(paths.canvasPath), ids, paths.assetsDir) })
     }),
   )
+
+  // --- Selection awareness --------------------------------------------------
+  // The browser reports its current canvas selection here (ephemeral, in-memory,
+  // never persisted — see server/selection.ts). A single global slot: the last
+  // report wins, carrying its project id so the agent can resolve "this" without
+  // already knowing which project it's in. Dormant when no SelectionStore is
+  // wired (tests that don't exercise selection), so those suites stay hermetic.
+  app.post(
+    '/projects/:id/selection',
+    wrap(async (req, res) => {
+      const paths = await requireProject(req.params.id, res)
+      if (!paths) return
+      const shapeIds = req.body?.shapeIds
+      if (!Array.isArray(shapeIds) || !shapeIds.every((i) => typeof i === 'string')) {
+        res.status(400).json({ error: 'shapeIds must be a string array' })
+        return
+      }
+      selection?.set(req.params.id, shapeIds, now())
+      res.json({ ok: true })
+    }),
+  )
+
+  // Read the user's current selection — global, no project id required. The
+  // agent calls this when the user says "this" / "these" / "the selected card".
+  // Reported ids are enriched against the project's live canvas map (gists for
+  // cards, text for sections/questions, member counts for groups); ids that no
+  // longer exist are dropped. No selection yet, or the project it referenced is
+  // gone, returns an empty list rather than an error — an absent selection is a
+  // normal state, not a failure.
+  app.get(
+    '/selection',
+    wrap(async (_req, res) => {
+      const current = selection?.get()
+      if (!current) {
+        res.json({ selection: [] })
+        return
+      }
+      const canvasPath = canvasPathFor(dataRoot, current.projectId)
+      if (!canvasPath || !(await getProject(dataRoot, current.projectId))) {
+        res.json({ selection: [] })
+        return
+      }
+      const map = snapshotToCardMap(await readCanvas(canvasPath))
+      res.json({
+        project: current.projectId,
+        selection: enrichSelection(map, current.shapeIds),
+        selectedAt: current.selectedAt,
+      })
+    }),
+  )
+
+  // --- In-app agent runs ----------------------------------------------------
+  // The chat box (`/` on the canvas) posts a prompt here; the server spawns the
+  // configured CLI as a one-shot headless agent (see server/agentRun.ts) and
+  // streams its transcript back as Server-Sent Events. The agent's canvas edits
+  // still flow over the realtime WS as usual — this stream carries only its
+  // reasoning + tool calls. One run at a time. Dormant when no runner is wired
+  // (tests), so those suites stay hermetic.
+  app.post('/agent/run', (req, res) => {
+    if (!agent) {
+      res.status(501).json({ error: 'agent runs are not configured on this server' })
+      return
+    }
+    const prompt = req.body?.prompt
+    const projectId = req.body?.projectId
+    const hasSelection = !!req.body?.hasSelection
+    if (typeof prompt !== 'string' || !prompt.trim()) {
+      res.status(400).json({ error: 'prompt is required' })
+      return
+    }
+    if (typeof projectId !== 'string' || !projectId) {
+      res.status(400).json({ error: 'projectId is required' })
+      return
+    }
+    if (agent.isRunning()) {
+      res.status(409).json({ error: 'an agent is already running' })
+      return
+    }
+    // SSE: keep the socket open and push events as they arrive. `no-transform`
+    // + `X-Accel-Buffering: no` stop any intermediary from buffering the stream.
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    })
+    res.flushHeaders?.()
+    const send = (e: AgentEvent) => {
+      if (res.writable && !res.writableEnded) res.write(`data: ${JSON.stringify(e)}\n\n`)
+    }
+    // If the user closes the box mid-run we stop streaming, but let the agent
+    // finish — its canvas edits are still wanted, and a run is short. The box's
+    // Cancel button (POST /agent/cancel) is how you actually kill it. Detect that
+    // on the RESPONSE, and only when it closes BEFORE we finished writing — the
+    // request object's own 'close' fires the moment its body is read (normal
+    // completion), which is not a disconnect.
+    res.on('close', () => {
+      if (!res.writableFinished) console.warn('[elves] agent run stream closed by client before completion')
+    })
+    agent
+      .run({ prompt, projectId, hasSelection }, send)
+      .catch((err) => {
+        console.error('[elves] agent run failed:', err)
+        send({ type: 'error', message: 'the agent run failed unexpectedly' })
+      })
+      .finally(() => {
+        // Terminator so the client stops reading; a no-op if the socket is gone.
+        if (res.writable && !res.writableEnded) res.write('event: end\ndata: {}\n\n')
+        res.end()
+      })
+  })
+
+  // Kill the currently-running agent (the box's Cancel button). Idempotent: a
+  // no-op when nothing is running.
+  app.post('/agent/cancel', (_req, res) => {
+    if (!agent) {
+      res.status(501).json({ error: 'agent runs are not configured on this server' })
+      return
+    }
+    agent.cancel()
+    res.json({ ok: true })
+  })
 
   app.post(
     '/projects/:id/changeset',

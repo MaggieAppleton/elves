@@ -27,6 +27,15 @@ export type Op =
       summaryBy: string | null
       summaryAt: string | null
     }
+  | {
+      kind: 'set_comment_summary'
+      cardId: string
+      commentId: string
+      summary: string | null
+      summaryOfHash: string | null
+      summaryBy: string | null
+      summaryAt: string | null
+    }
 
 const REF_TYPES: readonly RefType[] = [
   'paper', 'article', 'book', 'software', 'social', 'video', 'wiki', 'link',
@@ -126,6 +135,10 @@ function isOp(v: unknown): v is Op {
       return typeof op.cardId === 'string' &&
         isStringOrNull(op.summary) && isStringOrNull(op.summaryOfHash) &&
         isStringOrNull(op.summaryBy) && isStringOrNull(op.summaryAt)
+    case 'set_comment_summary':
+      return typeof op.cardId === 'string' && typeof op.commentId === 'string' &&
+        isStringOrNull(op.summary) && isStringOrNull(op.summaryOfHash) &&
+        isStringOrNull(op.summaryBy) && isStringOrNull(op.summaryAt)
     default:
       return false
   }
@@ -161,6 +174,11 @@ export function isChangeSet(value: unknown): value is ChangeSet {
  * GIST *about* a card into the card's separate `summary` field. Like a comment
  * or a section label, it is a machine annotation, never the user's prose or the
  * card's own `text` — which it does not touch. Scoped to this one op.
+ *
+ * set_comment_summary is the same exception, one level down: it writes a
+ * model-authored gist *about a comment* into that comment's own `summary`
+ * field, never the comment's `text` (itself already a machine annotation, not
+ * the user's prose). Same safety class as set_summary. Scoped to this one op.
  *
  * group_cards / ungroup_cards are purely structural — they bind cards to travel
  * together (a tldraw group) and never touch any card's `text`. Same safety class
@@ -214,6 +232,7 @@ export function changeSetWritesText(cs: ChangeSet): boolean {
       case 'group_cards':
       case 'ungroup_cards':
       case 'set_summary':
+      case 'set_comment_summary':
         return false
       default:
         return true // unknown op: treat as unsafe
@@ -246,6 +265,7 @@ export function referencedCardIds(cs: ChangeSet): string[] {
     else if (op.kind === 'move_cards') ids.push(...op.moves.map((m) => m.cardId))
     else if (op.kind === 'group_cards') ids.push(...op.cardIds)
     else if (op.kind === 'set_summary') ids.push(op.cardId)
+    else if (op.kind === 'set_comment_summary') ids.push(op.cardId)
     else if (op.kind === 'edit_card') ids.push(op.cardId)
     else if (op.kind === 'delete_card') ids.push(op.cardId)
   }

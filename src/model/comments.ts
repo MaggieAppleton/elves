@@ -7,7 +7,11 @@ export function makeComment(
   author = 'claude',
   reviewId: string | null = null,
 ): Comment {
-  return { id, type, text, resolved: false, author, reviewId }
+  return {
+    id, type, text, resolved: false, author,
+    reviewId,
+    summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+  }
 }
 
 export function addComment(comments: Comment[], comment: Comment): Comment[] {

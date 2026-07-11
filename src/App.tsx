@@ -29,6 +29,7 @@ import { uploadAsset, setAssetProject } from './client/assets'
 import { applyChangeSet } from './apply/applyChangeSet'
 import type { ChangeSet } from './model/changeset'
 import { connectRealtime, RealtimeStatus } from './client/realtime'
+import { trackSelection } from './client/selection'
 import { markDoing, markLooking, clearPresence } from './client/presence'
 import { shapeRecordsById, diffChangedIds } from './client/resync'
 import { ProjectSwitcher } from './components/ProjectSwitcher'
@@ -36,6 +37,7 @@ import { ReviewPanel } from './components/ReviewPanel'
 import { fetchReviews, summonReview, dismissReview } from './client/reviews'
 import type { Review, PersonalityId } from './model/reviews'
 import { LinkPrompt } from './components/LinkPrompt'
+import { AgentBox } from './components/AgentBox'
 import { DraftPane } from './components/DraftPane'
 import { DraftDrawerControls } from './components/DraftDrawerControls'
 import { type ViewState, moreDraft, lessDraft } from './client/viewMachine'
@@ -114,6 +116,11 @@ export default function App() {
   const [reviews, setReviews] = useState<Review[]>([])
   const [showTools, setShowTools] = useState(false)
   const [linkPromptOpen, setLinkPromptOpen] = useState(false)
+  const [agentBoxOpen, setAgentBoxOpen] = useState(false)
+  // How many shapes are selected right now, kept live so the agent box can show
+  // its scope ("N selected" vs "Whole canvas") and tell the agent whether to
+  // read_selection or read_map.
+  const [selectedCount, setSelectedCount] = useState(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const editorRef = useRef<Editor | null>(null)
   const projectIdRef = useRef<string | null>(null)
@@ -130,13 +137,24 @@ export default function App() {
   // Coalesces steady-state resyncs (see resyncCanvas / scheduleResync below): a
   // fetch already in flight absorbs any broadcasts that arrive while it's
   // pending, rather than racing a second overlapping loadCanvas.
-  const resyncStateRef = useRef<{ inFlight: boolean; pendingGlow: boolean }>({
+  // `deferred` holds a resync that arrived while the user was editing text: a
+  // full loadSnapshot mid-edit resets tldraw's editingShapeId (dropping them to
+  // select mode) and reverts keystrokes newer than the last autosave. The
+  // instance_page_state after-change handler (handleMount) flushes it the moment
+  // editing ends.
+  const resyncStateRef = useRef<{ inFlight: boolean; pendingGlow: boolean; deferred: boolean }>({
     inFlight: false,
     pendingGlow: false,
+    deferred: false,
   })
   // Counts spawns via addCard/addSection so each new card/section cascades
   // away from the last instead of stacking invisibly at the viewport center.
   const spawnCountRef = useRef(0)
+  // Disposes the selection reporter (trackSelection). Held so a project switch
+  // can stop the outgoing editor's reactor before the new one starts, and the
+  // final unmount can too — a reactor left running against a torn-down store
+  // would fire on a disposed editor.
+  const selectionStopRef = useRef<(() => void) | null>(null)
 
   // Three view states — canvas only, split, draft only — plus the split ratio
   // (canvas fraction). tldraw stays MOUNTED in all three; draft-only just
@@ -283,6 +301,10 @@ export default function App() {
     clearPresence()
   }, [currentProjectId])
 
+  // Stop the selection reporter when the app unmounts (handleMount handles the
+  // switch-to-switch handoff; this covers the final teardown).
+  useEffect(() => () => selectionStopRef.current?.(), [])
+
   // Restore this project's saved view + split ratio when it opens.
   useEffect(() => {
     if (!currentProjectId) return
@@ -324,6 +346,34 @@ export default function App() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [view])
+
+  // `/` opens the agent box — but ONLY when you're not typing. A bare key (no
+  // modifier) would otherwise steal every slash you write, so bail out whenever
+  // focus is in a text field or a card is being edited, leaving `/` a literal
+  // slash there. Capture phase so we decide before tldraw sees the key.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return
+      const el = document.activeElement as HTMLElement | null
+      const tag = el?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || el?.isContentEditable) return
+      if (editorRef.current?.getEditingShapeId()) return
+      e.preventDefault()
+      setAgentBoxOpen(true)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [])
+
+  // Keep the agent box's scope in sync with the live canvas selection. Selection
+  // lives on session-scoped records, so we listen there; React bails on an
+  // unchanged count, so the frequent camera changes in that scope are harmless.
+  useEffect(() => {
+    if (!editor) return
+    const update = () => setSelectedCount(editor.getSelectedShapeIds().length)
+    update()
+    return editor.store.listen(update, { scope: 'session' })
+  }, [editor])
 
   // Drag the split divider to set the canvas/draft ratio. Pointer events are
   // captured on window so a fast drag off the handle keeps tracking; transitions
@@ -487,10 +537,27 @@ export default function App() {
   const scheduleResync = (pid: string, glow: boolean) => {
     const state = resyncStateRef.current
     state.pendingGlow = state.pendingGlow || glow
+    // Hold the resync while a text edit is in progress. loadSnapshot replaces the
+    // whole document, which resets editingShapeId (kicking the user out of the
+    // card they're typing in) and reverts any keystrokes newer than the last
+    // 500ms autosave. The common trigger is the user's OWN typing: each save
+    // schedules the server summariser, which ~1.5s later broadcasts a set_summary
+    // change-set back to this very tab. Deferring — not dropping — means the
+    // summary still lands once editing ends (see the flush in handleMount).
+    if (editorRef.current?.getEditingShapeId()) {
+      state.deferred = true
+      return
+    }
     if (state.inFlight) return
     state.inFlight = true
     void (async () => {
       for (;;) {
+        // The user may have entered a card between iterations; hold as above and
+        // let the editing-end flush restart us so we never load over a live edit.
+        if (editorRef.current?.getEditingShapeId()) {
+          state.deferred = true
+          break
+        }
         const glowNow = state.pendingGlow
         state.pendingGlow = false
         const ed = editorRef.current
@@ -529,6 +596,10 @@ export default function App() {
   const handleMount = (ed: Editor) => {
     editorRef.current = ed
     setEditor(ed)
+    // Stop the previous editor's selection reporter before this one starts, so a
+    // project switch never leaves a reactor firing against the torn-down store.
+    selectionStopRef.current?.()
+    selectionStopRef.current = null
     // A fresh mount hasn't loaded its canvas yet — hold off every save path.
     canvasLoadedRef.current = false
     // A click on empty canvas dismisses any open merged-card peek, like a popover.
@@ -551,6 +622,17 @@ export default function App() {
       }
       return next
     })
+    // Flush a resync that was held while the user was editing (scheduleResync).
+    // The instant they leave edit mode it's safe to replace the document, so pull
+    // the server's authoritative snapshot — including any summary broadcast that
+    // arrived and was deferred mid-edit.
+    ed.sideEffects.registerAfterChangeHandler('instance_page_state', (prev, next) => {
+      if (prev.editingShapeId && !next.editingShapeId && resyncStateRef.current.deferred) {
+        resyncStateRef.current.deferred = false
+        const pid = projectIdRef.current
+        if (pid) scheduleResync(pid, false)
+      }
+    })
     const pid = projectIdRef.current
     if (!pid) return
     loadCanvas(pid)
@@ -564,6 +646,10 @@ export default function App() {
         const saver = createSaver(() => saveCanvas(pid, getSnapshot(ed.store)))
         const save = debounce(saver.request, 500)
         ed.store.listen(save, { source: 'user', scope: 'document' })
+        // Report this editor's selection to the server so the agent can resolve
+        // "this"/"these" (MCP read_selection). Tagged with the live project id so
+        // it's correct across switches; disposed on the next mount / unmount.
+        selectionStopRef.current = trackSelection(ed, { getProjectId: () => projectIdRef.current })
         ed.registerExternalContentHandler('files', async ({ files, point }) => {
           for (const file of files) {
             if (file.type.startsWith('image/')) await addImageCard(ed, file, point)
@@ -742,6 +828,12 @@ export default function App() {
         onCancel={() => setLinkPromptOpen(false)}
         onSubmit={submitLink}
       />
+      <AgentBox
+        open={agentBoxOpen}
+        projectId={currentProjectId}
+        selectedCount={selectedCount}
+        onClose={() => setAgentBoxOpen(false)}
+      />
       {/* Canvas-editing chrome is only meaningful when the canvas is visible. */}
       {view !== 'draft' && (
         <button
@@ -764,19 +856,19 @@ export default function App() {
         </button>
       )}
       <div className="elves-topbar">
-        {realtimeStatus !== 'connected' && (
-          <div
-            className="elves-realtime-status"
-            data-status={realtimeStatus}
-            title={
-              realtimeStatus === 'connecting'
+        <div
+          className="elves-realtime-status"
+          data-status={realtimeStatus}
+          title={
+            realtimeStatus === 'connected'
+              ? 'Connected — your changes are saving'
+              : realtimeStatus === 'connecting'
                 ? 'Connecting…'
                 : realtimeStatus === 'reconnecting'
                   ? 'Reconnecting — some agent changes may be delayed'
-                  : 'Disconnected — reconnecting shortly'
-            }
-          />
-        )}
+                  : 'Disconnected — the server is not running, so your changes are NOT being saved'
+          }
+        />
         <ReviewPanel
           projectId={currentProjectId}
           editor={editor}

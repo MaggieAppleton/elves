@@ -9,6 +9,7 @@ import {
 } from '../src/model/cards'
 import { makeSectionProps } from '../src/model/sections'
 import { makeQuestionProps } from '../src/model/questions'
+import { reattribute } from '../src/model/attribution'
 import { resolvePageXY } from './digest'
 
 type StoreRecords = Record<string, any>
@@ -223,7 +224,12 @@ export function applyChangeSetToSnapshot(
         if (!shape || !claudeMayEditCardText(shape.props.kind) || shape.props.noteKind === 'reference') break
         // `text` is the card's body (note body, reference annotation, figure
         // description); `title` is a figure's working title and applies to figures only.
-        if (op.text !== undefined) shape.props.text = op.text
+        // Editing the body credits the changed span to this change-set's author so
+        // the card keeps every contributor's mark, mirroring the client path.
+        if (op.text !== undefined) {
+          shape.props.attribution = reattribute(shape.props.text ?? '', op.text, shape.props.attribution ?? null, cs.author)
+          shape.props.text = op.text
+        }
         if (op.title !== undefined && shape.props.kind === 'figure') shape.props.figureTitle = op.title
         break
       }
@@ -341,6 +347,17 @@ export function applyChangeSetToSnapshot(
           shape.props.summaryOfHash = op.summaryOfHash
           shape.props.summaryBy = op.summaryBy
           shape.props.summaryAt = op.summaryAt
+        }
+        break
+      }
+      case 'set_comment_summary': {
+        const shape = findCardShape(store, op.cardId)
+        const comment = shape?.props.comments?.find((c: any) => c.id === op.commentId)
+        if (comment) {
+          comment.summary = op.summary
+          comment.summaryOfHash = op.summaryOfHash
+          comment.summaryBy = op.summaryBy
+          comment.summaryAt = op.summaryAt
         }
         break
       }

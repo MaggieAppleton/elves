@@ -4,8 +4,18 @@ import type { Project } from '../server/projects'
 import type { Reference } from '../src/model/types'
 import type { ReadDraftBlock } from '../src/model/draft'
 import type { Review, ReviewStatus, PersonalityId } from '../src/model/reviews'
+import type { SelectedShape } from '../server/selection'
 
 export type ProjectSummary = Pick<Project, 'id' | 'name'>
+
+/** The user's current canvas selection. `project`/`selectedAt` are absent when
+ * nothing is selected yet (or the selected project is gone) — `selection` is
+ * then an empty array. */
+export interface SelectionResponse {
+  project?: string
+  selection: SelectedShape[]
+  selectedAt?: string
+}
 
 export async function listProjects(baseUrl: string): Promise<ProjectSummary[]> {
   const res = await fetch(`${baseUrl}/projects`)
@@ -19,6 +29,12 @@ export async function readCardMap(baseUrl: string, projectId: string): Promise<C
   if (res.status === 404) throw new Error(`unknown project '${projectId}' — call list_projects to see valid ids`)
   if (!res.ok) throw new Error(`read_map failed: ${res.status}`)
   return res.json() as Promise<CardMap>
+}
+
+export async function readSelection(baseUrl: string): Promise<SelectionResponse> {
+  const res = await fetch(`${baseUrl}/selection`)
+  if (!res.ok) throw new Error(`read_selection failed: ${res.status}`)
+  return res.json() as Promise<SelectionResponse>
 }
 
 export async function readDraft(baseUrl: string, projectId: string): Promise<ReadDraftBlock[]> {

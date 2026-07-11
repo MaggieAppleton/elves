@@ -58,6 +58,10 @@ test('a full pass — claim, tagged comment, verdict — reports live in the pan
   await expect(page.locator('.elves-card--prose').first()).toBeVisible()
   await expect.poll(async () => (await serverCardIds(request, projectId)).length).toBe(1)
   const [cardId] = await serverCardIds(request, projectId)
+  // Finish the newly-created card's edit session before the simulated agent
+  // writes. Current clients deliberately defer remote snapshot loads while the
+  // user is typing so an agent update cannot discard unsaved keystrokes.
+  await page.keyboard.press('Escape')
 
   // Summon from the panel…
   await page.getByTestId('review-button').click()

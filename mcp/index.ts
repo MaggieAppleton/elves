@@ -6,6 +6,7 @@ import {
   readMapTool,
   readCardsTool,
   readDraftTool,
+  readSelectionTool,
   addCommentTool,
   listReviewsTool,
   startReviewTool,
@@ -50,7 +51,7 @@ const PROJECT = z
 // sticky note, never an essay.
 const INSTRUCTIONS = `You are a collaborator in the margins of someone's writing project — a canvas of cards holding their draft. The user writes the prose; you leave the marginalia: comments, questions, section labels, figure suggestions, reference cards.
 
-The one house rule that governs all of it: be SHORT. Everything you write on the canvas is a margin note, not a paragraph — terse, suggestive, and easy to glance past. A good comment or question is a sentence, occasionally two; a figure description names an idea in a line or two, never a spec. Say the one thing that matters and stop. When in doubt, cut it in half. A wall of text in the margin is worse than silence — the user skims it and loses trust in the rest.
+The one house rule, non-negotiable: ONE SENTENCE. Every comment, question, and figure description is a single sentence — two only if the first truly cannot stand alone, and never more. Reply with only the note itself: no preamble, no "I noticed that...", no throat-clearing — say the one thing that matters and stop. A wall of text in the margin is worse than silence — the user skims it and loses trust in the rest.
 
 Be sparing as well as brief: a few pointed notes beat a dozen, and one precise question beats five vague ones. You annotate and suggest; you never write the user's prose for them.
 
@@ -94,8 +95,17 @@ export function createMcpServer(baseUrl: string): McpServer {
   )
 
   server.tool(
+    'read_selection',
+    "Read what the user currently has SELECTED on the canvas. Call this FIRST whenever the user refers to their selection deictically — \"this\", \"these\", \"here\", \"the selected card(s)\", \"what I've got highlighted\" — where the referent is on the canvas, not in the chat. Takes NO arguments: it returns which `project` the selection is in, so you can resolve \"find more about this\" without knowing the project first (then use that id for read_cards, create_reference, etc.). Returns { project, selection, selectedAt }: `selection` is the selected shapes in the order the user picked them — each a card ({ id, type:'card', kind, gist }), a section ({ type:'section', text }), a question ({ type:'question', text }), or a group ({ type:'group', memberCount }). `gist` is a one-line summary (as in read_map); drill into full card text with read_cards. `selectedAt` is when the selection was made (ISO) — if it's old relative to the conversation, the user may have moved on, so confirm rather than assume. An empty `selection` (and absent `project`) means nothing is selected right now — ask the user what they mean rather than guessing.",
+    {},
+    async () => ({
+      content: [{ type: 'text', text: JSON.stringify(await readSelectionTool(baseUrl)) }],
+    }),
+  )
+
+  server.tool(
     'add_comment',
-    "Attach a comment to a card in a project. Use a typed comment to flag a weakness in the user's PROSE (needs-evidence, weak-argument, needs-citation), or `wants-figure` to point out a passage that would carry more as a visual (a spatial relationship described in words, a process/sequence, a comparison across several dimensions — anything the prose is straining to say linearly). Omit type for a freeform note. Keep it SHORT — a margin note, one sentence or two at most, saying the single thing that matters; not a paragraph of feedback. You never write or edit card text — only comments. (To drop an actual figure placeholder on the canvas, use create_figure_card.)",
+    "Attach a comment to a card in a project. Use a typed comment to flag a weakness in the user's PROSE (needs-evidence, weak-argument, needs-citation, counterpoint, tighten, unclear, structure), or `wants-figure` to point out a passage that would carry more as a visual. Omit type for a freeform note. ONE sentence — two only if truly necessary, never more. Reply with only the note itself: no preamble, no hedging. Pass reviewId during a review pass so the panel can group its notes. You never write or edit card text — only comments. (To drop an actual figure placeholder on the canvas, use create_figure_card.)",
     {
       project: PROJECT,
       cardId: z.string(),
@@ -224,7 +234,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'create_figure_card',
-    "Drop a FIGURE CARD — a placeholder for a planned visual (illustration, diagram, interactive animation) — at its narrative position among the prose and notes. `title` is a short working title; `description` says, in a sentence or two, what the visual shows and the one contrast or structure that matters. Keep it SHORT and suggestive, not a spec — name the idea, don't storyboard it (avoid 'draw X on the left, label Y, then Z'); the user designs the actual figure, so over-prescribing just gets deleted. Suggest one where the prose would carry more as a picture: a spatial relationship described in words, a process or sequence, a comparison across more than two dimensions, or anything the text is straining to say linearly. It lands at status `idea` and renders with your authorship mark — your suggestion, the user's call to refine, keep, or delete (they own the actual illustration; you only plan it, never generate it). x is narrative order like other cards; place it beside the prose it would illustrate. First check read_map: if a figure is already planned there, don't add a duplicate. This writes a placeholder plan, never the user's prose.",
+    "Drop a FIGURE CARD — a placeholder for a planned visual (illustration, diagram, interactive animation) — at its narrative position among the prose and notes. `title` is a short working title; `description` names the idea in ONE sentence — two at most, never more: what the visual shows and the one contrast or structure that matters. No preamble, no spec — name the idea, don't storyboard it (avoid 'draw X on the left, label Y, then Z'); the user designs the actual figure, so over-prescribing just gets deleted. Suggest one where the prose would carry more as a picture: a spatial relationship described in words, a process or sequence, a comparison across more than two dimensions, or anything the text is straining to say linearly. It lands at status `idea` and renders with your authorship mark — your suggestion, the user's call to refine, keep, or delete (they own the actual illustration; you only plan it, never generate it). x is narrative order like other cards; place it beside the prose it would illustrate. First check read_map: if a figure is already planned there, don't add a duplicate. This writes a placeholder plan, never the user's prose.",
     { project: PROJECT, title: z.string(), description: z.string(), x: z.number(), y: z.number() },
     async ({ project, title, description, x, y }) => {
       await createFigureCardTool(baseUrl, project, { title, description, x, y })
@@ -274,7 +284,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'create_question',
-    "Drop a QUESTION card near a cluster — a short, pointed question the way a good editor asks (\"What did the room smell like?\", \"You assert X in three places but never argue it — which card is the argument?\"). It provokes what the user hasn't written yet; they answer by writing their OWN cards beside it, then dismiss it. A question card holds ONLY a question, never draft prose — that's the point, and it keeps you inside the \"only the user writes the final prose\" rule. It renders in your accent with your authorship mark. Guidance: FEW and SPECIFIC — at most ~5 per pass; anchored in what the cards actually say, not generic writing advice; concrete beats abstract. Check existing questions in read_map FIRST (open AND dismissed) — a dismissed question is one the user already answered or waved off, so don't re-ask it. x is narrative order like cards; place it beside the cluster it interrogates.",
+    "Drop a QUESTION card near a cluster — a short, pointed question the way a good editor asks (\"What did the room smell like?\", \"You assert X in three places but never argue it — which card is the argument?\"). It provokes what the user hasn't written yet; they answer by writing their OWN cards beside it, then dismiss it. A question card holds ONLY a question, never draft prose — that's the point, and it keeps you inside the \"only the user writes the final prose\" rule. It renders in your accent with your authorship mark. Guidance: ONE sentence per question, no preamble — just ask it, never more than one. FEW and SPECIFIC — at most ~5 per pass; anchored in what the cards actually say, not generic writing advice; concrete beats abstract. Check existing questions in read_map FIRST (open AND dismissed) — a dismissed question is one the user already answered or waved off, so don't re-ask it. x is narrative order like cards; place it beside the cluster it interrogates.",
     { project: PROJECT, text: z.string(), x: z.number(), y: z.number() },
     async ({ project, text, x, y }) => {
       await createQuestionTool(baseUrl, project, { text, x, y })

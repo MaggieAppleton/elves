@@ -46,26 +46,6 @@ test('a prose card shows up live in the draft pane in split view', async ({ page
   await expect(para).toHaveText('the opening point')
 })
 
-test('excluding a prose card drops it from the draft and marks it on the canvas', async ({ page }) => {
-  await page.goto('/')
-  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
-
-  const card = await addProse(page, 'an aside, not the piece')
-  await page.getByTestId('draft-open').click()
-  await expect(page.getByTestId('draft-para')).toHaveText('an aside, not the piece')
-
-  // Select the card so its draft-exclude toggle appears, then exclude it.
-  const box = await card.boundingBox()
-  if (!box) throw new Error('card gone')
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
-  await page.getByTestId('draft-exclude-toggle').click()
-
-  // Gone from the draft; marked as excluded on the canvas.
-  await expect(page.getByTestId('draft-para')).toHaveCount(0)
-  await expect(page.locator('.elves-card--excluded')).toBeVisible()
-  await expect(page.getByTestId('draft-exclude-toggle')).toHaveAttribute('data-excluded', 'true')
-})
-
 test('clicking a draft paragraph in draft-only view opens split (draft → canvas nav)', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
@@ -78,6 +58,29 @@ test('clicking a draft paragraph in draft-only view opens split (draft → canva
   await page.getByTestId('draft-para').click()
   // Navigation drops draft-only into split so the canvas is visible again.
   await expect(page.locator('.elves-stage')).toHaveAttribute('data-view', 'split')
+})
+
+test('editing a paragraph in the draft rewrites the prose card on the canvas', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  const card = await addProse(page, 'first draft text')
+  await page.getByTestId('draft-open').click() // canvas → split
+
+  // Click the paragraph to open the inline editor.
+  await page.getByTestId('draft-para').click()
+  const editor = page.getByTestId('draft-editor')
+  await expect(editor).toBeVisible()
+
+  await editor.fill('rewritten from the linear view')
+
+  // Same source text: the canvas card reflects the edit live.
+  await expect(card.getByTestId('card-text')).toHaveText('rewritten from the linear view')
+
+  // Blur commits/exits edit mode; the paragraph shows the new text.
+  await page.mouse.click(50, 50)
+  await expect(page.getByTestId('draft-editor')).toHaveCount(0)
+  await expect(page.getByTestId('draft-para')).toHaveText('rewritten from the linear view')
 })
 
 test('copy as markdown writes the draft to the clipboard', async ({ page }) => {

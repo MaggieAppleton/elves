@@ -4,8 +4,8 @@ import type { CardDigest, CardMap } from '../server/digest'
 import type { ReadDraftBlock } from '../src/model/draft'
 import { minimalReference } from '../server/unfurl'
 import {
-  readCardMap, readCards, readDraft, postChangeSet, unfurlReference, listProjects,
-  listReviews, postReview, postReviewStatus, type ProjectSummary,
+  readCardMap, readCards, readDraft, readSelection, postChangeSet, unfurlReference, listProjects,
+  listReviews, postReview, postReviewStatus, type ProjectSummary, type SelectionResponse,
 } from './elvesClient'
 import {
   PERSONALITIES, composeBrief, type PersonalityId, type Review,
@@ -59,6 +59,10 @@ export function readCardsTool(
 
 export function readDraftTool(baseUrl: string, projectId: string): Promise<ReadDraftBlock[]> {
   return readDraft(baseUrl, projectId)
+}
+
+export function readSelectionTool(baseUrl: string): Promise<SelectionResponse> {
+  return readSelection(baseUrl)
 }
 
 export function addCommentTool(

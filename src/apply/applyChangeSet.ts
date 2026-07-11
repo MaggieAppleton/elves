@@ -5,6 +5,7 @@ import { SectionShape } from '../shapes/SectionShapeUtil'
 import { QuestionShape } from '../shapes/QuestionShapeUtil'
 import { makeComment, addComment } from '../model/comments'
 import { makeNoteCardProps, makeReferenceCardProps, makeFigureCardProps, claudeMayEditCardText } from '../model/cards'
+import { reattribute } from '../model/attribution'
 import { makeSectionProps } from '../model/sections'
 import { makeQuestionProps } from '../model/questions'
 
@@ -136,7 +137,7 @@ function applyCreateFigureCard(
   return [id]
 }
 
-function applyEditCard(editor: Editor, op: Extract<Op, { kind: 'edit_card' }>): TLShapeId[] {
+function applyEditCard(editor: Editor, op: Extract<Op, { kind: 'edit_card' }>, author: string): TLShapeId[] {
   const shape = editor.getShape(op.cardId as CardShape['id']) as CardShape | undefined
   // Working material (note / reference / figure) is the agent's to edit; a prose
   // card holds the user's own draft and stays the user's alone.
@@ -146,7 +147,12 @@ function applyEditCard(editor: Editor, op: Extract<Op, { kind: 'edit_card' }>): 
   if (!shape || !claudeMayEditCardText(shape.props.kind) || shape.props.noteKind === 'reference') return []
   const props: Partial<CardShape['props']> = {}
   // `text` is the card body; `title` is a figure's working title (figures only).
-  if (op.text !== undefined) props.text = op.text
+  // When the body changes, credit the edited span to this change-set's author so
+  // the card keeps every contributor's mark, not just the last writer.
+  if (op.text !== undefined) {
+    props.text = op.text
+    props.attribution = reattribute(shape.props.text, op.text, shape.props.attribution, author)
+  }
   if (op.title !== undefined && shape.props.kind === 'figure') props.figureTitle = op.title
   editor.updateShape<CardShape>({ id: shape.id, type: 'card', props })
   return [shape.id]
@@ -255,6 +261,27 @@ function applySetSummary(editor: Editor, op: Extract<Op, { kind: 'set_summary' }
   return [shape.id]
 }
 
+function applySetCommentSummary(
+  editor: Editor,
+  op: Extract<Op, { kind: 'set_comment_summary' }>,
+): TLShapeId[] {
+  const shape = editor.getShape(op.cardId as CardShape['id']) as CardShape | undefined
+  if (!shape) return []
+  const comments = shape.props.comments.map((c) =>
+    c.id === op.commentId
+      ? {
+          ...c,
+          summary: op.summary,
+          summaryOfHash: op.summaryOfHash,
+          summaryBy: op.summaryBy,
+          summaryAt: op.summaryAt,
+        }
+      : c,
+  )
+  editor.updateShape<CardShape>({ id: shape.id, type: 'card', props: { comments } })
+  return [shape.id]
+}
+
 function applyOp(editor: Editor, op: Op, author: string): TLShapeId[] {
   switch (op.kind) {
     case 'add_comment':
@@ -270,7 +297,7 @@ function applyOp(editor: Editor, op: Op, author: string): TLShapeId[] {
     case 'create_figure_card':
       return applyCreateFigureCard(editor, op, author)
     case 'edit_card':
-      return applyEditCard(editor, op)
+      return applyEditCard(editor, op, author)
     case 'delete_card':
       return applyDeleteCard(editor, op)
     case 'create_section':
@@ -287,6 +314,8 @@ function applyOp(editor: Editor, op: Op, author: string): TLShapeId[] {
       return applyUngroupCards(editor, op)
     case 'set_summary':
       return applySetSummary(editor, op)
+    case 'set_comment_summary':
+      return applySetCommentSummary(editor, op)
   }
 }
 

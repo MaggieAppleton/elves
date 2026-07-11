@@ -18,12 +18,21 @@ import { SECTION_PLACEHOLDER } from '../model/sections'
 const FONT_FAMILY = "'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif"
 
 // --- Cards ---------------------------------------------------------------
-// card.css: font 15px / line-height 1.45; padding 12px (top/bottom) 14px (l/r).
+// card.css: font 15px / line-height 1.45; padding 12px (top/bottom) 14px (l/r);
+// 1px border. The card is box-sizing:border-box, so the border eats into the
+// declared w/h — the text column is (w − border − padding) wide, not (w − padding).
+// Getting this 2px too generous lets a line "fit" the measurement that actually
+// wraps on screen, adding a whole extra line and clipping the card. So every inset
+// below counts the 1px border on each side alongside the padding.
 // A note card also carries a "NOTE" badge row (badge + 6px flex gap) above
 // the text; prose cards don't.
-const CARD_PAD_X = 28 // 14 left + 14 right
-const CARD_PAD_Y = 24 // 12 top + 12 bottom
-const CARD_BADGE_ROW = 20 // NOTE/PROSE badge line + gap (labelled cards)
+const CARD_PAD_X = 30 // 1 border + 14 pad, each side
+const CARD_PAD_Y = 26 // 1 border + 12 pad, top and bottom
+// NOTE/PROSE badge line + its 6px flex gap. Sized for the tallest state: when the
+// card is selected the row also holds the convert-to-prose icon button (~19px, less
+// the row's -4px margin, + 6px gap ≈ 21), and autosize doesn't re-measure on
+// selection — so the reserve must already cover it or the last line clips on select.
+const CARD_BADGE_ROW = 22
 
 export function measuredCardHeight(
   editor: Editor,
@@ -49,6 +58,76 @@ export function measuredCardHeight(
 // The blank writing area a prose card holds even when empty — roughly three
 // lines, so a fresh draft card lands taller than a note and invites typing.
 export const PROSE_TEXT_MIN = 66
+
+// --- Gist fit ------------------------------------------------------------
+// Zoomed out, the gist renders at a font counter-scaled UP against the zoom
+// (up to GIST_FONT_MAX, in summaryView.ts), but the card's box was measured to
+// hold the FULL text at 15px. When the enlarged gist wraps taller than that box
+// it used to spill out and overlap the card below. Instead we treat the zoom's
+// size as a ceiling and shrink it until the whole summary fits the box, so the
+// gist is always fully visible and never overflows. The gist is a summary —
+// shorter than the full text the box already holds — so the fitted size almost
+// always lands between 15px and the cap; the floor is only reached by a
+// pathological summary longer than the card's own text, which then clips
+// (the card's overflow:hidden) rather than shrinking to nothing.
+const GIST_LINE_HEIGHT = 1.25 // matches card.css .elves-card__text--gist
+const GIST_FONT_MIN = 13 // stay readable; below this we clip instead of shrinking
+
+// Memoize by the inputs that determine the fit — a zoom gesture re-renders every
+// gist card many times, but (gist, w, h, cap) rarely changes between frames
+// (the cap is pinned at GIST_FONT_MAX across most of the gist zoom range), so
+// this turns ~4 DOM measures per card per frame into one lookup.
+const gistFitCache = new Map<string, number>()
+
+export function fittedGistFontSize(
+  editor: Editor,
+  gist: string,
+  width: number,
+  height: number,
+  maxFontSize: number,
+): number {
+  const key = `${gist}|${width}|${height}|${maxFontSize}`
+  const cached = gistFitCache.get(key)
+  if (cached !== undefined) return cached
+
+  const maxWidth = Math.max(40, width - CARD_PAD_X)
+  const availH = height - CARD_PAD_Y
+  const fits = (fontSize: number) =>
+    editor.textMeasure.measureText(gist || ' ', {
+      fontFamily: FONT_FAMILY,
+      fontSize,
+      lineHeight: GIST_LINE_HEIGHT,
+      fontWeight: '500',
+      fontStyle: 'normal',
+      maxWidth,
+      padding: '0px',
+    }).h <= availH
+
+  let result = maxFontSize
+  if (!fits(maxFontSize)) {
+    // Largest integer size in [GIST_FONT_MIN, maxFontSize] whose wrapped height
+    // fits; if even the floor overflows, the card's overflow:hidden clips it.
+    let lo = GIST_FONT_MIN
+    let hi = maxFontSize
+    let best = GIST_FONT_MIN
+    while (lo <= hi) {
+      const mid = Math.floor((lo + hi) / 2)
+      if (fits(mid)) {
+        best = mid
+        lo = mid + 1
+      } else {
+        hi = mid - 1
+      }
+    }
+    result = best
+  }
+
+  // Cap the cache so a long session of edits can't grow it unbounded; the working
+  // set (visible gist cards at the current zoom) is small, so a simple clear is fine.
+  if (gistFitCache.size > 500) gistFitCache.clear()
+  gistFitCache.set(key, result)
+  return result
+}
 
 // --- Reference cards -----------------------------------------------------
 // card.css .elves-card--reference: padding 13px; a title (15px/600, 1.3,
@@ -190,12 +269,14 @@ export function measuredSectionSize(
 }
 
 // --- Question cards ------------------------------------------------------
-// question.css: font 14px / line-height 1.4; padding 12px; a header row (the "?"
-// glyph + agent mark, ~18px + 6px gap) sits above the text. Width is fixed (a
-// small sticky note), so only height follows the text.
-const QUESTION_PAD_X = 24 // 12 left + 12 right
-const QUESTION_PAD_Y = 24 // 12 top + 12 bottom
-const QUESTION_HEADER_ROW = 24 // "?" + agent mark row + its gap
+// question.css: font 14px / line-height 1.4; padding 12px; 1px border. Like the
+// cards above it is box-sizing:border-box, so the border eats into the declared
+// w/h — count it in both insets or the text column measures too wide and wraps to
+// an extra clipped line. A fixed-height header row (the "?" glyph + agent mark,
+// 18px + 6px gap) sits above the text; only height follows the text.
+const QUESTION_PAD_X = 26 // 1 border + 12 pad, each side
+const QUESTION_PAD_Y = 26 // 1 border + 12 pad, top and bottom
+const QUESTION_HEADER_ROW = 24 // 18px header + 6px gap
 
 export function measuredQuestionHeight(editor: Editor, text: string, width: number): number {
   const { h } = editor.textMeasure.measureText(text || ' ', {

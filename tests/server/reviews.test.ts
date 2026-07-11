@@ -205,7 +205,7 @@ test('countReviewComments returns 0 for a null/empty snapshot', () => {
 
 async function appWithTmp(onReviews?: (projectId: string, reviews: unknown[]) => void) {
   const d = await tmpRoot()
-  const app = createServer(d, undefined, undefined, undefined, onReviews as any)
+  const app = createServer(d, undefined, undefined, undefined, undefined, undefined, onReviews as any)
   await request(app).post('/projects').send({ name: 'Essay' }) // id: essay
   return { app, dataRoot: d }
 }

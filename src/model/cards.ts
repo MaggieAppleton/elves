@@ -1,8 +1,16 @@
 import {
-  CardKind, CardProps, Origin, Reference, CARD_DEFAULT_W, CARD_DEFAULT_H,
+  CardKind, NoteKind, CardProps, Origin, Reference, CARD_DEFAULT_W, CARD_DEFAULT_H,
   REFERENCE_DEFAULT_W, REFERENCE_DEFAULT_H, FIGURE_DEFAULT_W, FIGURE_DEFAULT_H,
   AGENT_CARD_DEFAULT_W,
 } from './types'
+import { Attribution, USER_AUTHOR } from './attribution'
+
+// A card is born with one authorship run covering its whole text — the human
+// (null → 'user') or the agent that created it. Empty text carries an empty
+// attribution (no characters to attribute). Edits maintain this via reattribute.
+function seedAttribution(text: string, authoredBy: string | null): Attribution {
+  return text ? [{ author: authoredBy ?? USER_AUTHOR, length: text.length }] : []
+}
 
 export { CARD_DEFAULT_W, CARD_DEFAULT_H, FIGURE_DEFAULT_W, FIGURE_DEFAULT_H, AGENT_CARD_DEFAULT_W }
 
@@ -19,6 +27,7 @@ export function makeProseCardProps(text = ''): CardProps {
   return {
     w: CARD_DEFAULT_W, h: CARD_DEFAULT_H,
     kind: 'prose', noteKind: null, origin: null, text, authoredBy: null,
+    attribution: seedAttribution(text, null),
     comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference: null, ...NO_FIGURE, ...NO_SUMMARY,
   }
 }
@@ -30,6 +39,7 @@ export function makeNoteCardProps(text = '', origin: Origin = 'typed', authoredB
     // Agent-added cards arrive wide (see AGENT_CARD_DEFAULT_W); hand-made ones stay small.
     w: authoredBy ? AGENT_CARD_DEFAULT_W : CARD_DEFAULT_W, h: CARD_DEFAULT_H,
     kind: 'note', noteKind: 'text', origin, text, authoredBy,
+    attribution: seedAttribution(text, authoredBy),
     comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference: null, ...NO_FIGURE, ...NO_SUMMARY,
   }
 }
@@ -38,6 +48,7 @@ export function makeImageNoteCardProps(assetId: string): CardProps {
   return {
     w: 280, h: 200,
     kind: 'note', noteKind: 'image', origin: 'image', text: '', authoredBy: null,
+    attribution: [],
     comments: [], mergedInto: null, draftExcluded: false, assetId, reference: null, ...NO_FIGURE, ...NO_SUMMARY,
   }
 }
@@ -51,6 +62,7 @@ export function makeReferenceCardProps(reference: Reference): CardProps {
   return {
     w: REFERENCE_DEFAULT_W, h: REFERENCE_DEFAULT_H,
     kind: 'note', noteKind: 'reference', origin: 'reference', text: '', authoredBy: null,
+    attribution: [],
     comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference, ...NO_FIGURE, ...NO_SUMMARY,
   }
 }
@@ -72,9 +84,61 @@ export function makeFigureCardProps(
     // Agent-suggested figures arrive wide (see AGENT_CARD_DEFAULT_W); hand-made ones stay small.
     w: authoredBy ? AGENT_CARD_DEFAULT_W : FIGURE_DEFAULT_W, h: FIGURE_DEFAULT_H,
     kind: 'figure', noteKind: null, origin: null, text: description, authoredBy,
+    attribution: seedAttribution(description, authoredBy),
     comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference: null,
     figureTitle: title, figureStatus: 'idea', ...NO_SUMMARY,
   }
+}
+
+/**
+ * Can this card be converted into a prose card? Only a TEXT note — its `text` is
+ * the user's own words waiting to become part of the draft. Image and reference
+ * notes hold an annotation / structured data, not prose, and a card already prose
+ * has nowhere to go. See noteToProseProps for the transform itself.
+ */
+export function canConvertNoteToProse(p: { kind: CardKind; noteKind: NoteKind | null }): boolean {
+  return p.kind === 'note' && p.noteKind === 'text'
+}
+
+/**
+ * Promote a text note into a prose card: it becomes part of the linear draft and
+ * falls under the prose-is-protected boundary (claudeMayEditCardText). The note's
+ * own metadata (noteKind, origin) is cleared to match a born-prose card, and the
+ * card is claimed as the user's OWN: prose is always human-authored (an agent can
+ * never write prose), so authorship resets to the user and the whole text is
+ * reattributed to them — any agent draft the note carried is now the user's words.
+ * The text itself, its comments, and size carry over untouched. Pure: callers
+ * persist the result themselves.
+ */
+export function noteToProseProps(p: CardProps): CardProps {
+  return {
+    ...p,
+    kind: 'prose',
+    noteKind: null,
+    origin: null,
+    authoredBy: null,
+    attribution: seedAttribution(p.text, null),
+  }
+}
+
+/**
+ * Can this card be converted back into a note? Any prose card — the inverse of
+ * canConvertNoteToProse, letting the user demote a card out of the draft when it
+ * was promoted (or born) as prose but belongs as working material again.
+ */
+export function canConvertProseToNote(p: { kind: CardKind }): boolean {
+  return p.kind === 'prose'
+}
+
+/**
+ * Demote a prose card back into a text note: it leaves the linear draft and
+ * becomes working material an agent may edit again. It gets a born-note's
+ * metadata (noteKind 'text', origin 'typed'). Prose was human-authored, so the
+ * note stays the user's — authorship and attribution carry over unchanged. Pure:
+ * callers persist the result themselves.
+ */
+export function proseToNoteProps(p: CardProps): CardProps {
+  return { ...p, kind: 'note', noteKind: 'text', origin: 'typed' }
 }
 
 export function isProseCard(p: { kind: CardKind }): boolean {

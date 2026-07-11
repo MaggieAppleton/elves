@@ -45,3 +45,37 @@ export const AGENTS: Record<string, AgentInfo> = {
 export function agentInfo(id: string | null | undefined): AgentInfo | null {
   return id ? AGENTS[id] ?? null : null
 }
+
+/** The sentinel author id the attribution engine uses for human-written text. */
+export const USER_AUTHOR = 'user'
+
+/** A simple person glyph for the human author, drawn in currentColor like the
+ * agent logomarks so it takes an accent tint. Head + shoulders, single fill. */
+export const UserGlyph: FC<SVGProps<SVGSVGElement>> = (props) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" {...props}>
+    <path d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm0 2c-4.42 0-8 2.69-8 6v1a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-1c0-3.31-3.58-6-8-6Z" />
+  </svg>
+)
+
+// The human author, resolved from the attribution sentinel 'user'. A neutral ink
+// tone (not an agent accent — those stay reserved for agents), and a person glyph.
+const USER_INFO: AgentInfo = {
+  id: USER_AUTHOR,
+  name: 'You',
+  accent: 'var(--elves-ink-soft)',
+  Logo: UserGlyph,
+}
+
+/**
+ * Resolve any attribution author id to its display info: the sentinel 'user'
+ * (the human), a registered agent id, or an unknown id (→ null, no mark). This
+ * wraps agentInfo so the stacked-author view can render human and agent marks
+ * uniformly. Where agentInfo returns null for 'user' (it's a card's authoredBy
+ * resolver — null there means human, no agent mark), authorInfo gives the human
+ * a mark of their own.
+ */
+export function authorInfo(id: string | null | undefined): AgentInfo | null {
+  if (!id) return null
+  if (id === USER_AUTHOR) return USER_INFO
+  return agentInfo(id)
+}

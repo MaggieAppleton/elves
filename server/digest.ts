@@ -1,7 +1,7 @@
 import type { CanvasSnapshot } from './store'
 import type { CardKind, NoteKind, Origin, Comment, Reference, RefType, FigureStatus } from '../src/model/types'
 import type { SectionAuthor } from '../src/model/sections'
-import { SummarizableCard, cardGist } from '../src/model/summary'
+import { SummarizableCard, SummarizableComment, cardGist } from '../src/model/summary'
 import {
   compileDraft, toReadDraftBlocks, type DraftCardInput, type DraftSectionInput, type ReadDraftBlock,
 } from '../src/model/draft'
@@ -185,6 +185,27 @@ export function snapshotToSummarizableCards(
     summary: r.props.summary ?? null,
     summaryOfHash: r.props.summaryOfHash ?? null,
   }))
+}
+
+/** Just the fields comment summary reconciliation reasons about, one entry per
+ * comment across every card, keyed by both its card and its own comment id. */
+export function snapshotToSummarizableComments(
+  snapshot: CanvasSnapshot,
+): Array<SummarizableComment & { cardId: string; commentId: string }> {
+  const out: Array<SummarizableComment & { cardId: string; commentId: string }> = []
+  for (const r of cardShapes(snapshot)) {
+    const comments = (r.props.comments ?? []) as Comment[]
+    for (const c of comments) {
+      out.push({
+        cardId: r.id,
+        commentId: c.id,
+        text: c.text ?? '',
+        summary: c.summary ?? null,
+        summaryOfHash: c.summaryOfHash ?? null,
+      })
+    }
+  }
+  return out
 }
 
 /** The cheap navigation map — sections/groups plus a small entry per card, no full text. */

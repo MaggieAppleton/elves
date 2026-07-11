@@ -24,15 +24,15 @@ test('an MCP add_comment tool call lands as a comment in the open app', async ({
   await expect(pin).toContainText('MCP says: no source')
 })
 
-test('a note card Claude creates via the MCP shows its authorship mark beside the NOTE label', async ({ page }) => {
+test('a note card Claude creates via the MCP shows its authorship mark in the top-right corner', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
 
   // Claude authors a note through the MCP (default agent id 'claude').
   await createNoteCardTool(BASE, projectId, { text: 'a note Claude wrote', x: 120, y: 120 })
 
-  // It renders as a note card carrying Claude's authorship mark, tucked in the
-  // top-left row right next to the NOTE label.
+  // It renders as a note card carrying Claude's authorship mark, tucked into the
+  // top-right corner opposite the NOTE label.
   const card = page.locator('.elves-card--note', { hasText: 'a note Claude wrote' })
   await expect(card).toBeVisible()
   const mark = card.getByTestId('card-agent-mark')
