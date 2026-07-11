@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { PaperPlaneRight, X } from '@phosphor-icons/react'
+import { Broom, PaperPlaneRight, X } from '@phosphor-icons/react'
 import { agentInfo } from '../shapes/agents'
 import { runAgent, type AgentEvent, type AgentRunHandle } from '../client/agent'
 import './agentBox.css'
@@ -106,6 +106,16 @@ export function AgentBox({ open, projectId, selectedCount, onClose }: Props) {
     setRunning(false)
   }
 
+  // Close and forget: cancel any in-flight run, empty the transcript and
+  // input, then close — unlike plain close, which preserves the chat.
+  const closeAndClear = () => {
+    handleRef.current?.cancel()
+    setRunning(false)
+    setEntries([])
+    setPrompt('')
+    onClose()
+  }
+
   if (!open) return null
 
   const hasTranscript = entries.length > 0 || running
@@ -125,9 +135,20 @@ export function AgentBox({ open, projectId, selectedCount, onClose }: Props) {
         >
           {scopeLabel}
         </span>
-        <button className="elves-agentbox__close" onClick={onClose} title="Close (Esc)" aria-label="Close">
-          <X aria-hidden="true" />
-        </button>
+        <div className="elves-agentbox__actions">
+          <button
+            className="elves-agentbox__close"
+            onClick={closeAndClear}
+            title="Clear chat"
+            aria-label="Clear chat and close"
+            data-testid="agent-clear"
+          >
+            <Broom aria-hidden="true" />
+          </button>
+          <button className="elves-agentbox__close" onClick={onClose} title="Close (Esc)" aria-label="Close">
+            <X aria-hidden="true" />
+          </button>
+        </div>
       </div>
 
       {hasTranscript && (
