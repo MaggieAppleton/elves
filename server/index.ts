@@ -11,6 +11,7 @@ import { listProjects, resyncProjectIds } from './projects'
 import { warnOnSyncConflicts } from './conflicts'
 import { OllamaSummarizer } from './summarize'
 import { resolveHost } from './host'
+import { createAgentRunner } from './agentRun'
 import type { CanvasServer } from './app'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -41,7 +42,17 @@ async function main() {
   const summarizer = new OllamaSummarizer()
   const now = () => new Date().toISOString()
   const selection = createSelectionStore()
-  const app = createServer(dataRoot, broadcast, { summarizer, now }, broadcastPresence, selection)
+  // Drives the in-app chat box: spawns the configured CLI (ELVES_CLI, default
+  // `claude`) as a headless agent, from the repo root so its `elves` MCP config
+  // (.mcp.json → mcp/index.ts, relative paths) resolves. The child connects back
+  // to this same canvas server.
+  const repoRoot = join(here, '..')
+  const agent = createAgentRunner({
+    mcpConfigPath: join(repoRoot, '.mcp.json'),
+    cwd: repoRoot,
+    cliName: process.env.ELVES_CLI,
+  })
+  const app = createServer(dataRoot, broadcast, { summarizer, now }, broadcastPresence, selection, agent)
   httpServer.on('request', app)
 
   // Binds loopback-only by default (see server/host.ts) — set ELVES_HOST=0.0.0.0
