@@ -60,3 +60,17 @@ export const GIST_TAG_RATIO = 0.55
 export function gistTagFontSize(zoom: number): number {
   return Math.round(gistFontSize(zoom) * GIST_TAG_RATIO)
 }
+
+/**
+ * Whether a question should render its gist instead of its full text right now.
+ * Unlike a card there is no image/reference kind to exclude — a question is
+ * always summarizable text — so this is simply "zoomed out past GIST_ZOOM and
+ * has something to show".
+ */
+export function shouldShowQuestionGist(
+  zoom: number,
+  q: { summary: string | null; text?: string },
+): boolean {
+  if (zoom >= GIST_ZOOM) return false
+  return !!q.summary || !!q.text?.trim()
+}

@@ -5,8 +5,10 @@ import {
 } from 'tldraw'
 import { useLayoutEffect, type ReactNode } from 'react'
 import { makeQuestionProps } from '../model/questions'
-import { measuredQuestionHeight } from './autosize'
+import { measuredQuestionHeight, fittedGistFontSize } from './autosize'
 import { agentInfo } from './agents'
+import { commentGist } from '../model/summary'
+import { shouldShowQuestionGist, gistFontSize } from './summaryView'
 import './question.css'
 
 export type QuestionShape = TLBaseShape<'question', {
@@ -105,6 +107,12 @@ export class QuestionShapeUtil extends ShapeUtil<QuestionShape> {
     // Unknown ids fall back to the Claude accent so a question is never colourless.
     const agent = agentInfo(authoredBy)
     const accent = agent?.accent ?? 'var(--elves-claude-accent)'
+    // Zoomed far out, a summarized question shows its gist so it reads at a
+    // glance alongside gisted cards. getZoomLevel is reactive, so this
+    // re-renders as the user zooms; the gist font counter-scales with zoom to
+    // stay a readable on-screen size, then is fitted to the box (as cards do).
+    const zoom = this.editor.getZoomLevel()
+    const showGist = shouldShowQuestionGist(zoom, shape.props)
     // The dismiss ✓ is revealed on hover/selection. The shape body is
     // pointer-events:none (so clicks fall through to the canvas for dragging),
     // which means CSS :hover can't fire on it — so drive the reveal from tldraw's
@@ -154,7 +162,26 @@ export class QuestionShapeUtil extends ShapeUtil<QuestionShape> {
                 ✓
               </button>
             </div>
-            <div className="elves-question__text" data-testid="question-text">{text}</div>
+            <div
+              className="elves-question__text"
+              data-testid="question-text"
+              data-gist={showGist ? 'true' : undefined}
+              style={
+                showGist
+                  ? {
+                      fontSize: fittedGistFontSize(
+                        this.editor,
+                        commentGist(shape.props),
+                        shape.props.w,
+                        shape.props.h,
+                        gistFontSize(zoom),
+                      ),
+                    }
+                  : undefined
+              }
+            >
+              {showGist ? commentGist(shape.props) : text}
+            </div>
           </div>
         </HTMLContainer>
       </AutosizeQuestion>

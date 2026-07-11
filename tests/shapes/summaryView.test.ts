@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest'
 import {
-  shouldShowGist, gistFontSize, gistTagFontSize, GIST_ZOOM, GIST_FONT_MAX, GIST_TAG_RATIO,
+  shouldShowGist, shouldShowQuestionGist, gistFontSize, gistTagFontSize,
+  GIST_ZOOM, GIST_FONT_MAX, GIST_TAG_RATIO,
 } from '../../src/shapes/summaryView'
 
 const summarized = { noteKind: null, summary: 'a gist' } as const
@@ -48,4 +49,11 @@ test('gist tag chip is a fixed, smaller ratio of the gist size at every zoom', (
     expect(gistTagFontSize(z)).toBe(Math.round(gistFontSize(z) * GIST_TAG_RATIO))
     expect(gistTagFontSize(z)).toBeLessThan(gistFontSize(z))
   }
+})
+
+test('shouldShowQuestionGist: only below GIST_ZOOM and only with content', () => {
+  expect(shouldShowQuestionGist(1, { summary: 'g', text: 'q?' })).toBe(false) // zoomed in
+  expect(shouldShowQuestionGist(0.5, { summary: 'g', text: 'q?' })).toBe(true) // summary
+  expect(shouldShowQuestionGist(0.5, { summary: null, text: 'q?' })).toBe(true) // falls back to text
+  expect(shouldShowQuestionGist(0.5, { summary: null, text: '   ' })).toBe(false) // empty
 })
