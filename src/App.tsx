@@ -34,6 +34,7 @@ import { markDoing, markLooking, clearPresence } from './client/presence'
 import { shapeRecordsById, diffChangedIds } from './client/resync'
 import { ProjectSwitcher } from './components/ProjectSwitcher'
 import { LinkPrompt } from './components/LinkPrompt'
+import { AgentBox } from './components/AgentBox'
 import { DraftPane } from './components/DraftPane'
 import { DraftDrawerControls } from './components/DraftDrawerControls'
 import { type ViewState, moreDraft, lessDraft } from './client/viewMachine'
@@ -109,6 +110,11 @@ export default function App() {
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>('connecting')
   const [showTools, setShowTools] = useState(false)
   const [linkPromptOpen, setLinkPromptOpen] = useState(false)
+  const [agentBoxOpen, setAgentBoxOpen] = useState(false)
+  // How many shapes are selected right now, kept live so the agent box can show
+  // its scope ("N selected" vs "Whole canvas") and tell the agent whether to
+  // read_selection or read_map.
+  const [selectedCount, setSelectedCount] = useState(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const editorRef = useRef<Editor | null>(null)
   const projectIdRef = useRef<string | null>(null)
@@ -286,6 +292,34 @@ export default function App() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [view])
+
+  // `/` opens the agent box — but ONLY when you're not typing. A bare key (no
+  // modifier) would otherwise steal every slash you write, so bail out whenever
+  // focus is in a text field or a card is being edited, leaving `/` a literal
+  // slash there. Capture phase so we decide before tldraw sees the key.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return
+      const el = document.activeElement as HTMLElement | null
+      const tag = el?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || el?.isContentEditable) return
+      if (editorRef.current?.getEditingShapeId()) return
+      e.preventDefault()
+      setAgentBoxOpen(true)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [])
+
+  // Keep the agent box's scope in sync with the live canvas selection. Selection
+  // lives on session-scoped records, so we listen there; React bails on an
+  // unchanged count, so the frequent camera changes in that scope are harmless.
+  useEffect(() => {
+    if (!editor) return
+    const update = () => setSelectedCount(editor.getSelectedShapeIds().length)
+    update()
+    return editor.store.listen(update, { scope: 'session' })
+  }, [editor])
 
   // Drag the split divider to set the canvas/draft ratio. Pointer events are
   // captured on window so a fast drag off the handle keeps tracking; transitions
@@ -711,6 +745,12 @@ export default function App() {
         open={linkPromptOpen}
         onCancel={() => setLinkPromptOpen(false)}
         onSubmit={submitLink}
+      />
+      <AgentBox
+        open={agentBoxOpen}
+        projectId={currentProjectId}
+        selectedCount={selectedCount}
+        onClose={() => setAgentBoxOpen(false)}
       />
       {/* Canvas-editing chrome is only meaningful when the canvas is visible. */}
       {view !== 'draft' && (
