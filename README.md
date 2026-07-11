@@ -146,6 +146,34 @@ truncation; nothing breaks. Summaries never touch your card text — like sectio
 and comments, they're an agent-authored label *about* a card. Point `OLLAMA_HOST` /
 `OLLAMA_MODEL` at a different endpoint or model if you'd rather not use the defaults.
 
+## Syncing across machines
+
+Elves keeps every project as plain files under a single data root, so syncing to
+another machine is just syncing that folder. This setup keeps the app fully
+local-first (offline, instant load) on each machine — nothing goes to the cloud.
+
+**One-time, per machine:**
+
+1. **Pick a data folder outside the repo** — e.g. `~/Elves`. Move your existing
+   projects into it: `mkdir -p ~/Elves && mv data/projects ~/Elves/`.
+2. **Point the app at it.** Copy `.env.example` to `.env` and set an absolute path:
+   `ELVES_DATA=/Users/<you>/Elves`. (`.env` is per-machine and gitignored; the two
+   machines may use different paths.)
+3. **Install [Syncthing](https://syncthing.net)** and add `~/Elves` as a shared
+   folder, using the **same Folder ID** on both machines, then pair the two
+   devices. Copy `docs/syncthing.stignore` to `~/Elves/.stignore` so Syncthing
+   ignores the server's transient write-temps.
+
+Syncthing then keeps the folder identical between your machines, peer-to-peer and
+encrypted — no third party ever holds your writing.
+
+**The one rule:** work on one machine at a time, and let sync settle (a few
+seconds) before switching. Each project's `canvas.json` is a single file, so
+editing the *same* project on both machines while offline can't auto-merge — but
+Syncthing never loses either version: it parks the loser as a
+`…sync-conflict-…` file. If that ever happens, the server prints a warning at
+startup naming the files so you can review and delete them.
+
 ## Scripts
 
 | Script | What it does |

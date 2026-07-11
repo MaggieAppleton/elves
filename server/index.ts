@@ -1,3 +1,4 @@
+import 'dotenv/config'
 import http from 'node:http'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -7,6 +8,7 @@ import { createSelectionStore } from './selection'
 import { migrateLegacyCanvas } from './migrate'
 import { migrateSourceCardsToNotes } from './migrateNotes'
 import { listProjects, resyncProjectIds } from './projects'
+import { warnOnSyncConflicts } from './conflicts'
 import { OllamaSummarizer } from './summarize'
 import { resolveHost } from './host'
 import type { CanvasServer } from './app'
@@ -31,6 +33,8 @@ async function main() {
   } catch (err) {
     console.error('[elves] project id resync failed:', err)
   }
+  // Surface any Syncthing cross-machine divergence loudly at boot (advisory only).
+  await warnOnSyncConflicts(dataRoot)
 
   const httpServer = http.createServer()
   const { broadcast, broadcastPresence } = attachRealtime(httpServer)
