@@ -1,12 +1,16 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
+import { PERSONALITIES, PERSONALITY_IDS } from '../src/model/reviews'
 import {
   readMapTool,
   readCardsTool,
   readDraftTool,
   readSelectionTool,
   addCommentTool,
+  listReviewsTool,
+  startReviewTool,
+  completeReviewTool,
   mergeNotesTool,
   moveCardsTool,
   createNoteCardTool,
@@ -24,7 +28,11 @@ import {
   setAgentId,
 } from './tools'
 
-const COMMENT_TYPE = z.enum(['needs-evidence', 'weak-argument', 'needs-citation', 'wants-figure'])
+const COMMENT_TYPE = z.enum([
+  'needs-evidence', 'weak-argument', 'needs-citation', 'wants-figure',
+  'counterpoint', 'tighten', 'unclear', 'structure',
+])
+const PERSONALITY = z.enum(PERSONALITY_IDS as [string, ...string[]])
 const REF_TYPE = z.enum(['paper', 'article', 'book', 'software', 'social', 'video', 'wiki', 'link'])
 
 // Every tool that touches a canvas requires this. The agent must know which project
@@ -45,7 +53,9 @@ const INSTRUCTIONS = `You are a collaborator in the margins of someone's writing
 
 The one house rule, non-negotiable: ONE SENTENCE. Every comment, question, and figure description is a single sentence — two only if the first truly cannot stand alone, and never more. Reply with only the note itself: no preamble, no "I noticed that...", no throat-clearing — say the one thing that matters and stop. A wall of text in the margin is worse than silence — the user skims it and loses trust in the rest.
 
-Be sparing as well as brief: a few pointed notes beat a dozen, and one precise question beats five vague ones. You annotate and suggest; you never write the user's prose for them.`
+Be sparing as well as brief: a few pointed notes beat a dozen, and one precise question beats five vague ones. You annotate and suggest; you never write the user's prose for them.
+
+The user can also summon a REVIEW PASS — a bounded, in-character editorial read by one of five personalities (Devil's Advocate, Fact-Checker, Trimmer, First Reader, Architect). When you start work on a canvas, check list_reviews: a pending review is the user's summons waiting for you — claim it with start_review and follow the brief it returns. If the user asks for that kind of read in chat ("play devil's advocate on this"), open the pass with start_review(personality) instead of free-styling, so their review panel shows the pass and groups your notes.`
 
 export function createMcpServer(baseUrl: string): McpServer {
   const server = new McpServer({ name: 'elves', version: '0.1.0' }, { instructions: INSTRUCTIONS })
@@ -95,11 +105,64 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'add_comment',
-    "Attach a comment to a card in a project. Use a typed comment to flag a weakness in the user's PROSE (needs-evidence, weak-argument, needs-citation), or `wants-figure` to point out a passage that would carry more as a visual (a spatial relationship described in words, a process/sequence, a comparison across several dimensions — anything the prose is straining to say linearly). Omit type for a freeform note. ONE sentence — two only if truly necessary, never more. Reply with only the note itself: no preamble, no hedging — say the one thing and stop. GOOD: \"This stat needs a source.\" BAD: \"I wanted to flag that this particular claim, while compelling, doesn't seem to have a citation backing it up, which could weaken the argument for skeptical readers.\" You never write or edit card text — only comments. (To drop an actual figure placeholder on the canvas, use create_figure_card.)",
-    { project: PROJECT, cardId: z.string(), text: z.string(), type: COMMENT_TYPE.nullish() },
-    async ({ project, cardId, text, type }) => {
-      await addCommentTool(baseUrl, project, { cardId, text, type: type ?? null })
+    "Attach a comment to a card in a project. Use a typed comment to flag a weakness in the user's PROSE (needs-evidence, weak-argument, needs-citation, counterpoint, tighten, unclear, structure), or `wants-figure` to point out a passage that would carry more as a visual. Omit type for a freeform note. ONE sentence — two only if truly necessary, never more. Reply with only the note itself: no preamble, no hedging. Pass reviewId during a review pass so the panel can group its notes. You never write or edit card text — only comments. (To drop an actual figure placeholder on the canvas, use create_figure_card.)",
+    {
+      project: PROJECT,
+      cardId: z.string(),
+      text: z.string(),
+      type: COMMENT_TYPE.nullish(),
+      reviewId: z.string().nullish().describe(
+        'The review pass this comment belongs to (from start_review). REQUIRED during a review pass so the panel can group its notes; omit for a one-off comment outside any pass.',
+      ),
+    },
+    async ({ project, cardId, text, type, reviewId }) => {
+      await addCommentTool(baseUrl, project, { cardId, text, type: type ?? null, reviewId: reviewId ?? null })
       return { content: [{ type: 'text', text: 'comment added' }] }
+    },
+  )
+
+  server.tool(
+    'list_reviews',
+    "List a project's REVIEW PASSES — bounded, in-character editorial reads by a summoned personality (devils-advocate | fact-checker | trimmer | first-reader | architect). Returns each pass's id, personality, status (pending | in-progress | done | dismissed), focus (the user's optional scope note), agent, verdict, and commentCount. A PENDING review is the user's summons from the app waiting for an agent: when you start work on a canvas — or whenever the user asks 'any reviews waiting?' — check this and claim pending passes with start_review(reviewId). Never re-run a done pass unprompted, and treat a dismissed one as waved off.",
+    { project: PROJECT },
+    async ({ project }) => ({
+      content: [{ type: 'text', text: JSON.stringify({ reviews: await listReviewsTool(baseUrl, project) }) }],
+    }),
+  )
+
+  server.tool(
+    'start_review',
+    "Open a REVIEW PASS and receive its working brief. Two ways in: pass `reviewId` to CLAIM a pending pass the user summoned from the app (from list_reviews — always check for one first), or pass `personality` to start an ad-hoc pass when the user asks for that kind of read in chat ('play devil's advocate', 'where do I need citations?', 'help me tighten this', 'read it cold', 'check the structure'). Never open an ad-hoc pass when a pending one of the same personality is waiting — claim it instead. Returns { reviewId, personality, focus, instructions }: follow the instructions exactly — read the draft first, stay in character, respect the comment/question budgets, tag EVERY comment with the reviewId — then finish with complete_review. The five personalities: devils-advocate (argues back: counterpoints, weak reasoning), fact-checker (unsupported claims, missing citations), trimmer (concision: what to compress, never rewrites), first-reader (a cold reader's confusion), architect (structure: order, bridges, shape).",
+    {
+      project: PROJECT,
+      reviewId: z.string().optional().describe('A pending review to claim, from list_reviews.'),
+      personality: PERSONALITY.optional().describe('Start an ad-hoc pass as this personality (when there is no pending review to claim).'),
+      focus: z.string().optional().describe("Optional scope for an ad-hoc pass, from the user's ask ('just the intro'). Ignored when claiming by reviewId — the user already set the focus when summoning."),
+    },
+    async ({ project, reviewId, personality, focus }) => ({
+      content: [{
+        type: 'text',
+        text: JSON.stringify(await startReviewTool(baseUrl, project, {
+          reviewId,
+          personality: personality as (typeof PERSONALITY_IDS)[number] | undefined,
+          focus: focus ?? null,
+        })),
+      }],
+    }),
+  )
+
+  server.tool(
+    'complete_review',
+    "Close a review pass with your VERDICT: one to three sentences of honest overall read — the through-line of what you found, including 'this holds up' when it does. The verdict appears in the user's review panel (don't also leave it as a comment). Call this exactly once, after your last comment/question of the pass; the server stamps the pass's comment count at this moment. Also tell the user the verdict in chat.",
+    { project: PROJECT, reviewId: z.string(), verdict: z.string() },
+    async ({ project, reviewId, verdict }) => {
+      const review = await completeReviewTool(baseUrl, project, { reviewId, verdict })
+      return {
+        content: [{
+          type: 'text',
+          text: `review complete — ${review.commentCount} comment${review.commentCount === 1 ? '' : 's'} in this pass`,
+        }],
+      }
     },
   )
 
@@ -248,6 +311,39 @@ export function createMcpServer(baseUrl: string): McpServer {
       return { content: [{ type: 'text', text: 'cards ungrouped' }] }
     },
   )
+
+  // One prompt per personality, so an MCP client that surfaces prompts (e.g.
+  // slash commands in Claude Code) can summon a review pass without the app UI:
+  // the prompt walks the agent through the same start_review → brief →
+  // complete_review loop the panel-summoned path uses, one record type for both.
+  for (const id of PERSONALITY_IDS) {
+    const p = PERSONALITIES[id]
+    server.registerPrompt(
+      id,
+      {
+        title: `${p.name} review pass`,
+        description: `${p.summary} A bounded, in-character editorial pass over the canvas; annotates only, never writes prose.`,
+        argsSchema: {
+          project: z.string().optional().describe('The Elves project id to review (from list_projects). Omit to be asked.'),
+          focus: z.string().optional().describe("Optional scope for the pass, e.g. 'just the opening section'."),
+        },
+      },
+      ({ project, focus }) => ({
+        messages: [{
+          role: 'user' as const,
+          content: {
+            type: 'text' as const,
+            text: `Summon ${p.name} for a review pass on my Elves canvas.
+
+1. Pick the project: ${project ? `use '${project}'.` : 'call list_projects and confirm with me if it is ambiguous.'}
+2. Check list_reviews first — if a pending '${id}' pass is already waiting, claim it with start_review(reviewId); otherwise open an ad-hoc pass with start_review(personality: '${id}'${focus ? `, focus: ${JSON.stringify(focus)}` : ''}).
+3. Follow the brief it returns exactly: read the draft first, stay in character, respect the budgets, and tag every comment with the pass's reviewId.
+4. Finish with complete_review and tell me the verdict here.`,
+          },
+        }],
+      }),
+    )
+  }
 
   return server
 }

@@ -2,7 +2,7 @@ import { expect, test } from 'vitest'
 import {
   addCommentsUp, addAssetIdUp, addReferenceUp, addSummaryUp,
   renameSourceToNoteUp, renameSourceToNoteDown, addAuthoredByUp, addDraftExcludedUp, addFigureUp,
-  addAttributionUp, addCommentSummaryUp,
+  addAttributionUp, addCommentSummaryUp, addCommentReviewIdUp,
 } from '../../src/shapes/CardShapeUtil'
 import { addQuestionSummaryUp, removeQuestionSummaryDown } from '../../src/shapes/QuestionShapeUtil'
 
@@ -111,6 +111,41 @@ test('AddFigure migration defaults an existing card to the non-figure shape', ()
   addFigureUp(props)
   expect(props.figureTitle).toBe('')
   expect(props.figureStatus).toBeNull()
+})
+
+test('AddCommentReviewId migration adds reviewId: null to every existing comment', () => {
+  const props: Record<string, unknown> = {
+    w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text: 'x',
+    comments: [
+      { id: 'c1', type: null, text: 'a note', resolved: false, author: 'claude' },
+      { id: 'c2', type: 'needs-evidence', text: 'another', resolved: true, author: 'codex' },
+    ],
+    mergedInto: null, assetId: null, reference: null, authoredBy: null,
+    draftExcluded: false, summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+    figureTitle: '', figureStatus: null,
+  }
+  addCommentReviewIdUp(props)
+  expect(props.comments).toEqual([
+    { id: 'c1', type: null, text: 'a note', resolved: false, author: 'claude', reviewId: null },
+    { id: 'c2', type: 'needs-evidence', text: 'another', resolved: true, author: 'codex', reviewId: null },
+  ])
+})
+
+test('AddCommentReviewId migration preserves an existing reviewId rather than clobbering it', () => {
+  // Defensive: up() spreads reviewId: null FIRST then the comment's own fields
+  // on top, so a comment that already carries a reviewId (a double-run, or data
+  // that predates the migration ids bump) keeps it rather than being reset.
+  const props: Record<string, unknown> = {
+    comments: [{ id: 'c1', type: null, text: 'tagged', resolved: false, author: 'claude', reviewId: 'rev-1' }],
+  }
+  addCommentReviewIdUp(props)
+  expect((props.comments as any[])[0].reviewId).toBe('rev-1')
+})
+
+test('AddCommentReviewId migration is a no-op when comments is missing or not an array', () => {
+  const props: Record<string, unknown> = { kind: 'prose' }
+  addCommentReviewIdUp(props)
+  expect(props.comments).toBeUndefined()
 })
 
 test('AddAttribution seeds one authorship run over an agent-authored card body', () => {

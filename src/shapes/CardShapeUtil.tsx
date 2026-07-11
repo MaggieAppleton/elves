@@ -103,6 +103,16 @@ export function addFigureUp(props: Record<string, unknown>): void {
   props.figureStatus = null
 }
 
+// Comments gained a nullable `reviewId` tying each to the review pass that made
+// it (see src/model/reviews.ts). Every existing comment predates review passes,
+// so default them to null — a comment made outside any pass.
+export function addCommentReviewIdUp(props: Record<string, unknown>): void {
+  const comments = props.comments
+  if (Array.isArray(comments)) {
+    props.comments = comments.map((c) => ({ reviewId: null, ...(c as Record<string, unknown>) }))
+  }
+}
+
 // Every comment predating this field gets a comment-level summary, mirroring
 // addSummaryUp for the card itself: default to "no summary generated yet" so
 // reconciliation treats it exactly like a freshly-added comment.
@@ -151,6 +161,7 @@ export function renameSourceToNoteDown(props: Record<string, unknown>): void {
 const cardVersions = createShapePropsMigrationIds('card', {
   AddComments: 1, AddAssetId: 2, AddReference: 3, AddSummary: 4, RenameSourceToNote: 5,
   AddAuthoredBy: 6, AddDraftExcluded: 7, AddFigure: 8, AddAttribution: 9, AddCommentSummary: 10,
+  AddCommentReviewId: 11,
 })
 
 export const cardMigrations = createShapePropsMigrationSequence({
@@ -239,6 +250,19 @@ export const cardMigrations = createShapePropsMigrationSequence({
         }
       },
     },
+    {
+      id: cardVersions.AddCommentReviewId,
+      up: (props) => addCommentReviewIdUp(props as Record<string, unknown>),
+      down: (props) => {
+        const p = props as Record<string, unknown>
+        if (Array.isArray(p.comments)) {
+          p.comments = p.comments.map((c) => {
+            const { reviewId: _drop, ...rest } = c as Record<string, unknown>
+            return rest
+          })
+        }
+      },
+    },
   ],
 })
 
@@ -314,11 +338,16 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     comments: T.arrayOf(
       T.object({
         id: T.string,
-        type: T.nullable(T.literalEnum('needs-evidence', 'weak-argument', 'needs-citation', 'wants-figure')),
+        type: T.nullable(T.literalEnum(
+          'needs-evidence', 'weak-argument', 'needs-citation', 'wants-figure',
+          'counterpoint', 'tighten', 'unclear', 'structure',
+        )),
         text: T.string,
         resolved: T.boolean,
         // Any agent id (e.g. 'claude', 'codex'); resolved through the agent registry.
         author: T.string,
+        // The review pass that made it (a Review id), or null outside any pass.
+        reviewId: T.nullable(T.string),
         // A comment's own model-authored gist, mirroring a card's summary fields.
         summary: T.nullable(T.string),
         summaryOfHash: T.nullable(T.string),

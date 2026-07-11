@@ -34,6 +34,9 @@ import { trackSelection } from './client/selection'
 import { markDoing, markLooking, clearPresence } from './client/presence'
 import { shapeRecordsById, diffChangedIds } from './client/resync'
 import { ProjectSwitcher } from './components/ProjectSwitcher'
+import { ReviewPanel } from './components/ReviewPanel'
+import { fetchReviews, summonReview, dismissReview } from './client/reviews'
+import type { Review, PersonalityId } from './model/reviews'
 import { LinkPrompt } from './components/LinkPrompt'
 import { AgentBox } from './components/AgentBox'
 import { DraftPane } from './components/DraftPane'
@@ -110,6 +113,9 @@ export default function App() {
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
   const [editor, setEditor] = useState<Editor | null>(null)
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>('connecting')
+  // The open project's review passes (see src/model/reviews.ts) — fetched on
+  // project switch, kept live by the realtime `reviews` message.
+  const [reviews, setReviews] = useState<Review[]>([])
   const [showTools, setShowTools] = useState(false)
   const [linkPromptOpen, setLinkPromptOpen] = useState(false)
   const [agentBoxOpen, setAgentBoxOpen] = useState(false)
@@ -244,10 +250,52 @@ export default function App() {
           const present = presence.cardIds.filter((id) => ed.getShape(id as CardShape['id']))
           markLooking(present as CardShape['id'][])
         },
-        { onStatus: setRealtimeStatus, onReconnect: resyncOnReconnect },
+        {
+          onStatus: setRealtimeStatus,
+          onReconnect: resyncOnReconnect,
+          onReviews: (projectId, next) => {
+            if (projectId === projectIdRef.current) setReviews(next)
+          },
+        },
       ),
     [],
   )
+
+  // Load the open project's review passes; a summon/claim/completion from any
+  // surface (panel, MCP, another tab) arrives through onReviews above.
+  useEffect(() => {
+    setReviews([])
+    if (!currentProjectId) return
+    fetchReviews(currentProjectId)
+      .then((list) => {
+        if (projectIdRef.current === currentProjectId) setReviews(list)
+      })
+      .catch((err) => console.error('Elves: failed to load reviews', err))
+  }, [currentProjectId])
+
+  const handleSummonReview = (personality: PersonalityId, focus: string | null) => {
+    const pid = currentProjectId
+    if (!pid) return
+    // The websocket echo will also land; setting from the fetch keeps the panel
+    // truthful even if the socket is down.
+    summonReview(pid, personality, focus)
+      .then(() => fetchReviews(pid))
+      .then((list) => {
+        if (projectIdRef.current === pid) setReviews(list)
+      })
+      .catch((err) => console.error('Elves: failed to summon review', err))
+  }
+
+  const handleDismissReview = (reviewId: string) => {
+    const pid = currentProjectId
+    if (!pid) return
+    dismissReview(pid, reviewId)
+      .then(() => fetchReviews(pid))
+      .then((list) => {
+        if (projectIdRef.current === pid) setReviews(list)
+      })
+      .catch((err) => console.error('Elves: failed to dismiss review', err))
+  }
 
   // Presence is keyed by shape id; dropping it on project switch is cheap
   // insurance against a stale glow lingering as a new project's cards mount.
@@ -822,6 +870,13 @@ export default function App() {
                   ? 'Reconnecting — some agent changes may be delayed'
                   : 'Disconnected — the server is not running, so your changes are NOT being saved'
           }
+        />
+        <ReviewPanel
+          projectId={currentProjectId}
+          editor={editor}
+          reviews={reviews}
+          onSummon={handleSummonReview}
+          onDismiss={handleDismissReview}
         />
         <ProjectSwitcher
           projects={projects}

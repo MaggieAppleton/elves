@@ -14,6 +14,7 @@ test('the MCP server exposes the scoped tools plus list_projects, and no text-ed
   const names = tools.map((t) => t.name).sort()
   expect(names).toEqual([
     'add_comment',
+    'complete_review',
     'create_figure_card',
     'create_note_card',
     'create_question',
@@ -24,6 +25,7 @@ test('the MCP server exposes the scoped tools plus list_projects, and no text-ed
     'edit_section_text',
     'group_cards',
     'list_projects',
+    'list_reviews',
     'merge_notes',
     'move_cards',
     'move_sections',
@@ -31,6 +33,7 @@ test('the MCP server exposes the scoped tools plus list_projects, and no text-ed
     'read_draft',
     'read_map',
     'read_selection',
+    'start_review',
     'ungroup_cards',
   ])
   expect(names).not.toContain('edit_text')

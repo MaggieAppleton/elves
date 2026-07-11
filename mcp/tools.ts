@@ -5,8 +5,11 @@ import type { ReadDraftBlock } from '../src/model/draft'
 import { minimalReference } from '../server/unfurl'
 import {
   readCardMap, readCards, readDraft, readSelection, postChangeSet, unfurlReference, listProjects,
-  type ProjectSummary, type SelectionResponse,
+  listReviews, postReview, postReviewStatus, type ProjectSummary, type SelectionResponse,
 } from './elvesClient'
+import {
+  PERSONALITIES, composeBrief, type PersonalityId, type Review,
+} from '../src/model/reviews'
 
 /** Fields an agent may supply to override / enrich the unfurl baseline. */
 export interface ReferenceFields {
@@ -65,11 +68,74 @@ export function readSelectionTool(baseUrl: string): Promise<SelectionResponse> {
 export function addCommentTool(
   baseUrl: string,
   projectId: string,
-  args: { cardId: string; text: string; type?: CommentType | null },
+  args: { cardId: string; text: string; type?: CommentType | null; reviewId?: string | null },
 ): Promise<void> {
   return postChangeSet(baseUrl, projectId, makeChangeSet([
-    { kind: 'add_comment', cardId: args.cardId, comment: { type: args.type ?? null, text: args.text } },
+    {
+      kind: 'add_comment',
+      cardId: args.cardId,
+      comment: { type: args.type ?? null, text: args.text, reviewId: args.reviewId ?? null },
+    },
   ]))
+}
+
+export function listReviewsTool(baseUrl: string, projectId: string): Promise<Review[]> {
+  return listReviews(baseUrl, projectId)
+}
+
+/** What start_review hands the claiming agent: the pass id to tag comments with, and its working brief. */
+export interface StartedReview {
+  reviewId: string
+  personality: PersonalityId
+  focus: string | null
+  instructions: string
+}
+
+/**
+ * Open a review pass and get its brief. Two entry paths, one record type:
+ * - `reviewId` — claim a PENDING pass the user summoned from the review panel
+ *   (moves it to in-progress under this process's agent id). Re-calling on a
+ *   pass that is already in-progress just re-returns the brief, so a resumed
+ *   agent can pick its pass back up without an illegal transition.
+ * - `personality` — start an AD-HOC pass (the user asked in chat); the review
+ *   record is created directly in-progress so the panel shows it like any other.
+ */
+export async function startReviewTool(
+  baseUrl: string,
+  projectId: string,
+  args: { reviewId?: string; personality?: PersonalityId; focus?: string | null },
+): Promise<StartedReview> {
+  let review: Review
+  if (args.reviewId) {
+    const existing = (await listReviews(baseUrl, projectId)).find((r) => r.id === args.reviewId)
+    if (!existing) throw new Error(`unknown review '${args.reviewId}' — call list_reviews to see valid ids`)
+    review = existing.status === 'in-progress'
+      ? existing
+      : await postReviewStatus(baseUrl, projectId, existing.id, { status: 'in-progress', agent: agentId })
+  } else if (args.personality) {
+    review = await postReview(baseUrl, projectId, {
+      personality: args.personality,
+      focus: args.focus ?? null,
+      agent: agentId,
+    })
+  } else {
+    throw new Error('start_review needs a reviewId (a pending pass from list_reviews) or a personality (an ad-hoc pass)')
+  }
+  const personality = PERSONALITIES[review.personality]
+  return {
+    reviewId: review.id,
+    personality: review.personality,
+    focus: review.focus,
+    instructions: composeBrief(personality, review.focus),
+  }
+}
+
+export function completeReviewTool(
+  baseUrl: string,
+  projectId: string,
+  args: { reviewId: string; verdict: string },
+): Promise<Review> {
+  return postReviewStatus(baseUrl, projectId, args.reviewId, { status: 'done', verdict: args.verdict })
 }
 
 export function mergeNotesTool(

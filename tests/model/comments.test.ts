@@ -2,9 +2,10 @@ import { describe, expect, test } from 'vitest'
 import { makeComment, addComment, resolveComment, visibleComments } from '../../src/model/comments'
 
 describe('comment helpers', () => {
-  test('makeComment defaults to freeform, unresolved, claude-authored, unsummarized', () => {
+  test('makeComment defaults to freeform, unresolved, claude-authored, no review, and unsummarized', () => {
     expect(makeComment('c1', 'thin here')).toEqual({
       id: 'c1', type: null, text: 'thin here', resolved: false, author: 'claude',
+      reviewId: null,
       summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
     })
     expect(makeComment('c2', 'no source', 'needs-evidence').type).toBe('needs-evidence')
@@ -14,6 +15,11 @@ describe('comment helpers', () => {
     expect(makeComment('c1', 'thin here', null, 'codex').author).toBe('codex')
     // Default stays 'claude' so existing callers/canvases are unaffected.
     expect(makeComment('c2', 'thin here').author).toBe('claude')
+  })
+
+  test('makeComment stamps the reviewId when given one, defaulting to null', () => {
+    expect(makeComment('c1', 'no evidence', 'needs-evidence', 'claude', 'rev-1').reviewId).toBe('rev-1')
+    expect(makeComment('c2', 'thin here').reviewId).toBeNull()
   })
 
   test('addComment appends immutably', () => {

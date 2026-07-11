@@ -23,7 +23,11 @@ import {
   editSectionTextTool,
   readSelectionTool,
   listProjectsTool,
+  listReviewsTool,
+  startReviewTool,
+  completeReviewTool,
 } from '../../mcp/tools'
+import { PERSONALITIES } from '../../src/model/reviews'
 import { createSelectionStore } from '../../server/selection'
 
 let servers: http.Server[] = []
@@ -109,9 +113,100 @@ test('addCommentTool posts a change-set the server broadcasts tagged with the pr
   expect(projectId).toBe('essay')
   expect(changeSet.author).toBe('claude')
   expect(changeSet.ops).toEqual([
-    { kind: 'add_comment', cardId: 'shape:a', comment: { type: 'needs-evidence', text: 'no source' } },
+    { kind: 'add_comment', cardId: 'shape:a', comment: { type: 'needs-evidence', text: 'no source', reviewId: null } },
   ])
   ws.close()
+})
+
+test('addCommentTool posts comment.reviewId when given one, tagging the comment to a review pass', async () => {
+  const { base } = await liveElves()
+  await seedCard(base, 'shape:a')
+  const ws = new WebSocket(base.replace('http', 'ws') + '/ws')
+  const received = new Promise<any>((res) => ws.on('message', (d) => res(JSON.parse(d.toString()))))
+  await new Promise<void>((r) => ws.on('open', () => r()))
+
+  await addCommentTool(base, 'essay', {
+    cardId: 'shape:a', text: 'the strongest objection is unanswered', type: 'counterpoint', reviewId: 'rev-1',
+  })
+
+  const { changeSet } = await received
+  expect(changeSet.ops).toEqual([
+    { kind: 'add_comment', cardId: 'shape:a', comment: { type: 'counterpoint', text: 'the strongest objection is unanswered', reviewId: 'rev-1' } },
+  ])
+  ws.close()
+})
+
+// Creates a review directly against the running server's real endpoint (the
+// same one the review panel's summon UI posts to), bypassing the MCP tools —
+// so tests can seed a PENDING review to claim, distinct from the ad-hoc path
+// start_review itself exercises.
+async function seedPendingReview(base: string, personality: string, focus: string | null = null) {
+  const res = await fetch(`${base}/projects/essay/reviews`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ personality, focus }),
+  })
+  const { review } = (await res.json()) as { review: { id: string } }
+  return review.id
+}
+
+test('startReviewTool ad-hoc: posts personality+agent and returns instructions with the personality brief and reviewId', async () => {
+  const { base } = await liveElves()
+  const started = await startReviewTool(base, 'essay', { personality: 'trimmer' })
+
+  expect(started.personality).toBe('trimmer')
+  expect(started.focus).toBeNull()
+  expect(typeof started.reviewId).toBe('string')
+  expect(started.reviewId.length).toBeGreaterThan(0)
+  expect(started.instructions).toContain(PERSONALITIES.trimmer.brief)
+
+  // The review was created directly in-progress, claimed by this process's agent.
+  const reviews = await listReviewsTool(base, 'essay')
+  expect(reviews).toHaveLength(1)
+  expect(reviews[0]).toMatchObject({ id: started.reviewId, personality: 'trimmer', status: 'in-progress', agent: getAgentId() })
+})
+
+test('startReviewTool with reviewId claims a pending review, then re-returns the brief without re-claiming', async () => {
+  const { base } = await liveElves()
+  const reviewId = await seedPendingReview(base, 'architect', 'the ending')
+
+  const first = await startReviewTool(base, 'essay', { reviewId })
+  expect(first.reviewId).toBe(reviewId)
+  expect(first.personality).toBe('architect')
+  expect(first.focus).toBe('the ending')
+  expect(first.instructions).toContain(PERSONALITIES.architect.brief)
+
+  const afterFirst = (await listReviewsTool(base, 'essay')).find((r) => r.id === reviewId)!
+  expect(afterFirst.status).toBe('in-progress')
+  expect(afterFirst.agent).toBe(getAgentId())
+  const startedAt = afterFirst.startedAt
+
+  // Claiming again: the pass is already in-progress, so start_review must NOT
+  // attempt another status transition (in-progress → in-progress is illegal
+  // and would 409) — it just re-returns the same brief.
+  const second = await startReviewTool(base, 'essay', { reviewId })
+  expect(second).toEqual(first)
+
+  const reviews = await listReviewsTool(base, 'essay')
+  expect(reviews).toHaveLength(1) // no duplicate created
+  expect(reviews[0].startedAt).toBe(startedAt) // untouched by the second claim attempt
+})
+
+test('startReviewTool without a reviewId or personality rejects with a helpful error', async () => {
+  const { base } = await liveElves()
+  await expect(startReviewTool(base, 'essay', {})).rejects.toThrow(/reviewId.*personality|personality.*reviewId/)
+})
+
+test('completeReviewTool posts status done with the given verdict and stamps commentCount', async () => {
+  const { base } = await liveElves()
+  const started = await startReviewTool(base, 'essay', { personality: 'fact-checker' })
+
+  const review = await completeReviewTool(base, 'essay', { reviewId: started.reviewId, verdict: 'the receipts check out' })
+
+  expect(review.status).toBe('done')
+  expect(review.verdict).toBe('the receipts check out')
+  expect(review.commentCount).toBe(0) // no comments were tagged with this pass
+  expect(typeof review.completedAt).toBe('string')
 })
 
 test('createNoteCardTool posts a create_note_card change-set', async () => {

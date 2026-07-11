@@ -123,7 +123,10 @@ export function applyChangeSetToSnapshot(
       case 'add_comment': {
         const shape = findCardShape(store, op.cardId)
         if (!shape) break
-        const comment = makeComment(`cmt-${crypto.randomUUID()}`, op.comment.text, op.comment.type, cs.author)
+        const comment = makeComment(
+          `cmt-${crypto.randomUUID()}`, op.comment.text, op.comment.type, cs.author,
+          op.comment.reviewId ?? null,
+        )
         shape.props.comments = addComment(shape.props.comments ?? [], comment)
         break
       }

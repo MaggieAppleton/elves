@@ -656,6 +656,10 @@
 .elves-comment[data-type="weak-argument"]  { background: var(--elves-cc-weak-bg);     border-color: var(--elves-cc-weak-border); }
 .elves-comment[data-type="needs-citation"] { background: var(--elves-cc-citation-bg); border-color: var(--elves-cc-citation-border); }
 .elves-comment[data-type="wants-figure"]   { background: var(--elves-cc-figure-bg);   border-color: var(--elves-cc-figure-border); }
+.elves-comment[data-type="counterpoint"]   { background: var(--elves-cc-counter-bg);   border-color: var(--elves-cc-counter-border); }
+.elves-comment[data-type="tighten"]        { background: var(--elves-cc-tighten-bg);   border-color: var(--elves-cc-tighten-border); }
+.elves-comment[data-type="unclear"]        { background: var(--elves-cc-unclear-bg);   border-color: var(--elves-cc-unclear-border); }
+.elves-comment[data-type="structure"]      { background: var(--elves-cc-structure-bg); border-color: var(--elves-cc-structure-border); }
 
 .elves-comment__body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .elves-comment__type {
@@ -669,6 +673,10 @@
 .elves-comment[data-type="weak-argument"]  .elves-comment__type { color: var(--elves-cc-weak-label); }
 .elves-comment[data-type="needs-citation"] .elves-comment__type { color: var(--elves-cc-citation-label); }
 .elves-comment[data-type="wants-figure"]   .elves-comment__type { color: var(--elves-cc-figure-label); }
+.elves-comment[data-type="counterpoint"]   .elves-comment__type { color: var(--elves-cc-counter-label); }
+.elves-comment[data-type="tighten"]        .elves-comment__type { color: var(--elves-cc-tighten-label); }
+.elves-comment[data-type="unclear"]        .elves-comment__type { color: var(--elves-cc-unclear-label); }
+.elves-comment[data-type="structure"]      .elves-comment__type { color: var(--elves-cc-structure-label); }
 
 .elves-comment__text { overflow-wrap: anywhere; white-space: pre-wrap; color: var(--elves-ink); }
 
@@ -712,6 +720,10 @@
   display: none;
 }
 .elves-comment[data-type="wants-figure"]   .elves-comment__resolve:hover { background: var(--elves-cc-figure-border); }
+.elves-comment[data-type="counterpoint"]   .elves-comment__resolve:hover { background: var(--elves-cc-counter-border); }
+.elves-comment[data-type="tighten"]        .elves-comment__resolve:hover { background: var(--elves-cc-tighten-border); }
+.elves-comment[data-type="unclear"]        .elves-comment__resolve:hover { background: var(--elves-cc-unclear-border); }
+.elves-comment[data-type="structure"]      .elves-comment__resolve:hover { background: var(--elves-cc-structure-border); }
 
 @media (prefers-reduced-motion: reduce) {
   .elves-comment__resolve { transition: none; }

@@ -3,6 +3,7 @@ import type { CardDigest, CardMap } from '../server/digest'
 import type { Project } from '../server/projects'
 import type { Reference } from '../src/model/types'
 import type { ReadDraftBlock } from '../src/model/draft'
+import type { Review, ReviewStatus, PersonalityId } from '../src/model/reviews'
 import type { SelectedShape } from '../server/selection'
 
 export type ProjectSummary = Pick<Project, 'id' | 'name'>
@@ -74,6 +75,57 @@ export async function unfurlReference(
   if (!res.ok) throw new Error(`unfurl failed: ${res.status}`)
   const { reference } = (await res.json()) as { reference: Reference }
   return reference
+}
+
+export async function listReviews(baseUrl: string, projectId: string): Promise<Review[]> {
+  const res = await fetch(`${baseUrl}/projects/${encodeURIComponent(projectId)}/reviews`)
+  if (res.status === 404) throw new Error(`unknown project '${projectId}' — call list_projects to see valid ids`)
+  if (!res.ok) throw new Error(`list_reviews failed: ${res.status}`)
+  const { reviews } = (await res.json()) as { reviews: Review[] }
+  return reviews
+}
+
+/** Create a review; with `agent` set it is born in-progress (the ad-hoc pass). */
+export async function postReview(
+  baseUrl: string,
+  projectId: string,
+  args: { personality: PersonalityId; focus?: string | null; agent?: string | null },
+): Promise<Review> {
+  const res = await fetch(`${baseUrl}/projects/${encodeURIComponent(projectId)}/reviews`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(args),
+  })
+  if (res.status === 404) throw new Error(`unknown project '${projectId}' — call list_projects to see valid ids`)
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    throw new Error(`create review failed: ${res.status} ${body}`.trim())
+  }
+  const { review } = (await res.json()) as { review: Review }
+  return review
+}
+
+export async function postReviewStatus(
+  baseUrl: string,
+  projectId: string,
+  reviewId: string,
+  args: { status: ReviewStatus; agent?: string | null; verdict?: string | null },
+): Promise<Review> {
+  const res = await fetch(
+    `${baseUrl}/projects/${encodeURIComponent(projectId)}/reviews/${encodeURIComponent(reviewId)}/status`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(args),
+    },
+  )
+  if (res.status === 404) throw new Error(`unknown project or review — call list_reviews to see valid ids`)
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    throw new Error(`review status change failed: ${res.status} ${body}`.trim())
+  }
+  const { review } = (await res.json()) as { review: Review }
+  return review
 }
 
 export async function postChangeSet(

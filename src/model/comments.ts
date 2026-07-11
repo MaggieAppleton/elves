@@ -5,9 +5,11 @@ export function makeComment(
   text: string,
   type: CommentType | null = null,
   author = 'claude',
+  reviewId: string | null = null,
 ): Comment {
   return {
     id, type, text, resolved: false, author,
+    reviewId,
     summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
   }
 }

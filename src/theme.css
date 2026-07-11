@@ -114,6 +114,27 @@
   --elves-cc-figure-bg:     oklch(0.966 0.030 300);
   --elves-cc-figure-border: oklch(0.892 0.048 300);
 
+  /* ---- Review-pass comment ramps (src/model/reviews.ts) — same calm bands.
+     counterpoint = rose (an objection to answer, warm but distinct from
+     weak-argument's orange and needs-evidence's red); tighten = blue (a cool
+     line-edit note, not a warning); unclear = teal (a reader signal); structure
+     = indigo (the skeleton, sitting near wants-figure's violet but flatter). ---- */
+  --elves-cc-counter-label:  oklch(0.560 0.105 355);
+  --elves-cc-counter-bg:     oklch(0.966 0.026 355);
+  --elves-cc-counter-border: oklch(0.890 0.044 355);
+
+  --elves-cc-tighten-label:  oklch(0.545 0.085 235);
+  --elves-cc-tighten-bg:     oklch(0.966 0.022 235);
+  --elves-cc-tighten-border: oklch(0.892 0.038 235);
+
+  --elves-cc-unclear-label:  oklch(0.530 0.070 185);
+  --elves-cc-unclear-bg:     oklch(0.966 0.022 185);
+  --elves-cc-unclear-border: oklch(0.892 0.034 185);
+
+  --elves-cc-structure-label:  oklch(0.530 0.095 270);
+  --elves-cc-structure-bg:     oklch(0.966 0.026 270);
+  --elves-cc-structure-border: oklch(0.892 0.042 270);
+
   /* Figure card sketch-frame: a soft ink dash for a human-planned figure. A
      Claude-suggested figure tints its frame with the warm authorship accent
      (see .elves-card--figure:has(.elves-agent-mark) in card.css). */
