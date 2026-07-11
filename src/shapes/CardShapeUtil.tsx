@@ -289,6 +289,15 @@ function ArrowsLeftRightIcon() {
   )
 }
 
+// Phosphor "Trash" (regular), for deleting a merged card from the fan-out peek.
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true" focusable="false">
+      <path d="M216,48H176V40a24,24,0,0,0-24-24H104A24,24,0,0,0,80,40v8H40a8,8,0,0,0,0,16h8V208a16,16,0,0,0,16,16H192a16,16,0,0,0,16-16V64h8a8,8,0,0,0,0-16ZM96,40a8,8,0,0,1,8-8h48a8,8,0,0,1,8,8v8H96Zm96,168H64V64H192ZM112,104v64a8,8,0,0,1-16,0V104a8,8,0,0,1,16,0Zm48,0v64a8,8,0,0,1-16,0V104a8,8,0,0,1,16,0Z" />
+    </svg>
+  )
+}
+
 export class CardShapeUtil extends ShapeUtil<CardShape> {
   static override type = 'card' as const
   static override migrations = cardMigrations
@@ -729,6 +738,20 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
               {members.map((m) => (
                 <div key={m.id} className="elves-merge-fan__card" data-testid="merge-fan-card">
                   {m.props.text}
+                  <button
+                    type="button"
+                    className="elves-merge-fan__delete"
+                    data-testid="delete-merged-card"
+                    title="Delete this merged card"
+                    aria-label="Delete this merged card"
+                    onPointerDown={stopEventPropagation}
+                    onClick={(e) => {
+                      stopEventPropagation(e)
+                      this.editor.deleteShape(m.id)
+                    }}
+                  >
+                    <TrashIcon />
+                  </button>
                 </div>
               ))}
             </div>
