@@ -32,6 +32,14 @@ export type Op =
       summaryBy: string | null
       summaryAt: string | null
     }
+  | {
+      kind: 'set_question_summary'
+      questionId: string
+      summary: string | null
+      summaryOfHash: string | null
+      summaryBy: string | null
+      summaryAt: string | null
+    }
 
 const REF_TYPES: readonly RefType[] = [
   'paper', 'article', 'book', 'software', 'social', 'video', 'wiki', 'link',
@@ -133,6 +141,10 @@ function isOp(v: unknown): v is Op {
       return typeof op.cardId === 'string' && typeof op.commentId === 'string' &&
         isStringOrNull(op.summary) && isStringOrNull(op.summaryOfHash) &&
         isStringOrNull(op.summaryBy) && isStringOrNull(op.summaryAt)
+    case 'set_question_summary':
+      return typeof op.questionId === 'string' &&
+        isStringOrNull(op.summary) && isStringOrNull(op.summaryOfHash) &&
+        isStringOrNull(op.summaryBy) && isStringOrNull(op.summaryAt)
     default:
       return false
   }
@@ -173,6 +185,12 @@ export function isChangeSet(value: unknown): value is ChangeSet {
  * model-authored gist *about a comment* into that comment's own `summary`
  * field, never the comment's `text` (itself already a machine annotation, not
  * the user's prose). Same safety class as set_summary. Scoped to this one op.
+ *
+ * set_question_summary is the same exception, applied to a question shape: it
+ * writes a model-authored gist *about a question* into that question's own
+ * `summary` field, never the question's `text` (itself already a machine
+ * annotation — the agent's question, not the user's prose). Same safety class
+ * as set_summary. Scoped to this one op.
  *
  * group_cards / ungroup_cards are purely structural — they bind cards to travel
  * together (a tldraw group) and never touch any card's `text`. Same safety class
@@ -227,6 +245,7 @@ export function changeSetWritesText(cs: ChangeSet): boolean {
       case 'ungroup_cards':
       case 'set_summary':
       case 'set_comment_summary':
+      case 'set_question_summary':
         return false
       default:
         return true // unknown op: treat as unsafe
