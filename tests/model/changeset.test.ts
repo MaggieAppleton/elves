@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest'
 import type { Reference } from '../../src/model/types'
 import {
   isChangeSet, isReference, planMerge, referencedCardIds, referencedSectionIds, changeSetWritesText,
-  mergeRepresentativeIds,
+  mergeRepresentativeIds, isSummaryOp,
 } from '../../src/model/changeset'
 
 const VALID_REF: Reference = {
@@ -307,6 +307,25 @@ describe('group ops', () => {
       ],
     }
     expect(referencedCardIds(cs).sort()).toEqual(['shape:a', 'shape:b'])
+  })
+})
+
+describe('isSummaryOp', () => {
+  test('true for all three summary op kinds', () => {
+    expect(isSummaryOp({
+      kind: 'set_summary', cardId: 'a', summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+    })).toBe(true)
+    expect(isSummaryOp({
+      kind: 'set_comment_summary', cardId: 'a', commentId: 'c', summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+    })).toBe(true)
+    expect(isSummaryOp({
+      kind: 'set_question_summary', questionId: 'q', summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+    })).toBe(true)
+  })
+
+  test('false for non-summary ops', () => {
+    expect(isSummaryOp({ kind: 'add_comment', cardId: 'a', comment: { type: null, text: 'hi' } })).toBe(false)
+    expect(isSummaryOp({ kind: 'edit_card', cardId: 'a', text: 't' })).toBe(false)
   })
 })
 

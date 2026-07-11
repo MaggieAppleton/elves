@@ -32,6 +32,15 @@ export function addQuestionSummaryUp(props: Record<string, unknown>): void {
   props.summaryAt = null
 }
 
+// The inverse of addQuestionSummaryUp: strips the four summary fields back
+// off, restoring a pre-summary question shape.
+export function removeQuestionSummaryDown(props: Record<string, unknown>): void {
+  delete props.summary
+  delete props.summaryOfHash
+  delete props.summaryBy
+  delete props.summaryAt
+}
+
 const questionVersions = createShapePropsMigrationIds('question', { AddSummary: 1 })
 
 export const questionMigrations = createShapePropsMigrationSequence({
@@ -39,13 +48,7 @@ export const questionMigrations = createShapePropsMigrationSequence({
     {
       id: questionVersions.AddSummary,
       up: (props) => addQuestionSummaryUp(props as Record<string, unknown>),
-      down: (props) => {
-        const p = props as Record<string, unknown>
-        delete p.summary
-        delete p.summaryOfHash
-        delete p.summaryBy
-        delete p.summaryAt
-      },
+      down: (props) => removeQuestionSummaryDown(props as Record<string, unknown>),
     },
   ],
 })

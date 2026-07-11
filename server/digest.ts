@@ -216,7 +216,9 @@ export function snapshotToSummarizableQuestions(
 ): Array<SummarizableComment & { questionId: string }> {
   const store = storeOf(snapshot)
   return Object.values(store)
-    .filter((r: any) => r && r.typeName === 'shape' && r.type === 'question' && r.props)
+    // A dismissed question is hidden and its gist never shows, so it should
+    // never trigger an Ollama call or count toward pending work.
+    .filter((r: any) => r && r.typeName === 'shape' && r.type === 'question' && r.props && !r.props.dismissed)
     .map((r: any) => ({
       questionId: r.id,
       text: r.props.text ?? '',

@@ -28,6 +28,7 @@ import {
 import { uploadAsset, setAssetProject } from './client/assets'
 import { applyChangeSet } from './apply/applyChangeSet'
 import type { ChangeSet } from './model/changeset'
+import { isSummaryOp } from './model/changeset'
 import { connectRealtime, RealtimeStatus } from './client/realtime'
 import { trackSelection } from './client/selection'
 import { markDoing, markLooking, clearPresence } from './client/presence'
@@ -94,10 +95,11 @@ function PlusIcon() {
 // same document edit, same "doing" glow, same save.
 function applyAndPersist(ed: Editor, projectId: string, cs: ChangeSet) {
   const affected = applyChangeSet(ed, cs)
-  // Glow the cards the agent just acted on ("doing"). Summary reconciles are
-  // background machine work, not the agent working — skip them so the board
-  // doesn't flicker orange every time a gist settles.
-  if (cs.ops.some((op) => op.kind !== 'set_summary')) markDoing(affected)
+  // Glow the cards the agent just acted on ("doing"). Summary/gist reconciles
+  // (cards, comments, and questions) are background machine work, not the
+  // agent working — skip them so the board doesn't flicker orange every time
+  // a gist settles.
+  if (cs.ops.some((op) => !isSummaryOp(op))) markDoing(affected)
   saveCanvas(projectId, getSnapshot(ed.store)).catch((err) =>
     console.error('Elves: canvas save failed', err),
   )
@@ -229,7 +231,7 @@ export default function App() {
           // then echo-save, overwriting the server's card with a diverging copy
           // (issue #28). Re-fetch the authoritative snapshot instead — same
           // pattern reconcilePendingChangeSets already uses for the load window.
-          const glow = cs.ops.some((op) => op.kind !== 'set_summary')
+          const glow = cs.ops.some((op) => !isSummaryOp(op))
           scheduleResync(projectId, glow)
         },
         (projectId, presence) => {

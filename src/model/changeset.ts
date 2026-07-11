@@ -41,6 +41,12 @@ export type Op =
       summaryAt: string | null
     }
 
+/** True for the model-authored summary/gist ops — background machine work that
+ * should not trigger the agent-presence "doing" glow (see App.tsx). */
+export function isSummaryOp(op: Op): boolean {
+  return op.kind === 'set_summary' || op.kind === 'set_comment_summary' || op.kind === 'set_question_summary'
+}
+
 const REF_TYPES: readonly RefType[] = [
   'paper', 'article', 'book', 'software', 'social', 'video', 'wiki', 'link',
 ]
