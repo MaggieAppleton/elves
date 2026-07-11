@@ -105,6 +105,19 @@ Each agent authors under its own id — set `ELVES_AGENT` when launching the MCP
 (e.g. `ELVES_AGENT=codex`) so its cards carry its own authorship mark; it defaults to
 `claude`. See "Configuration".
 
+**Ask an agent from inside the app.** You don't have to leave for a terminal. Select a
+card or a few (or select nothing to mean the whole canvas) and press **`/`** — a small
+chat box appears at the bottom. Type a request — *"critique this card"*, *"what's a
+better way to phrase this?"*, *"organise these into sections"*, *"dedupe all the cards"*
+— and the server runs your configured CLI (`ELVES_CLI`, default `claude`) as a one-shot
+headless agent wired to the same `elves` MCP, so it has the same canvas tools it does in
+the terminal. Its reasoning and each tool call stream into the box as a live transcript
+while its edits land on the canvas (with the usual presence glow); a **Cancel** button
+stops it. The headless agent is locked to the canvas tools plus read-only web
+(WebSearch/WebFetch) — no shell or file access, and, as always, it can never write your
+prose. The chosen CLI must be installed and authenticated on your machine (v1 fully
+supports `claude`; `codex`/`copilot` are recognized but not yet wired).
+
 Every canvas tool takes a **required `project` id**: the agent calls `list_projects` to
 discover them and confirms which one you mean before acting — it never guesses, and the
 server rejects an operation that targets a card outside the named project. There is
@@ -122,6 +135,7 @@ Set via environment variables:
 | `PORT` | `5199` | Port for the canvas server. |
 | `VITE_SERVER_URL` | `http://localhost:5199` | Where the web app looks for the server. |
 | `ELVES_AGENT` | `claude` | Authorship id the MCP server stamps on cards it creates — set it per agent (e.g. `codex`) so each agent's writing carries its own mark. |
+| `ELVES_CLI` | `claude` | The CLI the in-app agent box (`/`) spawns to run a request. Must be installed and authenticated locally. v1 fully supports `claude`. |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama endpoint used for summaries. |
 | `OLLAMA_MODEL` | `llama3.2` | Local model used for summaries. |
 

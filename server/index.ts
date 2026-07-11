@@ -1,5 +1,7 @@
 import 'dotenv/config'
 import http from 'node:http'
+import { writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { createServer } from './app'
@@ -11,6 +13,7 @@ import { listProjects, resyncProjectIds } from './projects'
 import { warnOnSyncConflicts } from './conflicts'
 import { OllamaSummarizer } from './summarize'
 import { resolveHost } from './host'
+import { createAgentRunner } from './agentRun'
 import type { CanvasServer } from './app'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -41,7 +44,30 @@ async function main() {
   const summarizer = new OllamaSummarizer()
   const now = () => new Date().toISOString()
   const selection = createSelectionStore()
-  const app = createServer(dataRoot, broadcast, { summarizer, now }, broadcastPresence, selection)
+  // Drives the in-app chat box: spawns the configured CLI (ELVES_CLI, default
+  // `claude`) as a headless agent that connects back to THIS server. We generate
+  // the child's MCP config rather than reuse the repo's static .mcp.json so its
+  // `elves` server points at this server's ACTUAL url (honoring a custom PORT,
+  // which the committed .mcp.json can't), and so the run's authorship id
+  // (ELVES_AGENT) matches the chosen CLI. Written once at startup to a temp file.
+  const repoRoot = join(here, '..')
+  const serverUrl = `http://localhost:${port}`
+  const agentId = process.env.ELVES_AGENT ?? (process.env.ELVES_CLI || 'claude')
+  const mcpConfigPath = join(tmpdir(), `elves-agent-mcp-${port}.json`)
+  writeFileSync(
+    mcpConfigPath,
+    JSON.stringify({
+      mcpServers: {
+        elves: {
+          command: 'npx',
+          args: ['tsx', join(repoRoot, 'mcp', 'index.ts')],
+          env: { ELVES_URL: serverUrl, ELVES_AGENT: agentId },
+        },
+      },
+    }),
+  )
+  const agent = createAgentRunner({ mcpConfigPath, cwd: repoRoot, cliName: process.env.ELVES_CLI })
+  const app = createServer(dataRoot, broadcast, { summarizer, now }, broadcastPresence, selection, agent)
   httpServer.on('request', app)
 
   // Binds loopback-only by default (see server/host.ts) — set ELVES_HOST=0.0.0.0

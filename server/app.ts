@@ -19,6 +19,7 @@ import {
 } from './digest'
 import { applyChangeSetToSnapshot } from './applyChangeSet'
 import { enrichSelection, type SelectionStore } from './selection'
+import type { AgentRunner, AgentEvent } from './agentRun'
 import { reconcileCanvasFile, type Summarizer } from './summarize'
 import { extForMime, saveAsset, resolveAssetPath } from './assets'
 import { unfurl, type UnfurlDeps, type FetchedImage } from './unfurl'
@@ -125,6 +126,7 @@ export function createServer(
   summarize?: SummarizeConfig,
   onPresence?: (projectId: string, presence: PresenceMessage) => void,
   selection?: SelectionStore,
+  agent?: AgentRunner,
 ): CanvasServer {
   const app = express()
   // Origin allowlist (see server/origins.ts): only same-origin/no-Origin
@@ -406,6 +408,78 @@ export function createServer(
       })
     }),
   )
+
+  // --- In-app agent runs ----------------------------------------------------
+  // The chat box (`/` on the canvas) posts a prompt here; the server spawns the
+  // configured CLI as a one-shot headless agent (see server/agentRun.ts) and
+  // streams its transcript back as Server-Sent Events. The agent's canvas edits
+  // still flow over the realtime WS as usual — this stream carries only its
+  // reasoning + tool calls. One run at a time. Dormant when no runner is wired
+  // (tests), so those suites stay hermetic.
+  app.post('/agent/run', (req, res) => {
+    if (!agent) {
+      res.status(501).json({ error: 'agent runs are not configured on this server' })
+      return
+    }
+    const prompt = req.body?.prompt
+    const projectId = req.body?.projectId
+    const hasSelection = !!req.body?.hasSelection
+    if (typeof prompt !== 'string' || !prompt.trim()) {
+      res.status(400).json({ error: 'prompt is required' })
+      return
+    }
+    if (typeof projectId !== 'string' || !projectId) {
+      res.status(400).json({ error: 'projectId is required' })
+      return
+    }
+    if (agent.isRunning()) {
+      res.status(409).json({ error: 'an agent is already running' })
+      return
+    }
+    // SSE: keep the socket open and push events as they arrive. `no-transform`
+    // + `X-Accel-Buffering: no` stop any intermediary from buffering the stream.
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    })
+    res.flushHeaders?.()
+    const send = (e: AgentEvent) => {
+      if (res.writable && !res.writableEnded) res.write(`data: ${JSON.stringify(e)}\n\n`)
+    }
+    // If the user closes the box mid-run we stop streaming, but let the agent
+    // finish — its canvas edits are still wanted, and a run is short. The box's
+    // Cancel button (POST /agent/cancel) is how you actually kill it. Detect that
+    // on the RESPONSE, and only when it closes BEFORE we finished writing — the
+    // request object's own 'close' fires the moment its body is read (normal
+    // completion), which is not a disconnect.
+    res.on('close', () => {
+      if (!res.writableFinished) console.warn('[elves] agent run stream closed by client before completion')
+    })
+    agent
+      .run({ prompt, projectId, hasSelection }, send)
+      .catch((err) => {
+        console.error('[elves] agent run failed:', err)
+        send({ type: 'error', message: 'the agent run failed unexpectedly' })
+      })
+      .finally(() => {
+        // Terminator so the client stops reading; a no-op if the socket is gone.
+        if (res.writable && !res.writableEnded) res.write('event: end\ndata: {}\n\n')
+        res.end()
+      })
+  })
+
+  // Kill the currently-running agent (the box's Cancel button). Idempotent: a
+  // no-op when nothing is running.
+  app.post('/agent/cancel', (_req, res) => {
+    if (!agent) {
+      res.status(501).json({ error: 'agent runs are not configured on this server' })
+      return
+    }
+    agent.cancel()
+    res.json({ ok: true })
+  })
 
   app.post(
     '/projects/:id/changeset',

@@ -1,0 +1,240 @@
+/* =========================================================================
+   Agent box — the in-app "ask an agent" chat, opened with `/` on the canvas.
+   A spare floating panel anchored bottom-middle, in the app's warm paper
+   palette, tinted with the agent's accent. Streams the agent's transcript
+   while it works the canvas through the MCP.
+   ========================================================================= */
+.elves-agentbox {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 1000; /* above toolbar/switcher (which top out at 500) */
+  width: min(560px, calc(100vw - 32px));
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  background: var(--elves-surface);
+  border: 1px solid var(--elves-border-strong);
+  box-shadow: var(--elves-shadow-lg), var(--elves-highlight);
+  font-family: var(--elves-card-font);
+  color: var(--elves-ink);
+  overflow: hidden;
+  animation: elves-agentbox-rise 140ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.elves-agentbox__header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 8px 14px;
+  border-bottom: 1px solid var(--elves-border-subtle);
+}
+
+/* A small chip telling you what the agent will act on: the current selection,
+   or the whole canvas. Tinted with the accent only when a selection scopes it. */
+.elves-agentbox__scope {
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--elves-ink-faint);
+  background: var(--elves-tertiary);
+  white-space: nowrap;
+}
+.elves-agentbox__scope[data-selection='true'] {
+  color: var(--elves-claude-accent);
+  background: color-mix(in srgb, var(--elves-claude-accent) 12%, transparent);
+}
+.elves-agentbox__close {
+  margin-left: auto;
+}
+
+.elves-agentbox__who {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--elves-claude-accent);
+}
+.elves-agentbox__logo {
+  width: 15px;
+  height: 15px;
+}
+
+.elves-agentbox__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--elves-ink-faint);
+  cursor: pointer;
+  transition: background-color 100ms ease, color 100ms ease;
+}
+.elves-agentbox__close:hover {
+  background: var(--elves-tertiary);
+  color: var(--elves-ink);
+}
+.elves-agentbox__close svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* --- Transcript --------------------------------------------------------- */
+.elves-agentbox__transcript {
+  max-height: min(42vh, 340px);
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-bottom: 1px solid var(--elves-border-subtle);
+}
+
+.elves-agentbox__text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--elves-ink);
+  white-space: pre-wrap;
+}
+
+.elves-agentbox__tool {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--elves-ink-faint);
+}
+.elves-agentbox__tool-name {
+  color: var(--elves-ink-soft);
+  font-variant-caps: small-caps;
+  letter-spacing: 0.02em;
+}
+.elves-agentbox__tool-summary {
+  color: var(--elves-ink-faint);
+}
+
+.elves-agentbox__error {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--elves-cc-evidence-label, #b4472a);
+}
+
+.elves-agentbox__working {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--elves-ink-faint);
+}
+.elves-agentbox__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--elves-claude-accent);
+  animation: elves-agentbox-pulse 1s ease-in-out infinite;
+}
+
+/* --- Input row ---------------------------------------------------------- */
+.elves-agentbox__inputrow {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px;
+}
+
+.elves-agentbox__input {
+  flex: 1;
+  box-sizing: border-box;
+  resize: none;
+  max-height: 140px;
+  padding: 9px 12px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--elves-ink);
+  background: var(--elves-surface-muted);
+  border: 1px solid var(--elves-border-strong);
+  border-radius: 9px;
+  outline: none;
+  transition: border-color 100ms ease, box-shadow 100ms ease;
+}
+.elves-agentbox__input::placeholder {
+  color: var(--elves-ink-faint);
+}
+.elves-agentbox__input:focus {
+  border-color: var(--elves-claude-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--elves-claude-accent) 30%, transparent);
+}
+
+.elves-agentbox__btn {
+  flex-shrink: 0;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  height: 36px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color 100ms ease, color 100ms ease, filter 100ms ease;
+}
+.elves-agentbox__btn--send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  padding: 0;
+  background: var(--elves-claude-accent);
+  color: var(--elves-on-primary, #fff);
+}
+.elves-agentbox__btn--send svg {
+  width: 16px;
+  height: 16px;
+}
+.elves-agentbox__btn--send:hover:not(:disabled) {
+  filter: brightness(0.96);
+}
+.elves-agentbox__btn--send:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.elves-agentbox__btn--cancel {
+  padding: 0 14px;
+  background: var(--elves-surface);
+  border-color: var(--elves-border-strong);
+  color: var(--elves-ink-soft);
+}
+.elves-agentbox__btn--cancel:hover {
+  background: var(--elves-surface-muted);
+  color: var(--elves-ink);
+}
+.elves-agentbox__btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring);
+}
+
+@keyframes elves-agentbox-rise {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px) scale(0.99); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+@keyframes elves-agentbox-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .elves-agentbox { animation: none; }
+  .elves-agentbox__input,
+  .elves-agentbox__btn,
+  .elves-agentbox__close { transition: none; }
+  .elves-agentbox__dot { animation: none; }
+}
