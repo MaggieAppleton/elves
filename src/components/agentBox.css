@@ -47,8 +47,11 @@
   color: var(--elves-claude-accent);
   background: color-mix(in srgb, var(--elves-claude-accent) 12%, transparent);
 }
-.elves-agentbox__close {
+.elves-agentbox__actions {
   margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .elves-agentbox__who {

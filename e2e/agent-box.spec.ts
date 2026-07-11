@@ -109,3 +109,35 @@ test('Cancel appears mid-run and hits the cancel endpoint', async ({ page }) => 
   await expect(page.getByTestId('agent-send')).toBeVisible()
   expect(cancelHit).toBe(true)
 })
+
+test('the clear button empties the transcript and closes the box', async ({ page }) => {
+  await page.route('**/agent/run', (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body: sse([
+        dataFrame({ type: 'started' }),
+        dataFrame({ type: 'text', text: 'Looking at your cards.' }),
+        dataFrame({ type: 'done', reply: 'Found two weak spots.' }),
+      ]),
+    }),
+  )
+
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  await page.keyboard.press('/')
+  await page.getByTestId('agent-input').fill('critique my argument')
+  await page.getByTestId('agent-send').click()
+
+  const transcript = page.getByTestId('agent-transcript')
+  await expect(transcript).toBeVisible()
+  await expect(transcript).toContainText('Looking at your cards.')
+
+  await page.getByTestId('agent-clear').click()
+  await expect(page.locator('.elves-agentbox')).toBeHidden()
+
+  await page.keyboard.press('/')
+  await expect(page.locator('.elves-agentbox')).toBeVisible()
+  await expect(page.getByTestId('agent-transcript')).toBeHidden()
+})
