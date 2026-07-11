@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import type { Editor } from 'tldraw'
 import type { Reference } from '../../src/model/types'
 import {
-  measuredCardHeight, measuredReferenceHeight, measuredSectionSize,
+  measuredCardHeight, measuredReferenceHeight, measuredSectionSize, fittedGistFontSize,
 } from '../../src/shapes/autosize'
 
 function ref(overrides: Partial<Reference> = {}): Reference {
@@ -89,6 +89,41 @@ describe('measuredReferenceHeight', () => {
     const annotationCall = calls.find((c) => c.text === 'note')
     expect(annotationCall).toBeDefined()
     expect(annotationCall!.maxWidth).toBe(250 - 26)
+  })
+})
+
+describe('fittedGistFontSize', () => {
+  // fake model: perLine = floor((w-30)/10) chars; h = lines * fontSize * 1.25.
+  // availH = height - 26 (CARD_PAD_Y).
+  it('uses the full ceiling size when the gist already fits the box', () => {
+    const { editor } = fakeEditor()
+    // 'hello' => 1 line; at 25px => h = 31.25; box height 100 => availH 74 >> 31.25.
+    expect(fittedGistFontSize(editor, 'hello', 250, 100, 25)).toBe(25)
+  })
+
+  it('shrinks below the ceiling until the whole gist fits', () => {
+    const { editor } = fakeEditor()
+    // 66 chars at width 250 (perLine 22) => 3 lines; h(f) = 3.75f.
+    // box height 86 => availH 60 => largest integer f with 3.75f <= 60 is 16.
+    const size = fittedGistFontSize(editor, 'a'.repeat(66), 250, 86, 25)
+    expect(size).toBe(16)
+    expect(size).toBeLessThan(25)
+  })
+
+  it('never shrinks below the 13px readability floor (clips instead)', () => {
+    const { editor } = fakeEditor()
+    // 220 chars => 10 lines; even at 13px h = 162.5 >> availH 14, so it can't fit.
+    expect(fittedGistFontSize(editor, 'a'.repeat(220), 250, 40, 25)).toBe(13)
+  })
+
+  it('memoizes by (gist, w, h, ceiling) so repeated renders re-measure nothing', () => {
+    const { editor, calls } = fakeEditor()
+    const uniq = 'memo-probe-' + 'z'.repeat(50)
+    fittedGistFontSize(editor, uniq, 240, 80, 25)
+    const afterFirst = calls.length
+    expect(afterFirst).toBeGreaterThan(0)
+    fittedGistFontSize(editor, uniq, 240, 80, 25)
+    expect(calls.length).toBe(afterFirst) // cache hit: no new measureText calls
   })
 })
 
