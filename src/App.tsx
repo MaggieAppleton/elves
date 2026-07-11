@@ -125,9 +125,15 @@ export default function App() {
   // Coalesces steady-state resyncs (see resyncCanvas / scheduleResync below): a
   // fetch already in flight absorbs any broadcasts that arrive while it's
   // pending, rather than racing a second overlapping loadCanvas.
-  const resyncStateRef = useRef<{ inFlight: boolean; pendingGlow: boolean }>({
+  // `deferred` holds a resync that arrived while the user was editing text: a
+  // full loadSnapshot mid-edit resets tldraw's editingShapeId (dropping them to
+  // select mode) and reverts keystrokes newer than the last autosave. The
+  // instance_page_state after-change handler (handleMount) flushes it the moment
+  // editing ends.
+  const resyncStateRef = useRef<{ inFlight: boolean; pendingGlow: boolean; deferred: boolean }>({
     inFlight: false,
     pendingGlow: false,
+    deferred: false,
   })
   // Counts spawns via addCard/addSection so each new card/section cascades
   // away from the last instead of stacking invisibly at the viewport center.
@@ -449,10 +455,27 @@ export default function App() {
   const scheduleResync = (pid: string, glow: boolean) => {
     const state = resyncStateRef.current
     state.pendingGlow = state.pendingGlow || glow
+    // Hold the resync while a text edit is in progress. loadSnapshot replaces the
+    // whole document, which resets editingShapeId (kicking the user out of the
+    // card they're typing in) and reverts any keystrokes newer than the last
+    // 500ms autosave. The common trigger is the user's OWN typing: each save
+    // schedules the server summariser, which ~1.5s later broadcasts a set_summary
+    // change-set back to this very tab. Deferring — not dropping — means the
+    // summary still lands once editing ends (see the flush in handleMount).
+    if (editorRef.current?.getEditingShapeId()) {
+      state.deferred = true
+      return
+    }
     if (state.inFlight) return
     state.inFlight = true
     void (async () => {
       for (;;) {
+        // The user may have entered a card between iterations; hold as above and
+        // let the editing-end flush restart us so we never load over a live edit.
+        if (editorRef.current?.getEditingShapeId()) {
+          state.deferred = true
+          break
+        }
         const glowNow = state.pendingGlow
         state.pendingGlow = false
         const ed = editorRef.current
@@ -516,6 +539,17 @@ export default function App() {
         return { ...next, rotation: 0, x: prev.x, y: prev.y }
       }
       return next
+    })
+    // Flush a resync that was held while the user was editing (scheduleResync).
+    // The instant they leave edit mode it's safe to replace the document, so pull
+    // the server's authoritative snapshot — including any summary broadcast that
+    // arrived and was deferred mid-edit.
+    ed.sideEffects.registerAfterChangeHandler('instance_page_state', (prev, next) => {
+      if (prev.editingShapeId && !next.editingShapeId && resyncStateRef.current.deferred) {
+        resyncStateRef.current.deferred = false
+        const pid = projectIdRef.current
+        if (pid) scheduleResync(pid, false)
+      }
     })
     const pid = projectIdRef.current
     if (!pid) return
