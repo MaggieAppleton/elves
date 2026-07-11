@@ -88,6 +88,12 @@ required `project` id, and you must know which project before doing anything.**
   can't tell you that *top-to-bottom within a section* is the load-bearing convention.
   `read_draft` hands you that order directly, with full prose text. Only prose cards
   compile (notes/images/references don't); merged and draft-excluded cards are skipped.
+- **`read_selection()`** — what the user has SELECTED on the canvas right now. Takes no
+  arguments and returns `{ project, selection, selectedAt }`. **Call this first whenever
+  the user points deictically** — "this", "these", "the selected card(s)" — where the
+  referent is on the canvas, not in the chat. It also tells you which `project` the
+  selection is in, so you can resolve "find more about this" without knowing the project
+  up front; drill into full text with `read_cards`.
 - **`add_comment(project, cardId, text, type?)`** — flag a weakness in a PROSE card. Use a type:
   - `needs-evidence` — a claim with nothing backing it.
   - `weak-argument` — reasoning that doesn't hold up or has an obvious counter.
