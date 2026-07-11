@@ -5,7 +5,7 @@ import {
 } from 'tldraw'
 import { useLayoutEffect, type ReactNode } from 'react'
 import { makeQuestionProps } from '../model/questions'
-import { measuredQuestionHeight, fittedGistFontSize } from './autosize'
+import { measuredQuestionHeight, fittedQuestionGistFontSize } from './autosize'
 import { agentInfo } from './agents'
 import { commentGist } from '../model/summary'
 import { shouldShowQuestionGist, gistFontSize } from './summaryView'
@@ -169,7 +169,7 @@ export class QuestionShapeUtil extends ShapeUtil<QuestionShape> {
               style={
                 showGist
                   ? {
-                      fontSize: fittedGistFontSize(
+                      fontSize: fittedQuestionGistFontSize(
                         this.editor,
                         commentGist(shape.props),
                         shape.props.w,

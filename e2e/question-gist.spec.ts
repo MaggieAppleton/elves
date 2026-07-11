@@ -108,11 +108,21 @@ test('a summarized question shows its gist when zoomed out, like a card', async 
   const questionGist = page.locator('[data-testid="question-text"][data-gist="true"]').first()
   await expect(questionGist).toHaveText('The smell of the room')
 
-  // The question's gist font-size matches a card gist's at the same zoom — one
-  // consistent, pure-function-of-zoom size across every summarized shape.
-  const cardFontSize = await page.getByTestId('card-gist').first().evaluate(
-    (el) => getComputedStyle(el).fontSize,
+  // The gist's font is counter-scaled UP with zoom (toward the cap) but then
+  // FITTED to the question's box — which, unlike a card, always reserves its
+  // header row. So the gist must sit fully inside the question box: its bottom
+  // edge no lower than the box's. This is the regression guard for the header
+  // reservation — before the fit reserved the header row, a short question's
+  // enlarged gist rendered at the cap and spilled out (questions have no
+  // overflow:hidden). Its size is a legible enlargement of the 14px body text.
+  const box = page.locator('.elves-question').first()
+  const boxRect = await box.boundingBox()
+  const gistRect = await questionGist.boundingBox()
+  if (!boxRect || !gistRect) throw new Error('question box or gist not in DOM')
+  expect(gistRect.y + gistRect.height).toBeLessThanOrEqual(boxRect.y + boxRect.height + 1)
+
+  const questionFontSize = await questionGist.evaluate((el) =>
+    parseFloat(getComputedStyle(el).fontSize),
   )
-  const questionFontSize = await questionGist.evaluate((el) => getComputedStyle(el).fontSize)
-  expect(questionFontSize).toBe(cardFontSize)
+  expect(questionFontSize).toBeGreaterThan(14) // enlarged above the body-text size
 })
