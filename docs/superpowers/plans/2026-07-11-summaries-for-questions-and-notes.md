@@ -398,6 +398,7 @@ git commit -m "feat(apply): apply set_question_summary to the question shape"
 - Modify: `server/summarize/reconcile.ts`
 - Modify: `server/summarize/index.ts`
 - Modify: `server/summarize/runner.ts`
+- Modify: `server/applyChangeSet.ts` (server-side persistence of the op — closes a gap the initial plan missed)
 - Test: `tests/server/reconcile.test.ts`
 
 **Interfaces:**
@@ -523,16 +524,74 @@ In `server/summarize/runner.ts`, import `snapshotToSummarizableQuestions` and `r
 
 (Leave the rest of `reconcileCanvasFile` unchanged for now — Task 6 changes its return shape.)
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [ ] **Step 6: Persist the op in the SERVER-SIDE applier (closes a plan gap)**
+
+There are TWO appliers. `src/apply/applyChangeSet.ts` (Task 3) drives the live tldraw editor in the browser. `server/applyChangeSet.ts`'s `applyChangeSetToSnapshot` is a SEPARATE, plain-JSON applier that `reconcileCanvasFile` uses to PERSIST summaries to `canvas.json` on disk. Its `switch (op.kind)` handles `set_summary` and `set_comment_summary` but has **no** `set_question_summary` case and **no** `default` — so without this step a reconciled question summary is silently dropped on disk and regenerated (re-calling Ollama, re-broadcasting) on every pass.
+
+First write the failing persistence test. In `tests/server/reconcile.test.ts` (or the existing server applier test file — check `tests/server/applyChangeSet.test.ts` if present and prefer it), add a unit test against `applyChangeSetToSnapshot`:
+
+```ts
+import { applyChangeSetToSnapshot } from '../../server/applyChangeSet'
+
+test('applyChangeSetToSnapshot persists a set_question_summary onto the question record', () => {
+  const snapshot = {
+    document: { store: {
+      'shape:q1': { id: 'shape:q1', typeName: 'shape', type: 'question', props: {
+        w: 370, h: 96, text: 'a long question?', authoredBy: 'claude', dismissed: false,
+        summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+      } },
+    } },
+  }
+  const next = applyChangeSetToSnapshot(snapshot as never, {
+    id: 's', author: 'claude',
+    ops: [{ kind: 'set_question_summary', questionId: 'shape:q1', summary: 'gist', summaryOfHash: 'h', summaryBy: 'b', summaryAt: 'T' }],
+  })
+  const q = (next as any).document.store['shape:q1']
+  expect(q.props.summary).toBe('gist')
+  expect(q.props.summaryOfHash).toBe('h')
+})
+```
+
+> Match `applyChangeSetToSnapshot`'s real snapshot shape — read the top of `server/applyChangeSet.ts` and an existing server applier test to copy the exact wrapper (`document.store` vs bare store) and how `next` is returned. Adjust the fixture to match; do not guess.
+
+Run: `npx vitest run -t "persists a set_question_summary"` → FAIL (no case; op falls through).
+
+Then add a `findQuestionShape` helper beside `findCardShape` (top of `server/applyChangeSet.ts`):
+
+```ts
+function findQuestionShape(store: StoreRecords, id: string): any | undefined {
+  const r = store[id]
+  return r && r.typeName === 'shape' && r.type === 'question' ? r : undefined
+}
+```
+
+And the case, after `set_comment_summary` (before the switch's closing `}` at ~line 361), mirroring `set_summary`:
+
+```ts
+      case 'set_question_summary': {
+        const shape = findQuestionShape(store, op.questionId)
+        if (shape) {
+          shape.props.summary = op.summary
+          shape.props.summaryOfHash = op.summaryOfHash
+          shape.props.summaryBy = op.summaryBy
+          shape.props.summaryAt = op.summaryAt
+        }
+        break
+      }
+```
+
+Run: `npx vitest run -t "persists a set_question_summary"` → PASS.
+
+- [ ] **Step 7: Run tests to verify they pass**
 
 Run: `npx vitest run tests/server/reconcile.test.ts`
-Expected: PASS (new question tests + existing ones).
+Expected: PASS (new question reconcile + persistence tests + existing ones).
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add server/digest.ts server/summarize/reconcile.ts server/summarize/index.ts server/summarize/runner.ts tests/server/reconcile.test.ts
-git commit -m "feat(summarize): reconcile question summaries"
+git add server/digest.ts server/summarize/reconcile.ts server/summarize/index.ts server/summarize/runner.ts server/applyChangeSet.ts tests/server/reconcile.test.ts
+git commit -m "feat(summarize): reconcile question summaries + persist them server-side"
 ```
 
 ---
