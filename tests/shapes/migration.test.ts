@@ -4,6 +4,7 @@ import {
   renameSourceToNoteUp, renameSourceToNoteDown, addAuthoredByUp, addDraftExcludedUp, addFigureUp,
   addAttributionUp, addCommentSummaryUp,
 } from '../../src/shapes/CardShapeUtil'
+import { addQuestionSummaryUp } from '../../src/shapes/QuestionShapeUtil'
 
 test('migration adds comments[] and mergedInto to a pre-Phase-2 card', () => {
   const oldProps: Record<string, unknown> = {
@@ -173,4 +174,14 @@ test('AddCommentSummary migration is a no-op on a card with no comments', () => 
   const props: Record<string, unknown> = { comments: [] }
   addCommentSummaryUp(props)
   expect(props.comments).toEqual([])
+})
+
+test('AddSummary migration adds the four null summary fields to a pre-summary question', () => {
+  const props: Record<string, unknown> = {
+    w: 370, h: 96, text: 'a long question?', authoredBy: 'claude', dismissed: false,
+  }
+  addQuestionSummaryUp(props)
+  expect(props).toMatchObject({
+    summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+  })
 })

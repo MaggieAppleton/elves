@@ -1,6 +1,6 @@
 import {
   ShapeUtil, TLBaseShape, HTMLContainer, Rectangle2d, T, RecordProps,
-  stopEventPropagation,
+  stopEventPropagation, createShapePropsMigrationSequence, createShapePropsMigrationIds,
   type Editor, type Geometry2d,
 } from 'tldraw'
 import { useLayoutEffect, type ReactNode } from 'react'
@@ -15,7 +15,38 @@ export type QuestionShape = TLBaseShape<'question', {
   text: string
   authoredBy: string
   dismissed: boolean
+  summary: string | null
+  summaryOfHash: string | null
+  summaryBy: string | null
+  summaryAt: string | null
 }>
+
+// Questions predate their summary fields; default them to "no summary yet" so
+// reconciliation treats an old question exactly like a freshly-created one.
+export function addQuestionSummaryUp(props: Record<string, unknown>): void {
+  props.summary = null
+  props.summaryOfHash = null
+  props.summaryBy = null
+  props.summaryAt = null
+}
+
+const questionVersions = createShapePropsMigrationIds('question', { AddSummary: 1 })
+
+export const questionMigrations = createShapePropsMigrationSequence({
+  sequence: [
+    {
+      id: questionVersions.AddSummary,
+      up: (props) => addQuestionSummaryUp(props as Record<string, unknown>),
+      down: (props) => {
+        const p = props as Record<string, unknown>
+        delete p.summary
+        delete p.summaryOfHash
+        delete p.summaryBy
+        delete p.summaryAt
+      },
+    },
+  ],
+})
 
 /**
  * Keeps a question's height fitted to its text (its width is fixed — a small
@@ -52,7 +83,13 @@ export class QuestionShapeUtil extends ShapeUtil<QuestionShape> {
     text: T.string,
     authoredBy: T.string,
     dismissed: T.boolean,
+    summary: T.nullable(T.string),
+    summaryOfHash: T.nullable(T.string),
+    summaryBy: T.nullable(T.string),
+    summaryAt: T.nullable(T.string),
   }
+
+  static override migrations = questionMigrations
 
   getDefaultProps(): QuestionShape['props'] {
     return makeQuestionProps()
