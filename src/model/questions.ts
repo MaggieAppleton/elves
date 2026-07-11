@@ -23,6 +23,16 @@ export interface QuestionProps {
   /** Dismissed by the user once answered (or waved off). Hidden but recoverable
    * in-file — never deleted, so the agent still sees it in read_map and won't re-ask. */
   dismissed: boolean
+  /** Model-authored one-phrase gist of the question, shown zoomed out in place
+   * of the full text (see commentGist). Mirrors a card's summary fields exactly;
+   * null when not yet generated. */
+  summary: string | null
+  /** Hash of the `text` this summary was built from, for staleness detection. */
+  summaryOfHash: string | null
+  /** Provenance of the summary, e.g. 'ollama/llama3.2'. */
+  summaryBy: string | null
+  /** ISO timestamp of when the summary was generated. */
+  summaryAt: string | null
 }
 
 // A question sits at the same measure as the user's cards, so an agent's ask
@@ -36,5 +46,8 @@ export function makeQuestionProps(
   authoredBy = 'claude',
   dismissed = false,
 ): QuestionProps {
-  return { w: QUESTION_DEFAULT_W, h: QUESTION_DEFAULT_H, text, authoredBy, dismissed }
+  return {
+    w: QUESTION_DEFAULT_W, h: QUESTION_DEFAULT_H, text, authoredBy, dismissed,
+    summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+  }
 }

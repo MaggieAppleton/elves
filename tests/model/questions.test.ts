@@ -5,6 +5,7 @@ describe('question factory', () => {
   test('defaults to an empty, claude-authored, undismissed question', () => {
     expect(makeQuestionProps()).toEqual({
       w: QUESTION_DEFAULT_W, h: QUESTION_DEFAULT_H, text: '', authoredBy: 'claude', dismissed: false,
+      summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
     })
   })
 

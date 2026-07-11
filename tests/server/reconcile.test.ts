@@ -4,12 +4,15 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import request from 'supertest'
 import { createServer } from '../../server/app'
-import { createProject } from '../../server/projects'
+import { createProject, canvasPathFor } from '../../server/projects'
 import {
-  reconcileSummaries, reconcileCommentSummaries, type ReconcileCard, type ReconcileComment,
+  reconcileSummaries, reconcileCommentSummaries, reconcileQuestionSummaries,
+  type ReconcileCard, type ReconcileComment, type ReconcileQuestion,
 } from '../../server/summarize/reconcile'
+import { reconcileCanvasFile } from '../../server/summarize/runner'
 import type { Summarizer } from '../../server/summarize'
 import { summaryHash } from '../../src/model/summary'
+import { applyChangeSetToSnapshot } from '../../server/applyChangeSet'
 
 const LONG = 'A '.repeat(120) + 'the end.'
 
@@ -119,12 +122,86 @@ test('reconcile comment summaries yields null when the summarizer returns nothin
   expect(cs).toBeNull()
 })
 
+// --- Questions: the same reconciliation, addressed by the question's own id -
+
+function question(over: Partial<ReconcileQuestion> = {}): ReconcileQuestion {
+  return { questionId: 'q1', text: LONG, summary: null, summaryOfHash: null, ...over }
+}
+
+test('reconcile generates a set_question_summary for a question with no summary', async () => {
+  const fake = new FakeSummarizer()
+  const cs = await reconcileQuestionSummaries([question()], fake, () => 'T')
+  expect(fake.calls).toEqual([LONG])
+  expect(cs?.ops).toEqual([
+    { kind: 'set_question_summary', questionId: 'q1', summary: 'a gist', summaryOfHash: summaryHash(LONG), summaryBy: 'fake/test', summaryAt: 'T' },
+  ])
+})
+
+test('reconcile is a no-op for an up-to-date question', async () => {
+  const fake = new FakeSummarizer()
+  const cs = await reconcileQuestionSummaries(
+    [question({ summary: 'g', summaryOfHash: summaryHash(LONG) })], fake, () => 'T',
+  )
+  expect(fake.calls).toEqual([])
+  expect(cs).toBeNull()
+})
+
+test('applyChangeSetToSnapshot persists a set_question_summary onto the question record', () => {
+  const snapshot = {
+    document: { store: {
+      'shape:q1': { id: 'shape:q1', typeName: 'shape', type: 'question', props: {
+        w: 370, h: 96, text: 'a long question?', authoredBy: 'claude', dismissed: false,
+        summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+      } },
+    } },
+  }
+  const next = applyChangeSetToSnapshot(snapshot as never, {
+    id: 's', author: 'claude',
+    ops: [{ kind: 'set_question_summary', questionId: 'shape:q1', summary: 'gist', summaryOfHash: 'h', summaryBy: 'b', summaryAt: 'T' }],
+  })
+  const q = (next as any).document.store['shape:q1']
+  expect(q.props.summary).toBe('gist')
+  expect(q.props.summaryOfHash).toBe('h')
+})
+
 // --- Integration: the server wires reconcile into a canvas save --------------
 
 let dirs: string[] = []
 afterEach(async () => {
   await Promise.all(dirs.map((d) => fs.rm(d, { recursive: true, force: true })))
   dirs = []
+})
+
+/** A temp project with an on-disk canvas.json holding one long, unsummarized
+ * card — reconcileCanvasFile's own file-driven entry point, as opposed to the
+ * pure reconcileSummaries tests above which pass in-memory card arrays. */
+async function seedCanvasWithLongCard(): Promise<{ canvasPath: string }> {
+  const d = await fs.mkdtemp(join(tmpdir(), 'elves-sum-'))
+  dirs.push(d)
+  await createProject(d, 'Essay', '2026-07-02T10:00:00.000Z')
+  const canvasPath = canvasPathFor(d, 'essay')!
+  const snap = {
+    document: { store: { 'shape:a': {
+      id: 'shape:a', typeName: 'shape', type: 'card', x: 0, y: 0,
+      props: { w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text: LONG, comments: [], mergedInto: null },
+    } } },
+    session: null,
+  }
+  await fs.writeFile(canvasPath, JSON.stringify(snap), 'utf8')
+  return { canvasPath }
+}
+
+test('reconcileCanvasFile reports pending when the summarizer is unreachable', async () => {
+  const { canvasPath } = await seedCanvasWithLongCard()
+  const down = new FakeSummarizer(() => null)
+  const r1 = await reconcileCanvasFile(canvasPath, down, () => 'T')
+  expect(r1.changeSet).toBeNull()
+  expect(r1.pending).toBe(true)
+
+  const up = new FakeSummarizer(() => 'a gist')
+  const r2 = await reconcileCanvasFile(canvasPath, up, () => 'T')
+  expect(r2.changeSet?.ops.length).toBeGreaterThan(0)
+  expect(r2.pending).toBe(false)
 })
 
 test('createServer with a summarizer broadcasts + persists a summary after a canvas save', async () => {
@@ -192,4 +269,48 @@ test('reconcileCanvasFile summarizes a comment alongside its card in one combine
   const cards = await request(app).post('/projects/essay/cards').send({ ids: ['shape:a'] })
   expect(cards.body.cards[0].summary).toBe('a gist')
   expect(cards.body.cards[0].comments[0].summary).toBe('a gist')
+})
+
+test('a summary left pending is retried once the summarizer recovers', async () => {
+  const d = await fs.mkdtemp(join(tmpdir(), 'elves-sum-'))
+  dirs.push(d)
+  await createProject(d, 'Essay', '2026-07-02T10:00:00.000Z')
+
+  let up = false
+  const flaky = new FakeSummarizer(() => (up ? 'a gist' : null))
+  let changeSetCount = 0
+  const onChangeSet = () => { changeSetCount += 1 }
+  const app = createServer(d, onChangeSet, {
+    summarizer: flaky, now: () => 'T', debounceMs: 1, retryBaseMs: 5, retryMaxMs: 10,
+  })
+
+  const snap = {
+    document: { store: { 'shape:a': {
+      id: 'shape:a', typeName: 'shape', type: 'card', x: 0, y: 0,
+      props: { w: 240, h: 120, kind: 'prose', noteKind: null, origin: null, text: LONG, comments: [], mergedInto: null },
+    } } },
+    session: null,
+  }
+  await request(app).post('/projects/essay/canvas').send(snap)
+
+  // Give the debounced reconcile time to run while the summarizer is down.
+  await new Promise((r) => setTimeout(r, 30))
+  let cards = await request(app).post('/projects/essay/cards').send({ ids: ['shape:a'] })
+  expect(cards.body.cards[0].summary).toBeNull()
+  expect(flaky.calls.length).toBeGreaterThan(0)
+  const callsWhileDown = flaky.calls.length
+
+  // The summarizer recovers — no further save or restart needed.
+  up = true
+  await new Promise((r) => setTimeout(r, 100))
+
+  cards = await request(app).post('/projects/essay/cards').send({ ids: ['shape:a'] })
+  expect(cards.body.cards[0].summary).toBe('a gist')
+  expect(changeSetCount).toBeGreaterThan(0)
+
+  // Once filled, no further retry should fire — call count stays put.
+  const callsAfterFilled = flaky.calls.length
+  await new Promise((r) => setTimeout(r, 60))
+  expect(flaky.calls.length).toBe(callsAfterFilled)
+  expect(callsAfterFilled).toBeGreaterThan(callsWhileDown)
 })

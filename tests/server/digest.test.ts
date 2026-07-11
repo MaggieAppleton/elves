@@ -8,6 +8,7 @@ import {
   snapshotToCardsById,
   snapshotToSummarizableCards,
   snapshotToSummarizableComments,
+  snapshotToSummarizableQuestions,
   snapshotToGroups,
   snapshotToDraft,
   resolvePageXY,
@@ -288,6 +289,25 @@ test('snapshotToSummarizableComments exposes one entry per comment, keyed by car
 
 test('snapshotToSummarizableComments returns [] for an empty canvas', () => {
   expect(snapshotToSummarizableComments({ document: null, session: null })).toEqual([])
+})
+
+test('snapshotToSummarizableQuestions excludes dismissed questions — a hidden gist should never be generated', () => {
+  const snapshot = {
+    document: { store: {
+      'shape:q1': {
+        id: 'shape:q1', typeName: 'shape', type: 'question', x: 5, y: 6,
+        props: { w: 220, h: 96, text: 'an active question?', authoredBy: 'claude', dismissed: false, summary: null, summaryOfHash: null },
+      },
+      'shape:q2': {
+        id: 'shape:q2', typeName: 'shape', type: 'question', x: 7, y: 8,
+        props: { w: 220, h: 96, text: 'a dismissed question?', authoredBy: 'claude', dismissed: true, summary: null, summaryOfHash: null },
+      },
+    } },
+    session: null,
+  }
+  expect(snapshotToSummarizableQuestions(snapshot)).toEqual([
+    { questionId: 'shape:q1', text: 'an active question?', summary: null, summaryOfHash: null },
+  ])
 })
 
 // A canvas with two grouped cards (A, B) and one ungrouped card (C).

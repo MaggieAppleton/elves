@@ -1,12 +1,14 @@
 import {
   ShapeUtil, TLBaseShape, HTMLContainer, Rectangle2d, T, RecordProps,
-  stopEventPropagation,
+  stopEventPropagation, createShapePropsMigrationSequence, createShapePropsMigrationIds,
   type Editor, type Geometry2d,
 } from 'tldraw'
 import { useLayoutEffect, type ReactNode } from 'react'
 import { makeQuestionProps } from '../model/questions'
-import { measuredQuestionHeight } from './autosize'
+import { measuredQuestionHeight, fittedQuestionGistFontSize } from './autosize'
 import { agentInfo } from './agents'
+import { commentGist } from '../model/summary'
+import { shouldShowQuestionGist, gistFontSize } from './summaryView'
 import './question.css'
 
 export type QuestionShape = TLBaseShape<'question', {
@@ -15,7 +17,41 @@ export type QuestionShape = TLBaseShape<'question', {
   text: string
   authoredBy: string
   dismissed: boolean
+  summary: string | null
+  summaryOfHash: string | null
+  summaryBy: string | null
+  summaryAt: string | null
 }>
+
+// Questions predate their summary fields; default them to "no summary yet" so
+// reconciliation treats an old question exactly like a freshly-created one.
+export function addQuestionSummaryUp(props: Record<string, unknown>): void {
+  props.summary = null
+  props.summaryOfHash = null
+  props.summaryBy = null
+  props.summaryAt = null
+}
+
+// The inverse of addQuestionSummaryUp: strips the four summary fields back
+// off, restoring a pre-summary question shape.
+export function removeQuestionSummaryDown(props: Record<string, unknown>): void {
+  delete props.summary
+  delete props.summaryOfHash
+  delete props.summaryBy
+  delete props.summaryAt
+}
+
+const questionVersions = createShapePropsMigrationIds('question', { AddSummary: 1 })
+
+export const questionMigrations = createShapePropsMigrationSequence({
+  sequence: [
+    {
+      id: questionVersions.AddSummary,
+      up: (props) => addQuestionSummaryUp(props as Record<string, unknown>),
+      down: (props) => removeQuestionSummaryDown(props as Record<string, unknown>),
+    },
+  ],
+})
 
 /**
  * Keeps a question's height fitted to its text (its width is fixed — a small
@@ -52,7 +88,13 @@ export class QuestionShapeUtil extends ShapeUtil<QuestionShape> {
     text: T.string,
     authoredBy: T.string,
     dismissed: T.boolean,
+    summary: T.nullable(T.string),
+    summaryOfHash: T.nullable(T.string),
+    summaryBy: T.nullable(T.string),
+    summaryAt: T.nullable(T.string),
   }
+
+  static override migrations = questionMigrations
 
   getDefaultProps(): QuestionShape['props'] {
     return makeQuestionProps()
@@ -68,6 +110,12 @@ export class QuestionShapeUtil extends ShapeUtil<QuestionShape> {
     // Unknown ids fall back to the Claude accent so a question is never colourless.
     const agent = agentInfo(authoredBy)
     const accent = agent?.accent ?? 'var(--elves-claude-accent)'
+    // Zoomed far out, a summarized question shows its gist so it reads at a
+    // glance alongside gisted cards. getZoomLevel is reactive, so this
+    // re-renders as the user zooms; the gist font counter-scales with zoom to
+    // stay a readable on-screen size, then is fitted to the box (as cards do).
+    const zoom = this.editor.getZoomLevel()
+    const showGist = shouldShowQuestionGist(zoom, shape.props)
     // The dismiss ✓ is revealed on hover/selection. The shape body is
     // pointer-events:none (so clicks fall through to the canvas for dragging),
     // which means CSS :hover can't fire on it — so drive the reveal from tldraw's
@@ -117,7 +165,26 @@ export class QuestionShapeUtil extends ShapeUtil<QuestionShape> {
                 ✓
               </button>
             </div>
-            <div className="elves-question__text" data-testid="question-text">{text}</div>
+            <div
+              className="elves-question__text"
+              data-testid="question-text"
+              data-gist={showGist ? 'true' : undefined}
+              style={
+                showGist
+                  ? {
+                      fontSize: fittedQuestionGistFontSize(
+                        this.editor,
+                        commentGist(shape.props),
+                        shape.props.w,
+                        shape.props.h,
+                        gistFontSize(zoom),
+                      ),
+                    }
+                  : undefined
+              }
+            >
+              {showGist ? commentGist(shape.props) : text}
+            </div>
           </div>
         </HTMLContainer>
       </AutosizeQuestion>

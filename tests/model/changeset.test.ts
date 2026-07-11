@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest'
 import type { Reference } from '../../src/model/types'
 import {
   isChangeSet, isReference, planMerge, referencedCardIds, referencedSectionIds, changeSetWritesText,
-  mergeRepresentativeIds,
+  mergeRepresentativeIds, isSummaryOp,
 } from '../../src/model/changeset'
 
 const VALID_REF: Reference = {
@@ -241,6 +241,36 @@ describe('set_comment_summary op', () => {
   })
 })
 
+describe('set_question_summary op', () => {
+  const summ = (over: Record<string, unknown> = {}) => ({
+    kind: 'set_question_summary' as const, questionId: 'q1',
+    summary: 'a gist', summaryOfHash: 'abc', summaryBy: 'ollama/llama3.2',
+    summaryAt: '2026-07-03T00:00:00.000Z', ...over,
+  })
+
+  test('a well-formed set_question_summary change-set validates', () => {
+    expect(isChangeSet({ id: 's1', author: 'claude', ops: [summ()] })).toBe(true)
+    // nulls are valid (a clear)
+    expect(isChangeSet({
+      id: 's1', author: 'claude',
+      ops: [summ({ summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null })],
+    })).toBe(true)
+  })
+
+  test('a malformed set_question_summary is rejected', () => {
+    expect(isChangeSet({ id: 's1', author: 'claude', ops: [summ({ questionId: 42 })] })).toBe(false)
+    expect(isChangeSet({ id: 's1', author: 'claude', ops: [summ({ summaryAt: 5 })] })).toBe(false)
+  })
+
+  test('set_question_summary does not count as writing prose — it is a label about the question', () => {
+    expect(changeSetWritesText({ id: 's1', author: 'claude', ops: [summ()] })).toBe(false)
+  })
+
+  test('referencedCardIds excludes set_question_summary — it targets a question, not a card', () => {
+    expect(referencedCardIds({ id: 's1', author: 'claude', ops: [summ()] })).toEqual([])
+  })
+})
+
 describe('group ops', () => {
   test('isChangeSet accepts well-formed group_cards / ungroup_cards', () => {
     expect(isChangeSet({
@@ -277,6 +307,25 @@ describe('group ops', () => {
       ],
     }
     expect(referencedCardIds(cs).sort()).toEqual(['shape:a', 'shape:b'])
+  })
+})
+
+describe('isSummaryOp', () => {
+  test('true for all three summary op kinds', () => {
+    expect(isSummaryOp({
+      kind: 'set_summary', cardId: 'a', summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+    })).toBe(true)
+    expect(isSummaryOp({
+      kind: 'set_comment_summary', cardId: 'a', commentId: 'c', summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+    })).toBe(true)
+    expect(isSummaryOp({
+      kind: 'set_question_summary', questionId: 'q', summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+    })).toBe(true)
+  })
+
+  test('false for non-summary ops', () => {
+    expect(isSummaryOp({ kind: 'add_comment', cardId: 'a', comment: { type: null, text: 'hi' } })).toBe(false)
+    expect(isSummaryOp({ kind: 'edit_card', cardId: 'a', text: 't' })).toBe(false)
   })
 })
 

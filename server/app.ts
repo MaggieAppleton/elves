@@ -108,6 +108,9 @@ export interface SummarizeConfig {
   summarizer: Summarizer
   now?: () => string
   debounceMs?: number
+  /** Backoff for retrying reconciles left pending by an unreachable summarizer. */
+  retryBaseMs?: number
+  retryMaxMs?: number
 }
 
 /**
@@ -157,6 +160,36 @@ export function createServer(
   const running = new Set<string>()
   const dirty = new Set<string>()
 
+  // Retry state: when a reconcile leaves work `pending` (the summarizer was
+  // unreachable, e.g. Ollama down), schedule a backoff re-run per project so
+  // it self-heals once the summarizer recovers — no save or restart needed.
+  // The retry re-enters runSummaries, so it shares the SAME running/dirty
+  // single-flight guard above: a retry firing mid-debounced-reconcile just
+  // marks the project dirty rather than racing it.
+  const retryBaseMs = summarize?.retryBaseMs ?? 5_000
+  const retryMaxMs = summarize?.retryMaxMs ?? 60_000
+  const retryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  const retryDelay = new Map<string, number>()
+
+  function scheduleRetry(projectId: string): void {
+    if (retryTimers.has(projectId)) return // one pending retry per project
+    const delay = Math.min(retryDelay.get(projectId) ?? retryBaseMs, retryMaxMs)
+    retryDelay.set(projectId, Math.min(delay * 2, retryMaxMs))
+    const timer = setTimeout(() => {
+      retryTimers.delete(projectId)
+      void runSummaries(projectId)
+    }, delay)
+    timer.unref?.()
+    retryTimers.set(projectId, timer)
+  }
+
+  function clearRetry(projectId: string): void {
+    const t = retryTimers.get(projectId)
+    if (t) clearTimeout(t)
+    retryTimers.delete(projectId)
+    retryDelay.delete(projectId)
+  }
+
   async function runSummaries(projectId: string): Promise<void> {
     if (!summarize) return
     if (running.has(projectId)) {
@@ -167,8 +200,10 @@ export function createServer(
     try {
       const canvasPath = canvasPathFor(dataRoot, projectId)
       if (canvasPath && (await getProject(dataRoot, projectId))) {
-        const cs = await reconcileCanvasFile(canvasPath, summarize.summarizer, now)
-        if (cs) onChangeSet?.(projectId, cs)
+        const { changeSet, pending } = await reconcileCanvasFile(canvasPath, summarize.summarizer, now)
+        if (changeSet) onChangeSet?.(projectId, changeSet)
+        if (pending) scheduleRetry(projectId)
+        else clearRetry(projectId)
       }
     } catch (err) {
       console.error('[elves] summary reconcile failed:', err)

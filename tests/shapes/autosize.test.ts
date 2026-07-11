@@ -3,6 +3,7 @@ import type { Editor } from 'tldraw'
 import type { Reference } from '../../src/model/types'
 import {
   measuredCardHeight, measuredReferenceHeight, measuredSectionSize, fittedGistFontSize,
+  measuredQuestionHeight, fittedQuestionGistFontSize,
 } from '../../src/shapes/autosize'
 
 function ref(overrides: Partial<Reference> = {}): Reference {
@@ -124,6 +125,46 @@ describe('fittedGistFontSize', () => {
     expect(afterFirst).toBeGreaterThan(0)
     fittedGistFontSize(editor, uniq, 240, 80, 25)
     expect(calls.length).toBe(afterFirst) // cache hit: no new measureText calls
+  })
+})
+
+describe('fittedQuestionGistFontSize', () => {
+  // A question ALWAYS shows its header row, so the gist's true vertical budget
+  // is height - QUESTION_PAD_Y(26) - QUESTION_HEADER_ROW(24) = height - 50,
+  // whereas the card fit only reserves CARD_PAD_Y(26). These prove the question
+  // fit reserves that extra header row, so a short question's gist can't spill.
+  const GIST = 'The smell of the room' // 21 chars => 1 line at these widths
+
+  it('reserves the header row: a short one-line question box fits its gist below the cap', () => {
+    const { editor } = fakeEditor()
+    // A one-line question at w=370: measuredQuestionHeight = ceil(19.6 + 26 + 24) = 70.
+    const h = measuredQuestionHeight(editor, 'q?', 370)
+    expect(h).toBe(70)
+    // availH = 70 - 50 = 20; the gist is 1 line so h(f) = 1.25f; at the 25px cap
+    // that's 31.25 > 20 and must shrink to the largest f with 1.25f <= 20 => 16.
+    const size = fittedQuestionGistFontSize(editor, GIST, 370, h, 25)
+    expect(size).toBe(16)
+    expect(size).toBeLessThan(25) // a known-overflowing case shrinks below the cap
+    // And the fitted size's wrapped height fits the TRUE text budget (not the
+    // over-generous card budget), i.e. it stays inside the box above the header.
+    const wrapped = editor.textMeasure.measureText(GIST, {
+      fontFamily: "'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif",
+      fontSize: size, lineHeight: 1.25, fontWeight: '500', fontStyle: 'normal',
+      maxWidth: Math.max(40, 370 - 26), padding: '0px',
+    }).h
+    expect(wrapped).toBeLessThanOrEqual(70 - 26 - 24)
+  })
+
+  it('reserves strictly more chrome than the card fit for the same box', () => {
+    const { editor } = fakeEditor()
+    const h = measuredQuestionHeight(editor, 'q?', 370) // 70
+    // Card fit sees availH = 70 - 26 = 44 (fits the 1-line gist at 25px cap);
+    // question fit sees availH = 20 and must shrink — so it's never larger.
+    const asCard = fittedGistFontSize(editor, GIST, 370, h, 25)
+    const asQuestion = fittedQuestionGistFontSize(editor, GIST, 370, h, 25)
+    expect(asCard).toBe(25)
+    expect(asQuestion).toBeLessThanOrEqual(asCard)
+    expect(asQuestion).toBeLessThan(asCard)
   })
 })
 

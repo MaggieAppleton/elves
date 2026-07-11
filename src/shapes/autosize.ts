@@ -79,19 +79,26 @@ const GIST_FONT_MIN = 13 // stay readable; below this we clip instead of shrinki
 // this turns ~4 DOM measures per card per frame into one lookup.
 const gistFitCache = new Map<string, number>()
 
-export function fittedGistFontSize(
+/**
+ * The core gist-fit search: given the text column width and vertical budget
+ * ALREADY computed by the caller (each shape reserves its own chrome — cards a
+ * badge row, questions a header row), shrink the zoom's font from maxFontSize
+ * until the wrapped gist fits `availH`, flooring at GIST_FONT_MIN (below which
+ * the shape clips instead). Pure function of its inputs, so it's memoized by
+ * them — a zoom gesture re-renders every gist many times but the insets rarely
+ * change between frames.
+ */
+function fitGistFontSize(
   editor: Editor,
   gist: string,
-  width: number,
-  height: number,
+  maxWidth: number,
+  availH: number,
   maxFontSize: number,
 ): number {
-  const key = `${gist}|${width}|${height}|${maxFontSize}`
+  const key = `${gist}|${maxWidth}|${availH}|${maxFontSize}`
   const cached = gistFitCache.get(key)
   if (cached !== undefined) return cached
 
-  const maxWidth = Math.max(40, width - CARD_PAD_X)
-  const availH = height - CARD_PAD_Y
   const fits = (fontSize: number) =>
     editor.textMeasure.measureText(gist || ' ', {
       fontFamily: FONT_FAMILY,
@@ -106,7 +113,7 @@ export function fittedGistFontSize(
   let result = maxFontSize
   if (!fits(maxFontSize)) {
     // Largest integer size in [GIST_FONT_MIN, maxFontSize] whose wrapped height
-    // fits; if even the floor overflows, the card's overflow:hidden clips it.
+    // fits; if even the floor overflows, the shape's overflow:hidden clips it.
     let lo = GIST_FONT_MIN
     let hi = maxFontSize
     let best = GIST_FONT_MIN
@@ -123,10 +130,27 @@ export function fittedGistFontSize(
   }
 
   // Cap the cache so a long session of edits can't grow it unbounded; the working
-  // set (visible gist cards at the current zoom) is small, so a simple clear is fine.
+  // set (visible gist shapes at the current zoom) is small, so a simple clear is fine.
   if (gistFitCache.size > 500) gistFitCache.clear()
   gistFitCache.set(key, result)
   return result
+}
+
+export function fittedGistFontSize(
+  editor: Editor,
+  gist: string,
+  width: number,
+  height: number,
+  maxFontSize: number,
+): number {
+  // A card reserves CARD_PAD_X/Y of chrome; its overflow:hidden clips the rest.
+  return fitGistFontSize(
+    editor,
+    gist,
+    Math.max(40, width - CARD_PAD_X),
+    height - CARD_PAD_Y,
+    maxFontSize,
+  )
 }
 
 // --- Reference cards -----------------------------------------------------
@@ -289,4 +313,29 @@ export function measuredQuestionHeight(editor: Editor, text: string, width: numb
     padding: '0px',
   })
   return Math.ceil(h + QUESTION_PAD_Y + QUESTION_HEADER_ROW)
+}
+
+/**
+ * Fit a question's gist to its box. Unlike a card, a question ALWAYS shows its
+ * header row (the "?" glyph + agent mark), so the gist's vertical budget is the
+ * box height minus the padding AND that header row — the same reservation
+ * measuredQuestionHeight makes. Reusing the card fit (which only subtracts
+ * CARD_PAD_Y) left the gist 24px too much room, so a short question's enlarged
+ * gist could render at the cap and spill out of the box (questions have no
+ * overflow:hidden). This delegates to the shared fit with the RIGHT insets.
+ */
+export function fittedQuestionGistFontSize(
+  editor: Editor,
+  gist: string,
+  width: number,
+  height: number,
+  maxFontSize: number,
+): number {
+  return fitGistFontSize(
+    editor,
+    gist,
+    Math.max(40, width - QUESTION_PAD_X),
+    height - QUESTION_PAD_Y - QUESTION_HEADER_ROW,
+    maxFontSize,
+  )
 }
