@@ -6,10 +6,12 @@ import request from 'supertest'
 import { createServer } from '../../server/app'
 import { createProject } from '../../server/projects'
 import {
-  reconcileSummaries, reconcileCommentSummaries, type ReconcileCard, type ReconcileComment,
+  reconcileSummaries, reconcileCommentSummaries, reconcileQuestionSummaries,
+  type ReconcileCard, type ReconcileComment, type ReconcileQuestion,
 } from '../../server/summarize/reconcile'
 import type { Summarizer } from '../../server/summarize'
 import { summaryHash } from '../../src/model/summary'
+import { applyChangeSetToSnapshot } from '../../server/applyChangeSet'
 
 const LONG = 'A '.repeat(120) + 'the end.'
 
@@ -117,6 +119,48 @@ test('reconcile comment summaries yields null when the summarizer returns nothin
   const fake = new FakeSummarizer(() => null)
   const cs = await reconcileCommentSummaries([comment()], fake, () => 'T')
   expect(cs).toBeNull()
+})
+
+// --- Questions: the same reconciliation, addressed by the question's own id -
+
+function question(over: Partial<ReconcileQuestion> = {}): ReconcileQuestion {
+  return { questionId: 'q1', text: LONG, summary: null, summaryOfHash: null, ...over }
+}
+
+test('reconcile generates a set_question_summary for a question with no summary', async () => {
+  const fake = new FakeSummarizer()
+  const cs = await reconcileQuestionSummaries([question()], fake, () => 'T')
+  expect(fake.calls).toEqual([LONG])
+  expect(cs?.ops).toEqual([
+    { kind: 'set_question_summary', questionId: 'q1', summary: 'a gist', summaryOfHash: summaryHash(LONG), summaryBy: 'fake/test', summaryAt: 'T' },
+  ])
+})
+
+test('reconcile is a no-op for an up-to-date question', async () => {
+  const fake = new FakeSummarizer()
+  const cs = await reconcileQuestionSummaries(
+    [question({ summary: 'g', summaryOfHash: summaryHash(LONG) })], fake, () => 'T',
+  )
+  expect(fake.calls).toEqual([])
+  expect(cs).toBeNull()
+})
+
+test('applyChangeSetToSnapshot persists a set_question_summary onto the question record', () => {
+  const snapshot = {
+    document: { store: {
+      'shape:q1': { id: 'shape:q1', typeName: 'shape', type: 'question', props: {
+        w: 370, h: 96, text: 'a long question?', authoredBy: 'claude', dismissed: false,
+        summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+      } },
+    } },
+  }
+  const next = applyChangeSetToSnapshot(snapshot as never, {
+    id: 's', author: 'claude',
+    ops: [{ kind: 'set_question_summary', questionId: 'shape:q1', summary: 'gist', summaryOfHash: 'h', summaryBy: 'b', summaryAt: 'T' }],
+  })
+  const q = (next as any).document.store['shape:q1']
+  expect(q.props.summary).toBe('gist')
+  expect(q.props.summaryOfHash).toBe('h')
 })
 
 // --- Integration: the server wires reconcile into a canvas save --------------

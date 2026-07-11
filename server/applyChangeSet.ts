@@ -19,6 +19,11 @@ function findCardShape(store: StoreRecords, id: string): any | undefined {
   return r && r.typeName === 'shape' && r.type === 'card' ? r : undefined
 }
 
+function findQuestionShape(store: StoreRecords, id: string): any | undefined {
+  const r = store[id]
+  return r && r.typeName === 'shape' && r.type === 'question' ? r : undefined
+}
+
 /** Gap left below a card we had to slide a new one past. */
 const PLACEMENT_GAP = 24
 /** A card's stored height is understated until the browser measures it to fit
@@ -355,6 +360,16 @@ export function applyChangeSetToSnapshot(
           comment.summaryOfHash = op.summaryOfHash
           comment.summaryBy = op.summaryBy
           comment.summaryAt = op.summaryAt
+        }
+        break
+      }
+      case 'set_question_summary': {
+        const shape = findQuestionShape(store, op.questionId)
+        if (shape) {
+          shape.props.summary = op.summary
+          shape.props.summaryOfHash = op.summaryOfHash
+          shape.props.summaryBy = op.summaryBy
+          shape.props.summaryAt = op.summaryAt
         }
         break
       }

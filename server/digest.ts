@@ -208,6 +208,23 @@ export function snapshotToSummarizableComments(
   return out
 }
 
+/** Just the fields question-summary reconciliation reasons about, keyed by the
+ * question's own shape id. A question is agent-authored plain text, so it is
+ * summarizable exactly like a comment. */
+export function snapshotToSummarizableQuestions(
+  snapshot: CanvasSnapshot,
+): Array<SummarizableComment & { questionId: string }> {
+  const store = storeOf(snapshot)
+  return Object.values(store)
+    .filter((r: any) => r && r.typeName === 'shape' && r.type === 'question' && r.props)
+    .map((r: any) => ({
+      questionId: r.id,
+      text: r.props.text ?? '',
+      summary: r.props.summary ?? null,
+      summaryOfHash: r.props.summaryOfHash ?? null,
+    }))
+}
+
 /** The cheap navigation map — sections/groups plus a small entry per card, no full text. */
 export function snapshotToCardMap(snapshot: CanvasSnapshot): CardMap {
   const store = storeOf(snapshot)
