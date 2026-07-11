@@ -570,6 +570,9 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                     mode with the rest of the chrome. */}
                 {!showGist && (kind === 'note' || kind === 'prose') && (
                   <div className="elves-card__corner">
+                    {/* Merged chip sits left of the author mark(s) — same flex row,
+                        so gap keeps them apart instead of stacking in the corner. */}
+                    {mergedBadge}
                     {kind === 'note' && (
                       <AuthorMarks
                         attribution={shape.props.attribution}
@@ -628,7 +631,6 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                     <span className="elves-badge" data-testid="card-badge">{kind === 'prose' ? 'Prose' : 'Note'}</span>
                   </div>
                 )}
-                {!showGist && mergedBadge}
                 {isEditing ? (
                   <textarea
                     className="elves-card__editor"

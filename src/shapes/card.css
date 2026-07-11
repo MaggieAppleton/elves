@@ -222,6 +222,10 @@
 }
 .elves-merged:hover { color: var(--elves-ink); background: var(--elves-border); }
 .elves-merged[aria-expanded="true"] { color: var(--elves-ink); background: var(--elves-border); }
+/* Inside the top-right corner cluster (note/prose cards) the chip is a flex
+   sibling of the author mark, not its own corner anchor — drop the absolute
+   pin so the cluster's gap lays it out left of the author instead of on top. */
+.elves-card__corner .elves-merged { position: static; top: auto; right: auto; }
 
 /* The stack peeking out behind the representative: 1–2 thin paper edges offset
    down-right, layered BEHIND the card (negative z-index within the wrap's
