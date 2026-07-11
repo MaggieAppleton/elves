@@ -59,6 +59,76 @@ export function measuredCardHeight(
 // lines, so a fresh draft card lands taller than a note and invites typing.
 export const PROSE_TEXT_MIN = 66
 
+// --- Gist fit ------------------------------------------------------------
+// Zoomed out, the gist renders at a font counter-scaled UP against the zoom
+// (up to GIST_FONT_MAX, in summaryView.ts), but the card's box was measured to
+// hold the FULL text at 15px. When the enlarged gist wraps taller than that box
+// it used to spill out and overlap the card below. Instead we treat the zoom's
+// size as a ceiling and shrink it until the whole summary fits the box, so the
+// gist is always fully visible and never overflows. The gist is a summary —
+// shorter than the full text the box already holds — so the fitted size almost
+// always lands between 15px and the cap; the floor is only reached by a
+// pathological summary longer than the card's own text, which then clips
+// (the card's overflow:hidden) rather than shrinking to nothing.
+const GIST_LINE_HEIGHT = 1.25 // matches card.css .elves-card__text--gist
+const GIST_FONT_MIN = 13 // stay readable; below this we clip instead of shrinking
+
+// Memoize by the inputs that determine the fit — a zoom gesture re-renders every
+// gist card many times, but (gist, w, h, cap) rarely changes between frames
+// (the cap is pinned at GIST_FONT_MAX across most of the gist zoom range), so
+// this turns ~4 DOM measures per card per frame into one lookup.
+const gistFitCache = new Map<string, number>()
+
+export function fittedGistFontSize(
+  editor: Editor,
+  gist: string,
+  width: number,
+  height: number,
+  maxFontSize: number,
+): number {
+  const key = `${gist}|${width}|${height}|${maxFontSize}`
+  const cached = gistFitCache.get(key)
+  if (cached !== undefined) return cached
+
+  const maxWidth = Math.max(40, width - CARD_PAD_X)
+  const availH = height - CARD_PAD_Y
+  const fits = (fontSize: number) =>
+    editor.textMeasure.measureText(gist || ' ', {
+      fontFamily: FONT_FAMILY,
+      fontSize,
+      lineHeight: GIST_LINE_HEIGHT,
+      fontWeight: '500',
+      fontStyle: 'normal',
+      maxWidth,
+      padding: '0px',
+    }).h <= availH
+
+  let result = maxFontSize
+  if (!fits(maxFontSize)) {
+    // Largest integer size in [GIST_FONT_MIN, maxFontSize] whose wrapped height
+    // fits; if even the floor overflows, the card's overflow:hidden clips it.
+    let lo = GIST_FONT_MIN
+    let hi = maxFontSize
+    let best = GIST_FONT_MIN
+    while (lo <= hi) {
+      const mid = Math.floor((lo + hi) / 2)
+      if (fits(mid)) {
+        best = mid
+        lo = mid + 1
+      } else {
+        hi = mid - 1
+      }
+    }
+    result = best
+  }
+
+  // Cap the cache so a long session of edits can't grow it unbounded; the working
+  // set (visible gist cards at the current zoom) is small, so a simple clear is fine.
+  if (gistFitCache.size > 500) gistFitCache.clear()
+  gistFitCache.set(key, result)
+  return result
+}
+
 // --- Reference cards -----------------------------------------------------
 // card.css .elves-card--reference: padding 13px; a title (15px/600, 1.3,
 // clamped to 2 lines), an optional meta row and a 2-line description (13px,

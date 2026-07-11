@@ -14,7 +14,7 @@ import { nextFigureStatus } from '../model/figures'
 import { cardGist, commentGist } from '../model/summary'
 import { visibleComments, resolveComment } from '../model/comments'
 import { assetUrl } from '../client/assets'
-import { measuredCardHeight, measuredReferenceHeight, measuredFigureHeight, PROSE_TEXT_MIN } from './autosize'
+import { measuredCardHeight, measuredReferenceHeight, measuredFigureHeight, fittedGistFontSize, PROSE_TEXT_MIN } from './autosize'
 import { shouldShowGist, gistFontSize } from './summaryView'
 import { mergedMembers, isExpanded, toggleExpanded } from './mergeView'
 import { ReferenceCardFace } from './ReferenceCardFace'
@@ -467,15 +467,11 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
           )}
           <div
             className={`elves-card elves-card--${kind}${isImage ? ' elves-card--image' : ''}${isReference ? ' elves-card--reference' : ''}${showGist ? ' elves-card--gist' : ''}${draftExcluded ? ' elves-card--excluded' : ''}`}
-            // In gist mode a short card's box (sized to its full text at 15px) may
-            // be shorter than the gist at the uniform gist size, so let the card
-            // grow to fit rather than clip. Long cards keep min-height 100% and
-            // are unchanged (their tall box already holds the short gist).
-            style={
-              showGist
-                ? { width: '100%', height: 'auto', minHeight: '100%', overflow: 'visible' }
-                : { width: '100%', height: '100%' }
-            }
+            // The card box always fills its shape geometry and clips (overflow:hidden
+            // from .elves-card) — in gist mode too. The gist font is fitted to this
+            // box (fittedGistFontSize below), so the summary shows in full; clipping
+            // is just a hard backstop so nothing can ever overlap the card beneath it.
+            style={{ width: '100%', height: '100%' }}
           >
             {isImage ? (
               // Image cards are just the image — edge-to-edge, no label, no chrome.
@@ -701,7 +697,15 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                   <div
                     className="elves-card__text elves-card__text--gist"
                     data-testid="card-gist"
-                    style={{ fontSize: gistFontSize(zoom) }}
+                    style={{
+                      fontSize: fittedGistFontSize(
+                        this.editor,
+                        cardGist(shape.props),
+                        shape.props.w,
+                        shape.props.h,
+                        gistFontSize(zoom),
+                      ),
+                    }}
                   >
                     {cardGist(shape.props)}
                   </div>
