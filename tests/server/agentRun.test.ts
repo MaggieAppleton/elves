@@ -265,6 +265,51 @@ test('cancel keeps the run lock until the child closes', async () => {
   expect(runner.isRunning('chat')).toBe(false)
 })
 
+test('an error before close keeps the run locked until that child closes', async () => {
+  const children = [new FakeChild(), new FakeChild()]
+  let spawned = 0
+  const runner = createAgentRunner(deps(() => children[spawned++]))
+  let firstSettled = false
+  const first = runner.run({ prompt: 'a', projectId: 'p', hasSelection: false }, () => {})
+  void first.then(() => { firstSettled = true })
+
+  children[0].emitError(new Error('spawn failed after return'))
+  await Promise.resolve()
+
+  expect(firstSettled).toBe(false)
+  expect(runner.isRunning()).toBe(true)
+  const rejected: AgentEvent[] = []
+  await runner.run({ prompt: 'b', projectId: 'p', hasSelection: false }, (e) => rejected.push(e))
+  expect(rejected).toEqual([{ type: 'error', message: expect.stringContaining('already running') }])
+  expect(spawned).toBe(1)
+
+  children[0].emitClose(1)
+  await first
+  const second = runner.run({ prompt: 'b', projectId: 'p', hasSelection: false }, () => {})
+  expect(spawned).toBe(2)
+
+  children[0].emitClose(1)
+  expect(runner.isRunning()).toBe(true)
+  children[1].emitClose(0)
+  await second
+})
+
+test('a cancelled child closing without an exit code completes as cancelled', async () => {
+  const child = new FakeChild()
+  const runner = createAgentRunner(deps(() => child))
+  const events: AgentEvent[] = []
+  const run = runner.run({ prompt: 'a', projectId: 'p', hasSelection: false }, (e) => events.push(e))
+
+  runner.cancel()
+  child.emitClose(null)
+  await run
+
+  expect(events).toEqual([
+    { type: 'started' },
+    { type: 'done', reply: 'Cancelled.' },
+  ])
+})
+
 test('a nonzero exit with no result line becomes an error from stderr', async () => {
   const child = new FakeChild()
   const runner = createAgentRunner(deps(() => child))

@@ -237,12 +237,14 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
   // for an in-app review run. A key is single-flight (see run() below); across
   // keys there's no coordination at all — that's the whole point of the map.
   const active = new Map<string, ChildLike>()
+  const cancelled = new WeakSet<ChildLike>()
 
   return {
     isRunning: (key) => active.has(key),
     cancel(key) {
       const child = active.get(key)
       if (child) {
+        cancelled.add(child)
         child.kill('SIGTERM')
       }
     },
@@ -314,12 +316,12 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
         }
         child.on('error', (err) => {
           emit({ type: 'error', message: friendlySpawnError(cmd, err as NodeJS.ErrnoException) })
-          finish()
         })
         child.on('close', (code) => {
           // Flush a trailing line the stream left unterminated.
           if (buf.trim()) for (const e of adapter.parseLine(buf)) emit(e)
-          if (code === 0) emit({ type: 'done', reply: '' })
+          if (cancelled.has(child)) emit({ type: 'done', reply: 'Cancelled.' })
+          else if (code === 0) emit({ type: 'done', reply: '' })
           else emit({ type: 'error', message: stderr.trim() || `\`${cmd}\` exited with code ${code}.` })
           finish()
         })

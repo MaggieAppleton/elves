@@ -22,6 +22,8 @@ type Entry =
   | { kind: 'tool'; name: string; summary: string }
   | { kind: 'error'; message: string }
 
+type RunPhase = 'idle' | 'running' | 'cancelling'
+
 // Fold one event into the transcript. `done` only contributes a line when the
 // agent never spoke (tool-only run) — otherwise its reply just echoes the last
 // text block, so we drop it and let `running` flip off.
@@ -58,7 +60,8 @@ export function AgentBox({ open, projectId, selectedCount, onClose }: Props) {
     : 'Whole canvas'
   const [prompt, setPrompt] = useState('')
   const [entries, setEntries] = useState<Entry[]>([])
-  const [running, setRunning] = useState(false)
+  const [runPhase, setRunPhase] = useState<RunPhase>('idle')
+  const running = runPhase !== 'idle'
   // Whether the box is shrunk to the status bar. A fresh open always starts
   // expanded (see the focus effect); collapsing is conditional (see collapse).
   const [collapsed, setCollapsed] = useState(false)
@@ -126,23 +129,32 @@ export function AgentBox({ open, projectId, selectedCount, onClose }: Props) {
     // Seed the transcript with the user's message so it stays pinned above the
     // tool calls and replies that follow.
     setEntries([{ kind: 'user', text }])
-    setRunning(true)
-    handleRef.current = runAgent({ prompt: text, projectId, hasSelection }, (e) => {
+    setRunPhase('running')
+    const handle = runAgent({ prompt: text, projectId, hasSelection }, (e) => {
       setEntries((prev) => appendEvent(prev, e))
-      if (e.type === 'done' || e.type === 'error') setRunning(false)
+    })
+    handleRef.current = handle
+    void handle.done.then(() => {
+      if (handleRef.current !== handle) return
+      handleRef.current = null
+      setRunPhase('idle')
     })
   }
 
   const cancel = () => {
-    handleRef.current?.cancel()
-    setRunning(false)
+    if (runPhase !== 'running') return
+    handleRef.current?.requestCancel()
+    setRunPhase('cancelling')
   }
 
   // Close and forget: cancel any in-flight run, empty the transcript and
   // input, then close — unlike plain close, which preserves the chat.
   const closeAndClear = () => {
-    handleRef.current?.cancel()
-    setRunning(false)
+    const handle = handleRef.current
+    handleRef.current = null
+    handle?.requestCancel()
+    handle?.dispose()
+    setRunPhase('idle')
     setEntries([])
     setPrompt('')
     setCollapsed(false)
@@ -155,7 +167,9 @@ export function AgentBox({ open, projectId, selectedCount, onClose }: Props) {
   // agent is doing (or that it's done) and expands back on click. The run keeps
   // going underneath — collapsing never cancels.
   if (collapsed) {
-    const status = deriveStatus(entries, running)
+    const status = runPhase === 'cancelling'
+      ? { phase: 'thinking' as const, verb: 'Cancelling' }
+      : deriveStatus(entries, running)
     const settled = status.phase === 'done' || status.phase === 'error'
     return (
       <button
@@ -259,6 +273,7 @@ export function AgentBox({ open, projectId, selectedCount, onClose }: Props) {
           placeholder="Ask the agent to critique, dedupe, reorganise…"
           data-testid="agent-input"
           value={prompt}
+          disabled={runPhase === 'cancelling'}
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={(e) => {
             // Enter sends; Shift+Enter is a newline.
@@ -268,14 +283,15 @@ export function AgentBox({ open, projectId, selectedCount, onClose }: Props) {
             }
           }}
         />
-        {running ? (
+        {runPhase !== 'idle' ? (
           <button
             type="button"
             className="elves-agentbox__btn elves-agentbox__btn--cancel"
             data-testid="agent-cancel"
             onClick={cancel}
+            disabled={runPhase === 'cancelling'}
           >
-            Cancel
+            {runPhase === 'cancelling' ? 'Cancelling…' : 'Cancel'}
           </button>
         ) : (
           <button

@@ -122,16 +122,20 @@ test('Esc closes the box', async ({ page }) => {
   await expect(page.locator('.elves-agentbox')).toBeHidden()
 })
 
-test('Cancel appears mid-run and hits the cancel endpoint', async ({ page }) => {
-  // Stream a `started` but no terminal event: the box stays in its running state
-  // (Cancel showing) until the user cancels.
-  await page.route('**/agent/run', (route) =>
-    route.fulfill({
+test('Cancel stays cancelling and blocks resubmission until the run stream ends', async ({ page }) => {
+  let endRun!: () => void
+  const runMayEnd = new Promise<void>((resolve) => { endRun = resolve })
+  await page.route('**/agent/run', async (route) => {
+    await runMayEnd
+    await route.fulfill({
       status: 200,
       headers: { 'content-type': 'text/event-stream' },
-      body: sse([dataFrame({ type: 'started' })]),
-    }),
-  )
+      body: sse([
+        dataFrame({ type: 'started' }),
+        dataFrame({ type: 'done', reply: 'Cancelled.' }),
+      ]),
+    })
+  })
   let cancelHit = false
   await page.route('**/agent/cancel', (route) => {
     cancelHit = true
@@ -148,24 +152,32 @@ test('Cancel appears mid-run and hits the cancel endpoint', async ({ page }) => 
   const cancel = page.getByTestId('agent-cancel')
   await expect(cancel).toBeVisible()
   await cancel.click()
+  await expect(cancel).toHaveText('Cancelling…')
+  await expect(cancel).toBeDisabled()
+  await expect(page.getByTestId('agent-input')).toBeDisabled()
+  await expect(page.getByTestId('agent-send')).toBeHidden()
+  await expect.poll(() => cancelHit).toBe(true)
+
+  endRun()
   await expect(page.getByTestId('agent-send')).toBeVisible()
-  expect(cancelHit).toBe(true)
+  await expect(page.getByTestId('agent-input')).toBeEnabled()
 })
 
 test('collapse shrinks the box to a live status bar and clicking it expands again', async ({ page }) => {
-  // Stream up to a tool call but no terminal event, so the run stays "running"
-  // and the bar shows the live activity ("Reading · 3 cards").
-  await page.route('**/agent/run', (route) =>
-    route.fulfill({
+  // Keep the response pending so the run is genuinely live while collapsed.
+  let endRun!: () => void
+  const runMayEnd = new Promise<void>((resolve) => { endRun = resolve })
+  await page.route('**/agent/run', async (route) => {
+    await runMayEnd
+    await route.fulfill({
       status: 200,
       headers: { 'content-type': 'text/event-stream' },
       body: sse([
         dataFrame({ type: 'started' }),
-        dataFrame({ type: 'text', text: 'Looking at your cards.' }),
-        dataFrame({ type: 'tool', name: 'read_cards', summary: '3 cards' }),
+        dataFrame({ type: 'done', reply: 'Done.' }),
       ]),
-    }),
-  )
+    })
+  })
 
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
@@ -173,14 +185,12 @@ test('collapse shrinks the box to a live status bar and clicking it expands agai
   await page.keyboard.press('/')
   await page.getByTestId('agent-input').fill('read my cards')
   await page.getByTestId('agent-send').click()
-  await expect(page.getByTestId('agent-transcript')).toContainText('Looking at your cards.')
 
-  // Collapse to the bar — the full box hides, the bar shows the current activity.
+  // Collapse to the bar — the full box hides, the bar shows the pending activity.
   await page.getByTestId('agent-collapse').click()
   const bar = page.getByTestId('agent-collapsed')
   await expect(bar).toBeVisible()
-  await expect(bar).toContainText('Reading')
-  await expect(bar).toContainText('3 cards')
+  await expect(bar).toContainText('Thinking')
   await expect(page.getByTestId('agent-transcript')).toBeHidden()
 
   // Collapsing did not cancel: the run is still going (Cancel still offered once
@@ -189,6 +199,9 @@ test('collapse shrinks the box to a live status bar and clicking it expands agai
   await expect(page.getByTestId('agent-transcript')).toBeVisible()
   await expect(page.getByTestId('agent-cancel')).toBeVisible()
   await expect(bar).toBeHidden()
+
+  endRun()
+  await expect(page.getByTestId('agent-send')).toBeVisible()
 })
 
 test('the clear button empties the transcript and closes the box', async ({ page }) => {

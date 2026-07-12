@@ -11,9 +11,11 @@ export interface AgentRunInput {
 }
 
 export interface AgentRunHandle {
-  /** Abort our read of the stream AND tell the server to kill the child. */
-  cancel: () => void
-  /** Resolves when the stream ends (naturally, on error, or on cancel). */
+  /** Tell the server to terminate the child while continuing to observe its stream. */
+  requestCancel: () => void
+  /** Stop consuming this stream and suppress any callbacks that arrive afterward. */
+  dispose: () => void
+  /** Resolves when the stream ends naturally or local consumption is disposed. */
   done: Promise<void>
 }
 
@@ -28,6 +30,10 @@ export interface AgentRunHandle {
  */
 export function runAgent(input: AgentRunInput, onEvent: (e: AgentEvent) => void): AgentRunHandle {
   const ctrl = new AbortController()
+  let disposed = false
+  const emit = (event: AgentEvent) => {
+    if (!disposed) onEvent(event)
+  }
 
   const done = (async () => {
     let res: Response
@@ -39,10 +45,10 @@ export function runAgent(input: AgentRunInput, onEvent: (e: AgentEvent) => void)
         signal: ctrl.signal,
       })
     } catch {
-      // A pre-response abort is a user cancel, not an error worth surfacing.
-      if (!ctrl.signal.aborted) onEvent({ type: 'error', message: 'could not reach the server — is it running?' })
+      if (!disposed) emit({ type: 'error', message: 'could not reach the server — is it running?' })
       return
     }
+    if (disposed) return
 
     if (!res.ok || !res.body) {
       // The server refused before streaming (400/409/501) — it answers JSON here.
@@ -53,7 +59,7 @@ export function runAgent(input: AgentRunInput, onEvent: (e: AgentEvent) => void)
       } catch {
         /* keep the status-code message */
       }
-      onEvent({ type: 'error', message })
+      emit({ type: 'error', message })
       return
     }
 
@@ -70,20 +76,21 @@ export function runAgent(input: AgentRunInput, onEvent: (e: AgentEvent) => void)
         while ((sep = buf.indexOf('\n\n')) >= 0) {
           const frame = buf.slice(0, sep)
           buf = buf.slice(sep + 2)
-          handleFrame(frame, onEvent)
+          handleFrame(frame, emit)
         }
       }
     } catch {
-      if (!ctrl.signal.aborted) onEvent({ type: 'error', message: 'the agent stream was interrupted' })
+      if (!disposed) emit({ type: 'error', message: 'the agent stream was interrupted' })
     }
   })()
 
   return {
-    cancel: () => {
-      ctrl.abort()
-      // Aborting only drops our reader; the child keeps running until we ask the
-      // server to kill it. Fire-and-forget — nothing to do if it 404s.
+    requestCancel: () => {
       fetch(`${BASE}/agent/cancel`, { method: 'POST' }).catch(() => {})
+    },
+    dispose: () => {
+      disposed = true
+      ctrl.abort()
     },
     done,
   }
