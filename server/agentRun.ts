@@ -244,7 +244,6 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
       const child = active.get(key)
       if (child) {
         child.kill('SIGTERM')
-        active.delete(key)
       }
     },
     run(key, input, onEvent) {
@@ -308,7 +307,7 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
       return new Promise<void>((resolve) => {
         const finish = () => {
           // Only this run's own entry is ours to clear — a cancel() may have
-          // already deleted it (or, in principle, a new run under the same key
+          // been requested (or, in principle, a new run under the same key
           // could have replaced it), so check identity before deleting.
           if (active.get(key) === child) active.delete(key)
           resolve()

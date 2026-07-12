@@ -239,12 +239,30 @@ test('cancel(key) kills only that key\'s child', async () => {
   runner.cancel('review:rev-1')
   expect(reviewChild.killed).toBe('SIGTERM')
   expect(chatChild.killed).toBeNull()
-  expect(runner.isRunning('review:rev-1')).toBe(false)
+  expect(runner.isRunning('review:rev-1')).toBe(true)
   expect(runner.isRunning('chat')).toBe(true)
 
   reviewChild.emitClose(null)
   chatChild.emitClose(0)
   await Promise.all([chatRun, reviewRun])
+})
+
+test('cancel keeps the run lock until the child closes', async () => {
+  const child = new FakeChild()
+  const spawn = () => child
+  const runner = createAgentRunner(deps(spawn))
+  const first = runner.run('chat', { prompt: 'a', projectId: 'p', hasSelection: false }, () => {})
+
+  runner.cancel('chat')
+
+  expect(runner.isRunning('chat')).toBe(true)
+  const second: AgentEvent[] = []
+  await runner.run('chat', { prompt: 'b', projectId: 'p', hasSelection: false }, (e) => second.push(e))
+  expect(second).toEqual([{ type: 'error', message: expect.stringContaining('already running') }])
+
+  child.emitClose(null)
+  await first
+  expect(runner.isRunning('chat')).toBe(false)
 })
 
 test('a nonzero exit with no result line becomes an error from stderr', async () => {
