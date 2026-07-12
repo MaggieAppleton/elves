@@ -49,12 +49,29 @@ export async function saveCanvas(projectId: string, snapshot: unknown): Promise<
   if (!res.ok) throw new Error(`save failed: ${res.status}`)
 }
 
+// A trailing-edge debounce with a `flush()` escape hatch: flush cancels the
+// pending timer and invokes the last call immediately (a no-op if nothing is
+// pending). The resync path uses this to force a held autosave to the server
+// *now*, before it re-fetches the canvas — otherwise the in-flight keystrokes
+// still sitting in the 500ms window would be reverted by the reload.
 export function debounce<A extends any[]>(fn: (...a: A) => void, ms: number) {
   let t: ReturnType<typeof setTimeout> | undefined
-  return (...a: A) => {
+  let lastArgs: A | undefined
+  const debounced = (...a: A) => {
+    lastArgs = a
     clearTimeout(t)
-    t = setTimeout(() => fn(...a), ms)
+    t = setTimeout(() => {
+      t = undefined
+      fn(...a)
+    }, ms)
   }
+  debounced.flush = () => {
+    if (t === undefined) return
+    clearTimeout(t)
+    t = undefined
+    if (lastArgs) fn(...lastArgs)
+  }
+  return debounced
 }
 
 // Wraps a fire-and-forget async save so overlapping requests never drop the
@@ -64,6 +81,9 @@ export function debounce<A extends any[]>(fn: (...a: A) => void, ms: number) {
 export function createSaver(saveFn: () => Promise<void>) {
   let saving = false
   let pendingDirty = false
+  // Resolvers for whenIdle() callers waiting on the current save (and any queued
+  // retry) to settle. Drained the moment the saver goes fully idle.
+  const idleResolvers: Array<() => void> = []
   const run = () => {
     if (saving) {
       pendingDirty = true
@@ -77,8 +97,17 @@ export function createSaver(saveFn: () => Promise<void>) {
         if (pendingDirty) {
           pendingDirty = false
           run()
+        } else {
+          for (const resolve of idleResolvers.splice(0)) resolve()
         }
       })
   }
-  return { request: run }
+  // Resolves once no save is in flight and none is queued — so a caller can wait
+  // for a just-flushed autosave to actually reach the server before it acts (the
+  // resync waits on this before re-fetching, so it never loads stale text).
+  const whenIdle = () =>
+    saving || pendingDirty
+      ? new Promise<void>((resolve) => idleResolvers.push(resolve))
+      : Promise.resolve()
+  return { request: run, whenIdle }
 }
