@@ -636,6 +636,10 @@ export default function App() {
     if (!pid) return
     loadCanvas(pid)
       .then((snapshot) => {
+        // This editor may have unmounted while its canvas request was in flight.
+        // A stale continuation must not load into the old store or replace the
+        // active project's autosave / selection ownership below.
+        if (projectIdRef.current !== pid || editorRef.current !== ed || ed.isDisposed) return
         if (snapshot?.document) loadSnapshot(ed.store, snapshot)
         // Load succeeded — an empty-but-new project counts, since its file is
         // legitimately empty. Only now is it safe to persist: wiring the save
