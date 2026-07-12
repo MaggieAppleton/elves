@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { Broom, PaperPlaneRight, X } from '@phosphor-icons/react'
+import { Broom, CaretDown, Check, PaperPlaneRight } from '@phosphor-icons/react'
 import { agentInfo } from '../shapes/agents'
 import { runAgent, type AgentEvent, type AgentRunHandle } from '../client/agent'
+import { deriveStatus } from '../client/agentStatus'
 import './agentBox.css'
 
 interface Props {
@@ -57,41 +58,57 @@ export function AgentBox({ open, projectId, selectedCount, onClose }: Props) {
   const [prompt, setPrompt] = useState('')
   const [entries, setEntries] = useState<Entry[]>([])
   const [running, setRunning] = useState(false)
+  // Whether the box is shrunk to the status bar. A fresh open always starts
+  // expanded (see the focus effect); collapsing is conditional (see collapse).
+  const [collapsed, setCollapsed] = useState(false)
   const handleRef = useRef<AgentRunHandle | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // Focus the field each time the box opens (after paint, so the freshly-shown
-  // element is focusable).
+  // A fresh open expands to the full box and focuses the field (after paint, so
+  // the freshly-shown element is focusable).
   useEffect(() => {
     if (!open) return
+    setCollapsed(false)
     const id = requestAnimationFrame(() => inputRef.current?.focus())
     return () => cancelAnimationFrame(id)
   }, [open])
 
-  // Esc closes. Capture-phase + stopPropagation so tldraw's own Escape handler
-  // (deselect) doesn't also fire underneath the open box.
+  // Esc collapses (the safe, non-destructive hide). Capture-phase +
+  // stopPropagation so tldraw's own Escape handler (deselect) doesn't also fire
+  // underneath the open box. entries.length/running are in the deps so the
+  // handler always sees whether there's a run worth preserving.
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
         e.stopPropagation()
-        onClose()
+        collapse()
       }
     }
     document.addEventListener('keydown', onKey, true)
     return () => document.removeEventListener('keydown', onKey, true)
-  }, [open, onClose])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, onClose, entries.length, running])
 
   // Keep the newest transcript line in view as it streams.
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
   }, [entries, running])
 
+  // Collapse to the status bar — but only when there's a run or transcript worth
+  // keeping. An idle box (nothing typed, nothing run) has nothing to preserve, so
+  // collapsing it just closes it; an empty bar would be meaningless.
+  const collapse = () => {
+    if (entries.length > 0 || running) setCollapsed(true)
+    else onClose()
+  }
+
   const submit = () => {
     const text = prompt.trim()
     if (!text || running || !projectId) return
+    setCollapsed(false)
     setPrompt('')
     setEntries([])
     setRunning(true)
@@ -113,10 +130,41 @@ export function AgentBox({ open, projectId, selectedCount, onClose }: Props) {
     setRunning(false)
     setEntries([])
     setPrompt('')
+    setCollapsed(false)
     onClose()
   }
 
   if (!open) return null
+
+  // Collapsed: render the status bar in place of the full box. It shows what the
+  // agent is doing (or that it's done) and expands back on click. The run keeps
+  // going underneath — collapsing never cancels.
+  if (collapsed) {
+    const status = deriveStatus(entries, running)
+    const settled = status.phase === 'done' || status.phase === 'error'
+    return (
+      <button
+        type="button"
+        className="elves-agentbox--collapsed"
+        data-phase={status.phase}
+        data-testid="agent-collapsed"
+        onClick={() => setCollapsed(false)}
+        title="Expand"
+        aria-label="Expand agent"
+      >
+        {status.phase === 'done' ? (
+          <Check className="elves-agentbox__cicon" weight="bold" aria-hidden="true" />
+        ) : (
+          <span className="elves-agentbox__cdot" aria-hidden="true" />
+        )}
+        <span className="elves-agentbox__cverb" aria-live="polite">
+          {status.verb}
+        </span>
+        {status.detail && <span className="elves-agentbox__cdetail">· {status.detail}</span>}
+        {settled && <span className="elves-agentbox__chint">click to view</span>}
+      </button>
+    )
+  }
 
   const hasTranscript = entries.length > 0 || running
 
@@ -145,8 +193,14 @@ export function AgentBox({ open, projectId, selectedCount, onClose }: Props) {
           >
             <Broom aria-hidden="true" />
           </button>
-          <button className="elves-agentbox__close" onClick={onClose} title="Close (Esc)" aria-label="Close">
-            <X aria-hidden="true" />
+          <button
+            className="elves-agentbox__close"
+            onClick={collapse}
+            title="Collapse (Esc)"
+            aria-label="Collapse"
+            data-testid="agent-collapse"
+          >
+            <CaretDown aria-hidden="true" />
           </button>
         </div>
       </div>
