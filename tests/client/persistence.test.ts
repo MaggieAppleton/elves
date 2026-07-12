@@ -72,6 +72,64 @@ test('debounce collapses rapid calls into one trailing call', () => {
   expect(spy).toHaveBeenCalledWith('c')
 })
 
+test('debounce flush runs the pending trailing call immediately and cancels the timer', () => {
+  // The fix for the note-blur truncation bug relies on this: on edit-end we must
+  // force the pending autosave to fire NOW (before a resync re-fetches from the
+  // server) rather than wait out the 500ms window, and it must not double-fire.
+  vi.useFakeTimers()
+  const spy = vi.fn()
+  const d = debounce(spy, 500)
+  d('a'); d('b')
+  d.flush()
+  expect(spy).toHaveBeenCalledTimes(1)
+  expect(spy).toHaveBeenCalledWith('b')
+  vi.advanceTimersByTime(500)
+  expect(spy).toHaveBeenCalledTimes(1) // timer was cancelled by flush; no echo fire
+})
+
+test('debounce flush is a no-op when nothing is pending', () => {
+  vi.useFakeTimers()
+  const spy = vi.fn()
+  const d = debounce(spy, 500)
+  d.flush()
+  expect(spy).not.toHaveBeenCalled()
+})
+
+test('createSaver whenIdle resolves only once the in-flight save settles', async () => {
+  let resolveSave!: () => void
+  const saveFn = vi.fn(() => new Promise<void>((r) => { resolveSave = r }))
+  const saver = createSaver(saveFn)
+  saver.request()
+  let idle = false
+  const waited = saver.whenIdle().then(() => { idle = true })
+  await Promise.resolve()
+  expect(idle).toBe(false) // save still in flight
+  resolveSave()
+  await waited
+  expect(idle).toBe(true)
+})
+
+test('createSaver whenIdle waits out a queued (pendingDirty) save too', async () => {
+  const resolvers: Array<() => void> = []
+  const saveFn = vi.fn(() => new Promise<void>((r) => { resolvers.push(r) }))
+  const saver = createSaver(saveFn)
+  saver.request()
+  saver.request() // arrives mid-flight → queued as pendingDirty
+  let idle = false
+  const waited = saver.whenIdle().then(() => { idle = true })
+  resolvers[0]() // first save settles; the queued one now runs
+  await Promise.resolve(); await Promise.resolve()
+  expect(idle).toBe(false) // second save still in flight
+  resolvers[1]()
+  await waited
+  expect(idle).toBe(true)
+})
+
+test('createSaver whenIdle resolves immediately when nothing is saving', async () => {
+  const saver = createSaver(vi.fn(async () => {}))
+  await expect(saver.whenIdle()).resolves.toBeUndefined()
+})
+
 test('loadCanvas throws when the response is not ok', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) })))
   await expect(loadCanvas('essay')).rejects.toThrow('load failed: 500')
