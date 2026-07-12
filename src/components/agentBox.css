@@ -95,11 +95,20 @@
 .elves-agentbox__transcript {
   max-height: min(42vh, 340px);
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
   gap: 8px;
   border-bottom: 1px solid var(--elves-border-subtle);
+}
+
+/* Flex children default to min-width:auto, which lets long unbroken strings
+   (dash-run separators, bare URLs) force horizontal overflow. Let them wrap. */
+.elves-agentbox__transcript > * {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .elves-agentbox__text {
