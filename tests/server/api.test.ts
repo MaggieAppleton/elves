@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'vitest'
+import { afterEach, expect, test, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -14,6 +14,8 @@ async function appWithTmp() {
   return createServer(d)
 }
 afterEach(async () => {
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
   await Promise.all(dirs.map((d) => fs.rm(d, { recursive: true, force: true })))
   dirs = []
 })
@@ -286,6 +288,169 @@ test('a disallowed cross-origin Origin does not get Access-Control-Allow-Origin'
   const res = await request(app).get('/projects').set('Origin', 'https://evil.example')
   expect(res.status).toBe(200) // the request itself still completes...
   expect(res.headers['access-control-allow-origin']).toBeUndefined() // ...but a browser can't read it cross-origin
+})
+
+test('unfurl cancels oversized streamed HTML and degrades to a minimal reference', async () => {
+  const app = await appWithTmp()
+  await request(app).post('/projects').send({ name: 'Essay' })
+  const chunks = [
+    '<html><head><title>Too large</title></head><body>',
+    'x'.repeat(750_000),
+    'x'.repeat(750_000),
+    'x'.repeat(750_000),
+    'x'.repeat(750_000),
+    'x'.repeat(750_000),
+  ].map((chunk) => new TextEncoder().encode(chunk))
+  let pulls = 0
+  let cancelled = false
+  vi.stubGlobal('fetch', async () => new Response(new ReadableStream({
+    pull(controller) {
+      const chunk = chunks[pulls++]
+      if (chunk) controller.enqueue(chunk)
+      else controller.close()
+    },
+    cancel() { cancelled = true },
+  }), { headers: { 'content-type': 'text/html' } }))
+
+  const res = await request(app)
+    .post('/projects/essay/unfurl')
+    .send({ url: 'http://93.184.216.34/page' })
+
+  expect(res.status).toBe(200)
+  expect(res.body.reference.title).toBeNull()
+  expect(cancelled).toBe(true)
+  expect(pulls).toBeLessThan(chunks.length)
+})
+
+test('unfurl cancels an oversized streamed image and keeps its asset null', async () => {
+  const app = await appWithTmp()
+  await request(app).post('/projects').send({ name: 'Essay' })
+  const chunks = Array.from({ length: 6 }, () => new Uint8Array(1_500_000))
+  let pulls = 0
+  let cancelled = false
+  vi.stubGlobal('fetch', async (url: string | URL) => {
+    if (String(url).endsWith('/page')) {
+      return new Response(
+        '<html><head><title>Normal page</title><link rel="icon" href="/large.png"></head></html>',
+        { headers: { 'content-type': 'text/html' } },
+      )
+    }
+    return new Response(new ReadableStream({
+      pull(controller) {
+        const chunk = chunks[pulls++]
+        if (chunk) controller.enqueue(chunk)
+        else controller.close()
+      },
+      cancel() { cancelled = true },
+    }), { headers: { 'content-type': 'image/png' } })
+  })
+
+  const res = await request(app)
+    .post('/projects/essay/unfurl')
+    .send({ url: 'http://93.184.216.34/page' })
+
+  expect(res.status).toBe(200)
+  expect(res.body.reference.title).toBe('Normal page')
+  expect(res.body.reference.faviconAssetId).toBeNull()
+  expect(cancelled).toBe(true)
+  expect(pulls).toBeLessThan(chunks.length)
+})
+
+test('unfurl keeps its deadline active while consuming the HTML body', async () => {
+  const app = await appWithTmp()
+  await request(app).post('/projects').send({ name: 'Essay' })
+  vi.useFakeTimers()
+  let bodyController!: ReadableStreamDefaultController<Uint8Array>
+  let cancelled = false
+  let markFetchStarted!: () => void
+  const fetchStarted = new Promise<void>((resolve) => { markFetchStarted = resolve })
+  vi.stubGlobal('fetch', vi.fn(async () => {
+    markFetchStarted()
+    return new Response(new ReadableStream({
+      start(controller) {
+        bodyController = controller
+        controller.enqueue(new TextEncoder().encode('<html><head><title>Slow page</title>'))
+      },
+      pull() { return new Promise(() => undefined) },
+      cancel() { cancelled = true },
+    }), { headers: { 'content-type': 'text/html' } })
+  }))
+
+  const pending = request(app)
+    .post('/projects/essay/unfurl')
+    .send({ url: 'http://93.184.216.34/page' })
+    .then((res) => res)
+  await fetchStarted
+  await vi.advanceTimersByTimeAsync(8_000)
+  const cancelledAtDeadline = cancelled
+  if (!cancelled) bodyController.close()
+  vi.useRealTimers()
+  const res = await pending
+
+  expect(cancelledAtDeadline).toBe(true)
+  expect(res.body.reference.title).toBeNull()
+})
+
+test('unfurl accepts HTML and image bodies exactly at their byte limits', async () => {
+  const app = await appWithTmp()
+  await request(app).post('/projects').send({ name: 'Essay' })
+  const prefix = '<html><head><title>Exact limits</title><link rel="icon" href="/exact.png"></head><body>'
+  const suffix = '</body></html>'
+  const html = prefix + 'x'.repeat(2_000_000 - prefix.length - suffix.length) + suffix
+  const image = new Uint8Array(5_000_000)
+  vi.stubGlobal('fetch', async (url: string | URL) => String(url).endsWith('/page')
+    ? new Response(html, { headers: { 'content-type': 'text/html' } })
+    : new Response(image, { headers: { 'content-type': 'image/png' } }))
+
+  const res = await request(app)
+    .post('/projects/essay/unfurl')
+    .send({ url: 'http://93.184.216.34/page' })
+
+  expect(res.status).toBe(200)
+  expect(res.body.reference.title).toBe('Exact limits')
+  expect(res.body.reference.faviconAssetId).toMatch(/\.png$/)
+})
+
+test('unfurl cancels an image body at the deadline and keeps its asset null', async () => {
+  const app = await appWithTmp()
+  await request(app).post('/projects').send({ name: 'Essay' })
+  vi.useFakeTimers()
+  let bodyController!: ReadableStreamDefaultController<Uint8Array>
+  let cancelled = false
+  let markImageStarted!: () => void
+  const imageStarted = new Promise<void>((resolve) => { markImageStarted = resolve })
+  vi.stubGlobal('fetch', vi.fn(async (url: string | URL) => {
+    if (String(url).endsWith('/page')) {
+      return new Response(
+        '<html><head><title>Normal page</title><link rel="icon" href="/slow.png"></head></html>',
+        { headers: { 'content-type': 'text/html' } },
+      )
+    }
+    markImageStarted()
+    return new Response(new ReadableStream({
+      start(controller) {
+        bodyController = controller
+        controller.enqueue(new Uint8Array([1, 2, 3]))
+      },
+      pull() { return new Promise(() => undefined) },
+      cancel() { cancelled = true },
+    }), { headers: { 'content-type': 'image/png' } })
+  }))
+
+  const pending = request(app)
+    .post('/projects/essay/unfurl')
+    .send({ url: 'http://93.184.216.34/page' })
+    .then((res) => res)
+  await imageStarted
+  await vi.advanceTimersByTimeAsync(8_000)
+  const cancelledAtDeadline = cancelled
+  if (!cancelled) bodyController.close()
+  vi.useRealTimers()
+  const res = await pending
+
+  expect(cancelledAtDeadline).toBe(true)
+  expect(res.body.reference.title).toBe('Normal page')
+  expect(res.body.reference.faviconAssetId).toBeNull()
 })
 
 test('the allowed client dev origin gets Access-Control-Allow-Origin echoed back', async () => {
