@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Broom, PaperPlaneRight, X } from '@phosphor-icons/react'
 import { agentInfo } from '../shapes/agents'
 import { runAgent, type AgentEvent, type AgentRunHandle } from '../client/agent'
@@ -93,7 +93,9 @@ export function AgentBox({ open, projectId, selectedCount, onClose }: Props) {
   // Auto-grow the input to fit its content (up to the CSS max-height, past which
   // it scrolls). Reset to `auto` first so scrollHeight reflects the text's
   // natural height and the field can shrink again when it's cleared or trimmed.
-  useEffect(() => {
+  // Layout effect (not plain effect) so the resize lands before paint — otherwise
+  // a wrapped line or paste flashes clipped at the old height for one frame.
+  useLayoutEffect(() => {
     const el = inputRef.current
     if (!el) return
     el.style.height = 'auto'
