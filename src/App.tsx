@@ -149,6 +149,11 @@ export default function App() {
     pendingGlow: false,
     deferred: false,
   })
+  // The open canvas's autosave, exposed so the resync can force it to the server
+  // before re-fetching. Without this, a resync that fires while keystrokes are
+  // still held in the 500ms debounce reloads a stale snapshot over them — the
+  // note-blur truncation bug. Rewired on every mount (createSaver below).
+  const autosaveRef = useRef<{ flush: () => void; whenIdle: () => Promise<void> } | null>(null)
   // Counts spawns via addCard/addSection so each new card/section cascades
   // away from the last instead of stacking invisibly at the viewport center.
   const spawnCountRef = useRef(0)
@@ -509,6 +514,17 @@ export default function App() {
     // flight; the response no longer applies to anything currently open.
     | { status: 'stale' }
   const resyncCanvas = async (ed: Editor, pid: string): Promise<ResyncResult> => {
+    // The user's latest keystrokes may still be sitting in the 500ms autosave
+    // debounce. loadSnapshot below replaces the store wholesale from the server,
+    // so fetching before that save lands would revert them — and the next
+    // debounce fire would then persist the reverted text (the note-blur
+    // truncation bug). Force the held save out and wait for it to reach the
+    // server first, so the snapshot we fetch already includes those keystrokes.
+    // POST /canvas overwrites canvas.json then re-reconciles summaries, so this
+    // can't lose a pending summary — it just re-broadcasts once editing ends.
+    autosaveRef.current?.flush()
+    await autosaveRef.current?.whenIdle()
+    if (projectIdRef.current !== pid || editorRef.current !== ed) return { status: 'stale' }
     const before = shapeRecordsById(ed.store.allRecords())
     let fresh: any = null
     try {
@@ -604,6 +620,9 @@ export default function App() {
     selectionStopRef.current = null
     // A fresh mount hasn't loaded its canvas yet — hold off every save path.
     canvasLoadedRef.current = false
+    // Drop the previous canvas's autosave so a resync can't flush a torn-down
+    // saver; handleMount rewires it once this canvas finishes loading.
+    autosaveRef.current = null
     // A click on empty canvas dismisses any open merged-card peek, like a popover.
     ed.on('event', (info) => {
       if (info.name === 'pointer_down' && info.target === 'canvas') collapseAll()
@@ -648,6 +667,9 @@ export default function App() {
         const saver = createSaver(() => saveCanvas(pid, getSnapshot(ed.store)))
         const save = debounce(saver.request, 500)
         ed.store.listen(save, { source: 'user', scope: 'document' })
+        // Expose this canvas's autosave to the resync path (resyncCanvas), so it
+        // can flush a held save to the server before re-fetching over the store.
+        autosaveRef.current = { flush: save.flush, whenIdle: saver.whenIdle }
         // Report this editor's selection to the server so the agent can resolve
         // "this"/"these" (MCP read_selection). Tagged with the live project id so
         // it's correct across switches; disposed on the next mount / unmount.

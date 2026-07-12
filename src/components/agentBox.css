@@ -91,15 +91,110 @@
   height: 15px;
 }
 
+/* --- Collapsed bar ------------------------------------------------------ */
+/* The box shrunk to a glanceable pill at the same bottom-middle anchor: an
+   animated indicator plus the agent's current activity ("Reading · 3 cards").
+   The whole pill is a button — click to expand back to the full box. */
+.elves-agentbox--collapsed {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 1000; /* same layer as the full box */
+  max-width: min(560px, calc(100vw - 32px));
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border-radius: 999px;
+  background: var(--elves-surface);
+  border: 1px solid var(--elves-border-strong);
+  box-shadow: var(--elves-shadow-lg), var(--elves-highlight);
+  font-family: var(--elves-card-font);
+  font-size: 13px;
+  color: var(--elves-ink-soft);
+  cursor: pointer;
+  animation: elves-agentbox-rise 140ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: background-color 120ms ease;
+}
+.elves-agentbox--collapsed:hover {
+  background: var(--elves-surface-muted);
+}
+.elves-agentbox--collapsed:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring);
+}
+
+.elves-agentbox__cdot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--elves-claude-accent);
+  animation: elves-agentbox-pulse 1s ease-in-out infinite;
+}
+.elves-agentbox__cicon {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  color: var(--elves-claude-accent);
+}
+.elves-agentbox__cverb {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--elves-ink);
+  white-space: nowrap;
+}
+/* The detail is the one part allowed to shrink and ellipsize on narrow screens. */
+.elves-agentbox__cdetail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--elves-ink-faint);
+}
+.elves-agentbox__chint {
+  flex-shrink: 0;
+  margin-left: 4px;
+  color: var(--elves-ink-faint);
+  white-space: nowrap;
+}
+
+/* Error run: red indicator + label, no pulse. */
+.elves-agentbox--collapsed[data-phase='error'] .elves-agentbox__cdot {
+  background: var(--elves-cc-evidence-label, #b4472a);
+  animation: none;
+}
+.elves-agentbox--collapsed[data-phase='error'] .elves-agentbox__cverb {
+  color: var(--elves-cc-evidence-label, #b4472a);
+}
+
+/* A run finishing while collapsed fires a one-shot ring so it's noticeable
+   without stealing focus. Layered on top of the rise-in. */
+.elves-agentbox--collapsed[data-phase='done'] {
+  animation: elves-agentbox-rise 140ms cubic-bezier(0.16, 1, 0.3, 1),
+    elves-agentbox-donepulse 1.4s ease-out 1;
+}
+
 /* --- Transcript --------------------------------------------------------- */
 .elves-agentbox__transcript {
   max-height: min(42vh, 340px);
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
   gap: 8px;
   border-bottom: 1px solid var(--elves-border-subtle);
+}
+
+/* Flex children default to min-width:auto, which lets long unbroken strings
+   (dash-run separators, bare URLs) force horizontal overflow. Let them wrap. */
+.elves-agentbox__transcript > * {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .elves-agentbox__user {
@@ -248,10 +343,19 @@
   0%, 100% { opacity: 0.35; }
   50% { opacity: 1; }
 }
+@keyframes elves-agentbox-donepulse {
+  0% { box-shadow: var(--elves-shadow-lg), var(--elves-highlight), 0 0 0 0 color-mix(in srgb, var(--elves-claude-accent) 45%, transparent); }
+  70% { box-shadow: var(--elves-shadow-lg), var(--elves-highlight), 0 0 0 12px color-mix(in srgb, var(--elves-claude-accent) 0%, transparent); }
+  100% { box-shadow: var(--elves-shadow-lg), var(--elves-highlight); }
+}
 @media (prefers-reduced-motion: reduce) {
-  .elves-agentbox { animation: none; }
+  .elves-agentbox,
+  .elves-agentbox--collapsed,
+  .elves-agentbox--collapsed[data-phase='done'] { animation: none; }
   .elves-agentbox__input,
   .elves-agentbox__btn,
-  .elves-agentbox__close { transition: none; }
-  .elves-agentbox__dot { animation: none; }
+  .elves-agentbox__close,
+  .elves-agentbox--collapsed { transition: none; }
+  .elves-agentbox__dot,
+  .elves-agentbox__cdot { animation: none; }
 }

@@ -152,6 +152,45 @@ test('Cancel appears mid-run and hits the cancel endpoint', async ({ page }) => 
   expect(cancelHit).toBe(true)
 })
 
+test('collapse shrinks the box to a live status bar and clicking it expands again', async ({ page }) => {
+  // Stream up to a tool call but no terminal event, so the run stays "running"
+  // and the bar shows the live activity ("Reading · 3 cards").
+  await page.route('**/agent/run', (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body: sse([
+        dataFrame({ type: 'started' }),
+        dataFrame({ type: 'text', text: 'Looking at your cards.' }),
+        dataFrame({ type: 'tool', name: 'read_cards', summary: '3 cards' }),
+      ]),
+    }),
+  )
+
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  await page.keyboard.press('/')
+  await page.getByTestId('agent-input').fill('read my cards')
+  await page.getByTestId('agent-send').click()
+  await expect(page.getByTestId('agent-transcript')).toContainText('Looking at your cards.')
+
+  // Collapse to the bar — the full box hides, the bar shows the current activity.
+  await page.getByTestId('agent-collapse').click()
+  const bar = page.getByTestId('agent-collapsed')
+  await expect(bar).toBeVisible()
+  await expect(bar).toContainText('Reading')
+  await expect(bar).toContainText('3 cards')
+  await expect(page.getByTestId('agent-transcript')).toBeHidden()
+
+  // Collapsing did not cancel: the run is still going (Cancel still offered once
+  // expanded). Click the bar to expand back to the full box.
+  await bar.click()
+  await expect(page.getByTestId('agent-transcript')).toBeVisible()
+  await expect(page.getByTestId('agent-cancel')).toBeVisible()
+  await expect(bar).toBeHidden()
+})
+
 test('the clear button empties the transcript and closes the box', async ({ page }) => {
   await page.route('**/agent/run', (route) =>
     route.fulfill({
