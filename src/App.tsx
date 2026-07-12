@@ -42,7 +42,7 @@ import { AgentBox } from './components/AgentBox'
 import { DraftPane } from './components/DraftPane'
 import { DraftDrawerControls } from './components/DraftDrawerControls'
 import { type ViewState, moreDraft, lessDraft } from './client/viewMachine'
-import { prefersReducedMotion, isElementWidthTransitionEnd } from './client/motion'
+import { prefersReducedMotion } from './client/motion'
 
 const shapeUtils = [CardShapeUtil, SectionShapeUtil, QuestionShapeUtil]
 const components = { SelectionForeground: CardSelectionForeground }
@@ -406,9 +406,8 @@ export default function App() {
     window.addEventListener('pointerup', onUp)
   }
 
-  // Draft → canvas navigation: pan (keeping zoom) to a clicked paragraph's card
-  // and select it. From draft-only we first open split so the canvas is visible,
-  // then pan once the pane has finished widening.
+  // Split view: pan (keeping zoom) to a clicked paragraph's card and select it.
+  // The canvas is already visible here, so we can centre on the card directly.
   const focusCard = (cardId: string) => {
     const ed = editorRef.current
     if (!ed) return
@@ -421,37 +420,16 @@ export default function App() {
   }
 
   const onSelectCard = (cardId: string) => {
+    // In the isolated writing view (draft-only), editing a paragraph must stay
+    // there — clicking in must not pull the canvas back into view. We still sync
+    // the canvas selection silently (pure state, no viewport change) so it's
+    // right if the user switches back, but we don't change the view or pan a
+    // hidden, zero-width canvas.
     if (view === 'draft') {
-      changeView('split')
-      const pane = canvasPaneRef.current
-      // The canvas pane widens on a CSS transition (theme.css .elves-canvas-pane,
-      // 320ms); centering before it finishes measures a stale viewport. Wait for
-      // that exact transition to end rather than guessing its duration. Reduced
-      // motion disables the transition entirely (no transitionend will fire), so
-      // skip straight to focusing in that case. A fallback timeout covers any
-      // other case where transitionend never arrives (unmounted pane, interrupted
-      // transition, etc).
-      if (prefersReducedMotion() || !pane) {
-        focusCard(cardId)
-        return
-      }
-      let done = false
-      const finish = () => {
-        if (done) return
-        done = true
-        pane.removeEventListener('transitionend', onTransitionEnd)
-        clearTimeout(fallback)
-        focusCard(cardId)
-      }
-      const onTransitionEnd = (e: TransitionEvent) => {
-        if (!isElementWidthTransitionEnd(e, pane)) return
-        finish()
-      }
-      pane.addEventListener('transitionend', onTransitionEnd)
-      const fallback = setTimeout(finish, 340)
-    } else {
-      focusCard(cardId)
+      editorRef.current?.select(cardId as CardShape['id'])
+      return
     }
+    focusCard(cardId)
   }
 
   const addImageCard = async (ed: Editor, file: File, point?: { x: number; y: number }) => {

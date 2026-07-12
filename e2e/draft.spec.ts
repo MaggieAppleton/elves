@@ -46,18 +46,20 @@ test('a prose card shows up live in the draft pane in split view', async ({ page
   await expect(para).toHaveText('the opening point')
 })
 
-test('clicking a draft paragraph in draft-only view opens split (draft → canvas nav)', async ({ page }) => {
+test('editing a draft paragraph in draft-only view stays in the writing view', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
 
-  await addProse(page, 'jump to me')
+  await addProse(page, 'stay with me')
   await page.getByTestId('draft-open').click() // canvas → split
   await page.getByTestId('draft-expand').click() // split → draft (full)
   await expect(page.locator('.elves-stage')).toHaveAttribute('data-view', 'draft')
 
   await page.getByTestId('draft-para').click()
-  // Navigation drops draft-only into split so the canvas is visible again.
-  await expect(page.locator('.elves-stage')).toHaveAttribute('data-view', 'split')
+  // Entering edit opens the inline editor without pulling the canvas back into
+  // view — the isolated writing view stays put.
+  await expect(page.getByTestId('draft-editor')).toBeVisible()
+  await expect(page.locator('.elves-stage')).toHaveAttribute('data-view', 'draft')
 })
 
 test('editing a paragraph in the draft rewrites the prose card on the canvas', async ({ page }) => {
