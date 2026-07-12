@@ -167,9 +167,9 @@ test('a run streams started, then parsed events, then done', async () => {
   const child = new FakeChild()
   const runner = createAgentRunner(deps(() => child))
   const events: AgentEvent[] = []
-  const done = runner.run({ prompt: 'dedupe', projectId: 'p', hasSelection: false }, (e) => events.push(e))
+  const done = runner.run('chat', { prompt: 'dedupe', projectId: 'p', hasSelection: false }, (e) => events.push(e))
 
-  expect(runner.isRunning()).toBe(true)
+  expect(runner.isRunning('chat')).toBe(true)
   // Chunk arrives split across a line boundary — the runner must buffer and join.
   child.emitStdout('{"type":"assistant","message":{"content":[{"type":"text","text":"Merging duplicates."}]}}\n{"type":"assis')
   child.emitStdout('tant","message":{"content":[{"type":"tool_use","name":"mcp__elves__merge_notes","input":{"cardIds":["a","b"]}}]}}\n')
@@ -183,38 +183,75 @@ test('a run streams started, then parsed events, then done', async () => {
     { type: 'tool', name: 'merge_notes', summary: '2 cards' },
     { type: 'done', reply: 'Merged 2 notes.' },
   ])
-  expect(runner.isRunning()).toBe(false)
+  expect(runner.isRunning('chat')).toBe(false)
 })
 
-test('a second run while one is active is refused', async () => {
+test('a second run under the SAME key while one is active is refused', async () => {
   const child = new FakeChild()
   const runner = createAgentRunner(deps(() => child))
-  const first = runner.run({ prompt: 'a', projectId: 'p', hasSelection: false }, () => {})
+  const first = runner.run('chat', { prompt: 'a', projectId: 'p', hasSelection: false }, () => {})
 
   const second: AgentEvent[] = []
-  await runner.run({ prompt: 'b', projectId: 'p', hasSelection: false }, (e) => second.push(e))
+  await runner.run('chat', { prompt: 'b', projectId: 'p', hasSelection: false }, (e) => second.push(e))
   expect(second).toEqual([{ type: 'error', message: expect.stringContaining('already running') }])
 
   child.emitClose(0)
   await first
 })
 
-test('cancel kills the child', async () => {
-  const child = new FakeChild()
-  const runner = createAgentRunner(deps(() => child))
-  const run = runner.run({ prompt: 'a', projectId: 'p', hasSelection: false }, () => {})
-  runner.cancel()
-  expect(child.killed).toBe('SIGTERM')
-  expect(runner.isRunning()).toBe(false)
-  child.emitClose(null)
-  await run
+test('different keys run concurrently — a review run does not refuse a chat run, or vice versa', async () => {
+  const chatChild = new FakeChild()
+  const reviewChild = new FakeChild()
+  const children = [chatChild, reviewChild]
+  const runner = createAgentRunner(deps(() => children.shift()!))
+
+  const chatEvents: AgentEvent[] = []
+  const reviewEvents: AgentEvent[] = []
+  const chatDone = runner.run('chat', { prompt: 'a', projectId: 'p', hasSelection: false }, (e) => chatEvents.push(e))
+  const reviewDone = runner.run('review:rev-1', { prompt: 'b', projectId: 'p', hasSelection: false }, (e) =>
+    reviewEvents.push(e),
+  )
+
+  expect(runner.isRunning('chat')).toBe(true)
+  expect(runner.isRunning('review:rev-1')).toBe(true)
+  // Neither run refused the other — both got a 'started', not an "already running" error.
+  expect(chatEvents).toEqual([{ type: 'started' }])
+  expect(reviewEvents).toEqual([{ type: 'started' }])
+
+  chatChild.emitClose(0)
+  await chatDone
+  expect(runner.isRunning('chat')).toBe(false)
+  expect(runner.isRunning('review:rev-1')).toBe(true) // the other key is unaffected
+
+  reviewChild.emitClose(0)
+  await reviewDone
+  expect(runner.isRunning('review:rev-1')).toBe(false)
+})
+
+test('cancel(key) kills only that key\'s child', async () => {
+  const chatChild = new FakeChild()
+  const reviewChild = new FakeChild()
+  const children = [chatChild, reviewChild]
+  const runner = createAgentRunner(deps(() => children.shift()!))
+  const chatRun = runner.run('chat', { prompt: 'a', projectId: 'p', hasSelection: false }, () => {})
+  const reviewRun = runner.run('review:rev-1', { prompt: 'b', projectId: 'p', hasSelection: false }, () => {})
+
+  runner.cancel('review:rev-1')
+  expect(reviewChild.killed).toBe('SIGTERM')
+  expect(chatChild.killed).toBeNull()
+  expect(runner.isRunning('review:rev-1')).toBe(false)
+  expect(runner.isRunning('chat')).toBe(true)
+
+  reviewChild.emitClose(null)
+  chatChild.emitClose(0)
+  await Promise.all([chatRun, reviewRun])
 })
 
 test('a nonzero exit with no result line becomes an error from stderr', async () => {
   const child = new FakeChild()
   const runner = createAgentRunner(deps(() => child))
   const events: AgentEvent[] = []
-  const done = runner.run({ prompt: 'a', projectId: 'p', hasSelection: false }, (e) => events.push(e))
+  const done = runner.run('chat', { prompt: 'a', projectId: 'p', hasSelection: false }, (e) => events.push(e))
   child.emitStderr('boom: something failed')
   child.emitClose(1)
   await done
@@ -230,14 +267,14 @@ test('an ENOENT thrown synchronously by spawn is reported, not crashed', async (
     }),
   )
   const events: AgentEvent[] = []
-  await runner.run({ prompt: 'a', projectId: 'p', hasSelection: false }, (e) => events.push(e))
+  await runner.run('chat', { prompt: 'a', projectId: 'p', hasSelection: false }, (e) => events.push(e))
   expect(events).toEqual([{ type: 'error', message: expect.stringContaining('not installed') }])
-  expect(runner.isRunning()).toBe(false)
+  expect(runner.isRunning('chat')).toBe(false)
 })
 
 test('an unsupported ELVES_CLI is rejected with a clear message', async () => {
   const runner = createAgentRunner({ mcpConfigPath: '/repo/.mcp.json', cwd: '/repo', cliName: 'codex', spawn: () => new FakeChild() })
   const events: AgentEvent[] = []
-  await runner.run({ prompt: 'a', projectId: 'p', hasSelection: false }, (e) => events.push(e))
+  await runner.run('chat', { prompt: 'a', projectId: 'p', hasSelection: false }, (e) => events.push(e))
   expect(events).toEqual([{ type: 'error', message: expect.stringContaining('not supported yet') }])
 })

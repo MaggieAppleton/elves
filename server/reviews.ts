@@ -115,13 +115,16 @@ export function createReview(
  * Transition a review through its lifecycle (see canTransition). The claim
  * (`in-progress`) requires an agent id; completion requires a verdict and stamps
  * `commentCount` from the canvas snapshot the caller passes (comments tagged
- * with this review's id). Illegal transitions and unknown ids throw ReviewError
- * with an HTTP-ready status.
+ * with this review's id). `failed` carries an optional `error` message (the
+ * reason the in-app run died); any transition AWAY from `failed` — a retry's
+ * `in-progress` claim, or a dismiss — clears it, since the record no longer
+ * represents that failure. Illegal transitions and unknown ids throw
+ * ReviewError with an HTTP-ready status.
  */
 export function transitionReview(
   path: string,
   reviewId: string,
-  args: { status: ReviewStatus; agent?: string | null; verdict?: string | null },
+  args: { status: ReviewStatus; agent?: string | null; verdict?: string | null; error?: string | null },
   now: string,
   canvasForCounts?: CanvasSnapshot | null,
 ): Promise<Review> {
@@ -134,6 +137,7 @@ export function transitionReview(
       throw new ReviewError(`cannot move a ${cur.status} review to ${args.status}`, 409)
     }
     const next: Review = { ...cur, status: args.status }
+    if (cur.status === 'failed') next.error = null // retry/dismiss leaves the old failure behind
     if (args.status === 'in-progress') {
       if (!args.agent) throw new ReviewError('claiming a review requires an agent id', 400)
       next.agent = args.agent
@@ -145,6 +149,9 @@ export function transitionReview(
       next.verdict = verdict
       next.completedAt = now
       next.commentCount = countReviewComments(canvasForCounts ?? null, reviewId)
+    }
+    if (args.status === 'failed') {
+      next.error = args.error?.trim() || 'the review agent stopped before finishing'
     }
     const updated = [...reviews]
     updated[idx] = next

@@ -53,6 +53,10 @@
   background: var(--elves-claude-accent);
   animation: elves-review-breathe 1.6s ease-in-out infinite;
 }
+.elves-review__badge[data-state='failed'] {
+  background: var(--elves-danger, #c0392b);
+  border: none;
+}
 
 .elves-review__menu {
   position: absolute;
@@ -170,6 +174,7 @@
   animation: elves-review-breathe 1.6s ease-in-out infinite;
 }
 .elves-review__dot[data-status='done'] { background: var(--elves-primary); }
+.elves-review__dot[data-status='failed'] { background: var(--elves-danger, #c0392b); }
 
 .elves-review__pass-name {
   font-size: 12.5px;
@@ -204,6 +209,23 @@
 }
 .elves-review__tally:hover { background: var(--elves-primary-tint-2); }
 
+.elves-review__retry {
+  font-family: var(--elves-card-font);
+  font-size: 11px;
+  color: var(--elves-danger, #c0392b);
+  background: transparent;
+  border: 1px solid var(--elves-danger, #c0392b);
+  border-radius: 999px;
+  padding: 2px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 100ms ease, color 100ms ease;
+}
+.elves-review__retry:hover {
+  background: var(--elves-danger, #c0392b);
+  color: var(--elves-surface);
+}
+
 .elves-review__dismiss {
   font-family: var(--elves-card-font);
   font-size: 13px;
@@ -233,11 +255,11 @@
   padding: 4px 0 2px 14px;
 }
 
-.elves-review__hint {
-  font-size: 11px;
-  line-height: 1.4;
-  color: var(--elves-ink-faint);
-  padding: 4px 8px 6px;
+.elves-review__error {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--elves-danger, #c0392b);
+  padding: 4px 0 2px 14px;
 }
 
 @keyframes elves-review-breathe {

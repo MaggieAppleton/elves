@@ -17,7 +17,7 @@ import { CommentType } from './types'
  * and change are different gestures.
  */
 
-export type ReviewStatus = 'pending' | 'in-progress' | 'done' | 'dismissed'
+export type ReviewStatus = 'pending' | 'in-progress' | 'done' | 'dismissed' | 'failed'
 
 export type PersonalityId =
   | 'devils-advocate'
@@ -57,6 +57,8 @@ export interface Review {
   verdict: string | null
   /** Comments tagged with this review's id, stamped by the server at completion. */
   commentCount: number
+  /** Why the pass landed in `failed` (crash, missing CLI, cancel); null otherwise. */
+  error: string | null
 }
 
 export const PERSONALITIES: Record<PersonalityId, ReviewPersonality> = {
@@ -162,7 +164,7 @@ export function isPersonalityId(v: unknown): v is PersonalityId {
   return typeof v === 'string' && v in PERSONALITIES
 }
 
-const REVIEW_STATUSES: readonly ReviewStatus[] = ['pending', 'in-progress', 'done', 'dismissed']
+const REVIEW_STATUSES: readonly ReviewStatus[] = ['pending', 'in-progress', 'done', 'dismissed', 'failed']
 
 export function isReviewStatus(v: unknown): v is ReviewStatus {
   return typeof v === 'string' && REVIEW_STATUSES.includes(v as ReviewStatus)
@@ -183,7 +185,13 @@ export function isReview(v: unknown): v is Review {
     strOrNull(r.startedAt) &&
     strOrNull(r.completedAt) &&
     strOrNull(r.verdict) &&
-    typeof r.commentCount === 'number'
+    typeof r.commentCount === 'number' &&
+    // `error` is new: records written before it existed have no such key, so a
+    // missing (undefined) value is a valid legacy review, not a malformed one —
+    // reject only a present-but-wrong-typed error. Without this, every review a
+    // user ran before this change fails validation and silently vanishes from
+    // the panel (readReviews drops anything isReview rejects).
+    (r.error === undefined || strOrNull(r.error))
   )
 }
 
@@ -204,6 +212,7 @@ export function makeReview(
     completedAt: null,
     verdict: null,
     commentCount: 0,
+    error: null,
   }
 }
 
@@ -211,14 +220,22 @@ export function makeReview(
  * The legal lifecycle: pending → in-progress → done, with `dismissed` as the
  * user-only exit from any state (cancel a pending summon, wave off a stalled
  * pass, or clear a finished one from the panel). Nothing leaves `dismissed`.
+ *
+ * `failed` is the in-app runner's own exit: a spawned agent that crashes,
+ * can't start, or exits without completing lands the pass here instead of
+ * leaving it stuck `pending`/`in-progress` forever. `failed → in-progress` is
+ * what makes Retry work — the re-spawned agent's start_review claim is just
+ * another claim, legal from `failed` the same way it's legal from `pending`.
  */
 export function canTransition(from: ReviewStatus, to: ReviewStatus): boolean {
   if (from === to) return false
   switch (from) {
     case 'pending':
-      return to === 'in-progress' || to === 'dismissed'
+      return to === 'in-progress' || to === 'dismissed' || to === 'failed'
     case 'in-progress':
-      return to === 'done' || to === 'dismissed'
+      return to === 'done' || to === 'dismissed' || to === 'failed'
+    case 'failed':
+      return to === 'in-progress' || to === 'dismissed'
     case 'done':
       return to === 'dismissed'
     case 'dismissed':

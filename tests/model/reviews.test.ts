@@ -5,7 +5,7 @@ import {
 } from '../../src/model/reviews'
 import { isChangeSet } from '../../src/model/changeset'
 
-const ALL_STATUSES: ReviewStatus[] = ['pending', 'in-progress', 'done', 'dismissed']
+const ALL_STATUSES: ReviewStatus[] = ['pending', 'in-progress', 'done', 'dismissed', 'failed']
 
 describe('PERSONALITIES', () => {
   test('has exactly 5 entries, one per PersonalityId', () => {
@@ -79,7 +79,7 @@ describe('isReviewStatus', () => {
 })
 
 describe('makeReview', () => {
-  test('defaults to pending, unclaimed, unfocused, zero comments', () => {
+  test('defaults to pending, unclaimed, unfocused, zero comments, no error', () => {
     const r = makeReview('rev-1', 'devils-advocate', '2026-07-08T10:00:00.000Z')
     expect(r).toEqual({
       id: 'rev-1',
@@ -92,6 +92,7 @@ describe('makeReview', () => {
       completedAt: null,
       verdict: null,
       commentCount: 0,
+      error: null,
     })
   })
 
@@ -106,23 +107,33 @@ describe('canTransition', () => {
     // from pending
     ['pending', 'in-progress', true],
     ['pending', 'dismissed', true],
+    ['pending', 'failed', true],
     ['pending', 'done', false],
     ['pending', 'pending', false],
     // from in-progress
     ['in-progress', 'done', true],
     ['in-progress', 'dismissed', true],
+    ['in-progress', 'failed', true],
     ['in-progress', 'pending', false],
     ['in-progress', 'in-progress', false],
     // from done
     ['done', 'dismissed', true],
     ['done', 'pending', false],
     ['done', 'in-progress', false],
+    ['done', 'failed', false],
     ['done', 'done', false],
     // from dismissed — a terminal state, nothing leaves it (including itself)
     ['dismissed', 'pending', false],
     ['dismissed', 'in-progress', false],
     ['dismissed', 'done', false],
+    ['dismissed', 'failed', false],
     ['dismissed', 'dismissed', false],
+    // from failed — retry (in-progress) or dismiss are the only ways out
+    ['failed', 'in-progress', true],
+    ['failed', 'dismissed', true],
+    ['failed', 'pending', false],
+    ['failed', 'done', false],
+    ['failed', 'failed', false],
   ]
 
   test.each(matrix)('%s → %s is %s', (from, to, expected) => {
@@ -147,9 +158,29 @@ describe('isReview', () => {
       id: 'rev-2', personality: 'fact-checker', status: 'done', focus: null,
       requestedAt: '2026-07-08T10:00:00.000Z', agent: 'claude',
       startedAt: '2026-07-08T10:05:00.000Z', completedAt: '2026-07-08T10:20:00.000Z',
-      verdict: 'holds up', commentCount: 4,
+      verdict: 'holds up', commentCount: 4, error: null,
     }
     expect(isReview(r)).toBe(true)
+  })
+
+  test('accepts a failed review carrying an error string', () => {
+    const base = makeReview('rev-3', 'architect', '2026-07-08T10:00:00.000Z')
+    const failed: Review = { ...base, status: 'failed', error: '`claude` is not installed' }
+    expect(isReview(failed)).toBe(true)
+  })
+
+  test('rejects a non-string, non-null error', () => {
+    const base = makeReview('rev-1', 'trimmer', '2026-07-08T10:00:00.000Z')
+    expect(isReview({ ...base, error: 42 })).toBe(false)
+  })
+
+  test('accepts a legacy record with no error field (written before it existed)', () => {
+    // reviews.json from before the `error` field: the key is simply absent, so
+    // reading it back yields `undefined`. That must validate — otherwise every
+    // pre-upgrade review is dropped as malformed and vanishes from the panel.
+    const { error, ...legacy } = makeReview('rev-1', 'trimmer', '2026-07-08T10:00:00.000Z')
+    expect('error' in legacy).toBe(false)
+    expect(isReview(legacy)).toBe(true)
   })
 
   test('rejects junk: wrong types, missing fields, unknown personality/status', () => {

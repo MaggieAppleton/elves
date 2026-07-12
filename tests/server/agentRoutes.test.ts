@@ -6,15 +6,17 @@ import { createServer } from '../../server/app'
 import type { AgentRunner, AgentEvent } from '../../server/agentRun'
 
 // A scriptable AgentRunner: `run` replays a fixed list of events then resolves.
-// `running` is toggleable so we can exercise the "already running" 409.
-function fakeAgent(events: AgentEvent[] = [], running = false): AgentRunner & { cancelled: boolean } {
+// `running` is toggleable so we can exercise the "already running" 409. Chat
+// routes always pass key 'chat' (see server/app.ts), so `running` models
+// whether THAT key is busy — a fake this simple doesn't need a real per-key map.
+function fakeAgent(events: AgentEvent[] = [], running = false): AgentRunner & { cancelled: string[] } {
   const impl = {
-    cancelled: false,
-    isRunning: () => running,
-    cancel() {
-      impl.cancelled = true
+    cancelled: [] as string[],
+    isRunning: (_key: string) => running,
+    cancel(key: string) {
+      impl.cancelled.push(key)
     },
-    async run(_input: unknown, onEvent: (e: AgentEvent) => void) {
+    async run(_key: string, _input: unknown, onEvent: (e: AgentEvent) => void) {
       for (const e of events) onEvent(e)
     },
   }
@@ -102,9 +104,24 @@ test('POST /agent/run returns 501 when no runner is configured', async () => {
   expect(res.status).toBe(501)
 })
 
-test('POST /agent/cancel cancels the run', async () => {
+test('POST /agent/cancel cancels the chat run (key "chat")', async () => {
   const agent = fakeAgent()
   const res = await request(app(agent)).post('/agent/cancel').send({})
   expect(res.status).toBe(200)
-  expect(agent.cancelled).toBe(true)
+  expect(agent.cancelled).toEqual(['chat'])
+})
+
+// A review run is keyed 'review:<id>', never 'chat' — so it must not trip the
+// chat route's single-flight check, which only asks isRunning('chat').
+test('a review run in progress does not 409 a chat run', async () => {
+  const agent: AgentRunner = {
+    isRunning: (key) => key === 'review:rev-1',
+    cancel() {},
+    async run(_key, _input, onEvent) {
+      onEvent({ type: 'started' })
+      onEvent({ type: 'done', reply: 'ok' })
+    },
+  }
+  const res = await request(app(agent)).post('/agent/run').send({ prompt: 'hi', projectId: 'essay' })
+  expect(res.status).toBe(200)
 })

@@ -35,7 +35,7 @@ import { markDoing, markLooking, clearPresence } from './client/presence'
 import { shapeRecordsById, diffChangedIds } from './client/resync'
 import { ProjectSwitcher } from './components/ProjectSwitcher'
 import { ReviewPanel } from './components/ReviewPanel'
-import { fetchReviews, summonReview, dismissReview } from './client/reviews'
+import { fetchReviews, summonReview, dismissReview, retryReview } from './client/reviews'
 import type { Review, PersonalityId } from './model/reviews'
 import { LinkPrompt } from './components/LinkPrompt'
 import { AgentBox } from './components/AgentBox'
@@ -300,6 +300,14 @@ export default function App() {
         if (projectIdRef.current === pid) setReviews(list)
       })
       .catch((err) => console.error('Elves: failed to dismiss review', err))
+  }
+
+  const handleRetryReview = (reviewId: string) => {
+    const pid = currentProjectId
+    if (!pid) return
+    // The launch itself is fire-and-forget on the server; the WS broadcast
+    // carries the resulting pending → in-progress transition to the panel.
+    retryReview(pid, reviewId).catch((err) => console.error('Elves: failed to retry review', err))
   }
 
   // Presence is keyed by shape id; dropping it on project switch is cheap
@@ -877,6 +885,7 @@ export default function App() {
           reviews={reviews}
           onSummon={handleSummonReview}
           onDismiss={handleDismissReview}
+          onRetry={handleRetryReview}
         />
         <ProjectSwitcher
           projects={projects}

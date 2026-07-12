@@ -137,6 +137,56 @@ test('transitionReview completing (done) without a verdict → ReviewError 400',
   ).rejects.toMatchObject({ status: 400 })
 })
 
+test('transitionReview allows pending/in-progress → failed, stamping an error message', async () => {
+  const d = await tmpRoot()
+  const path = reviewsPathFor(d, 'essay')!
+  const pending = await createReview(path, { personality: 'trimmer' }, '2026-07-08T00:00:00.000Z')
+  const failed = await transitionReview(
+    path, pending.id, { status: 'failed', error: '`claude` is not installed' }, '2026-07-08T00:01:00.000Z',
+  )
+  expect(failed.status).toBe('failed')
+  expect(failed.error).toBe('`claude` is not installed')
+
+  const inProgress = await createReview(path, { personality: 'architect', agent: 'claude' }, '2026-07-08T00:00:00.000Z')
+  const failed2 = await transitionReview(path, inProgress.id, { status: 'failed' }, '2026-07-08T00:01:00.000Z')
+  expect(failed2.status).toBe('failed')
+  // No error given: a generic message, never a bare null, so the panel always has something to show.
+  expect(failed2.error).toBe('the review agent stopped before finishing')
+})
+
+test('transitionReview: failed → in-progress (retry) is legal and clears the error', async () => {
+  const d = await tmpRoot()
+  const path = reviewsPathFor(d, 'essay')!
+  const review = await createReview(path, { personality: 'trimmer' }, '2026-07-08T00:00:00.000Z')
+  await transitionReview(path, review.id, { status: 'failed', error: 'boom' }, '2026-07-08T00:01:00.000Z')
+  const retried = await transitionReview(
+    path, review.id, { status: 'in-progress', agent: 'claude' }, '2026-07-08T00:02:00.000Z',
+  )
+  expect(retried.status).toBe('in-progress')
+  expect(retried.error).toBeNull()
+  expect(retried.agent).toBe('claude')
+})
+
+test('transitionReview: failed → dismissed is legal and clears the error', async () => {
+  const d = await tmpRoot()
+  const path = reviewsPathFor(d, 'essay')!
+  const review = await createReview(path, { personality: 'trimmer' }, '2026-07-08T00:00:00.000Z')
+  await transitionReview(path, review.id, { status: 'failed', error: 'boom' }, '2026-07-08T00:01:00.000Z')
+  const dismissed = await transitionReview(path, review.id, { status: 'dismissed' }, '2026-07-08T00:02:00.000Z')
+  expect(dismissed.status).toBe('dismissed')
+  expect(dismissed.error).toBeNull()
+})
+
+test('transitionReview refuses done → failed and failed → done (illegal) → ReviewError 409', async () => {
+  const d = await tmpRoot()
+  const path = reviewsPathFor(d, 'essay')!
+  const review = await createReview(path, { personality: 'trimmer', agent: 'claude' }, '2026-07-08T00:00:00.000Z')
+  await transitionReview(path, review.id, { status: 'done', verdict: 'fine' }, '2026-07-08T00:01:00.000Z')
+  await expect(
+    transitionReview(path, review.id, { status: 'failed', error: 'x' }, '2026-07-08T00:02:00.000Z'),
+  ).rejects.toMatchObject({ status: 409 })
+})
+
 test('transitionReview allows done → dismissed', async () => {
   const d = await tmpRoot()
   const path = reviewsPathFor(d, 'essay')!
