@@ -13,6 +13,7 @@ async function addCardAndComment(page: any, request: any, comment: { type: strin
   // (card must live in the project) is satisfied deterministically.
   await expect.poll(async () => (await serverCardIds(request, projectId)).length).toBe(1)
   const [cardId] = await serverCardIds(request, projectId)
+  await page.keyboard.press('Escape')
 
   await request.post(`${BASE}/projects/${projectId}/changeset`, {
     data: { id: `cs-${Date.now()}`, author: 'claude', ops: [{ kind: 'add_comment', cardId, comment }] },
@@ -38,7 +39,8 @@ test("Claude's injected comment renders on the card and is one Ctrl-Z away from 
 test('a freeform comment can be resolved away', async ({ page, request }) => {
   await addCardAndComment(page, request, { type: null, text: 'freeform note' })
 
-  await expect(page.locator('.elves-comment')).toHaveCount(1)
-  await page.getByTestId('comment-resolve').first().click()
+  const comment = page.locator('.elves-comment')
+  await expect(comment).toHaveCount(1)
+  await comment.getByRole('button', { name: 'Resolve comment' }).click()
   await expect(page.locator('.elves-comment')).toHaveCount(0)
 })

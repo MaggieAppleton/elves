@@ -244,9 +244,14 @@ export function ReviewPanel({ projectId, editor, reviews, onSummon, onDismiss, o
                         className="elves-review__dismiss"
                         data-testid={`review-dismiss-${r.personality}`}
                         title={r.status === 'done' ? 'Clear from panel' : 'Cancel this pass'}
+                        aria-label={
+                          r.status === 'done'
+                            ? `Clear ${p.name} review from panel`
+                            : `Cancel ${p.name} review`
+                        }
                         onClick={() => onDismiss(r.id)}
                       >
-                        ×
+                        <span aria-hidden="true">×</span>
                       </button>
                     </div>
                     {r.status === 'done' && r.verdict && (

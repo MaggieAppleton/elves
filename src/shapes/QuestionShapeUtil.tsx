@@ -154,6 +154,7 @@ export class QuestionShapeUtil extends ShapeUtil<QuestionShape> {
                 className="elves-question__dismiss"
                 data-testid="question-dismiss"
                 title="Dismiss — I've answered this (or it's not useful)"
+                aria-label="Dismiss question"
                 onPointerDown={stopEventPropagation}
                 onClick={(e) => {
                   stopEventPropagation(e)
@@ -162,7 +163,7 @@ export class QuestionShapeUtil extends ShapeUtil<QuestionShape> {
                   })
                 }}
               >
-                ✓
+                <span aria-hidden="true">✓</span>
               </button>
             </div>
             <div

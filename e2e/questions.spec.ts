@@ -18,6 +18,7 @@ async function canvasReady(page: import('@playwright/test').Page, request: impor
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
   await page.getByTestId('new-prose').click()
   await expect.poll(async () => (await serverCardIds(request, projectId)).length).toBe(1)
+  await page.keyboard.press('Escape')
 }
 
 test('an MCP create_question tool call renders an orange, Claude-marked question', async ({ page, request }) => {
@@ -40,9 +41,9 @@ test('dismissing a question hides it (recoverable in-file, but gone from the can
   const question = page.locator('.elves-question', { hasText: 'Why should a novice care?' })
   await expect(question).toBeVisible()
 
-  // The dismiss control (✓) opts into pointer events even though the shape body
+  // The dismiss control opts into pointer events even though the shape body
   // doesn't, so it's directly clickable (revealed on hover/selection in the app).
-  await question.getByTestId('question-dismiss').click()
+  await question.getByRole('button', { name: 'Dismiss question' }).click()
 
   // Dismissed = hidden from render and hit-testing.
   await expect(page.locator('.elves-question')).toHaveCount(0)
