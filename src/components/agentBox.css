@@ -102,6 +102,20 @@
   border-bottom: 1px solid var(--elves-border-subtle);
 }
 
+.elves-agentbox__user {
+  align-self: flex-end;
+  max-width: 85%;
+  margin: 0;
+  padding: 7px 11px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--elves-ink);
+  white-space: pre-wrap;
+  background: var(--elves-surface-muted);
+  border: 1px solid var(--elves-border-subtle);
+  border-radius: 12px 12px 3px 12px;
+}
+
 .elves-agentbox__text {
   margin: 0;
   font-size: 14px;

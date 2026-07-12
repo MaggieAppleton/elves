@@ -16,6 +16,7 @@ interface Props {
 
 // The transcript is a flat list of rendered lines derived from the event stream.
 type Entry =
+  | { kind: 'user'; text: string }
   | { kind: 'text'; text: string }
   | { kind: 'tool'; name: string; summary: string }
   | { kind: 'error'; message: string }
@@ -89,11 +90,23 @@ export function AgentBox({ open, projectId, selectedCount, onClose }: Props) {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
   }, [entries, running])
 
+  // Auto-grow the input to fit its content (up to the CSS max-height, past which
+  // it scrolls). Reset to `auto` first so scrollHeight reflects the text's
+  // natural height and the field can shrink again when it's cleared or trimmed.
+  useEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [prompt])
+
   const submit = () => {
     const text = prompt.trim()
     if (!text || running || !projectId) return
     setPrompt('')
-    setEntries([])
+    // Seed the transcript with the user's message so it stays pinned above the
+    // tool calls and replies that follow.
+    setEntries([{ kind: 'user', text }])
     setRunning(true)
     handleRef.current = runAgent({ prompt: text, projectId, hasSelection }, (e) => {
       setEntries((prev) => appendEvent(prev, e))
@@ -154,7 +167,11 @@ export function AgentBox({ open, projectId, selectedCount, onClose }: Props) {
       {hasTranscript && (
         <div className="elves-agentbox__transcript" ref={scrollRef} data-testid="agent-transcript">
           {entries.map((en, i) =>
-            en.kind === 'text' ? (
+            en.kind === 'user' ? (
+              <p className="elves-agentbox__user" key={i}>
+                {en.text}
+              </p>
+            ) : en.kind === 'text' ? (
               <p className="elves-agentbox__text" key={i}>
                 {en.text}
               </p>

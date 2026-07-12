@@ -44,6 +44,48 @@ test('pressing / opens the box and streams a transcript', async ({ page }) => {
   await expect(transcript).toContainText('read map')
 })
 
+test('the submitted message is pinned above the tool calls and replies', async ({ page }) => {
+  await page.route('**/agent/run', (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body: sse([
+        dataFrame({ type: 'started' }),
+        dataFrame({ type: 'tool', name: 'read_map', summary: '' }),
+        dataFrame({ type: 'done', reply: 'Found two weak spots.' }),
+      ]),
+    }),
+  )
+
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  await page.keyboard.press('/')
+  await page.getByTestId('agent-input').fill('critique my argument')
+  await page.getByTestId('agent-send').click()
+
+  // The user's message renders as its own line, and it sits above the tool call.
+  const userMsg = page.locator('.elves-agentbox__user')
+  await expect(userMsg).toHaveText('critique my argument')
+  const lines = page.locator('.elves-agentbox__transcript > *')
+  await expect(lines.first()).toHaveClass(/elves-agentbox__user/)
+})
+
+test('the input grows to fit a multi-line message', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  await page.keyboard.press('/')
+  const input = page.getByTestId('agent-input')
+  await input.fill('one line')
+  const short = await input.evaluate((el) => (el as HTMLTextAreaElement).offsetHeight)
+
+  await input.fill('one\ntwo\nthree\nfour\nfive')
+  const tall = await input.evaluate((el) => (el as HTMLTextAreaElement).offsetHeight)
+
+  expect(tall).toBeGreaterThan(short)
+})
+
 test('/ is a literal slash while typing in the box, not a re-trigger', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
