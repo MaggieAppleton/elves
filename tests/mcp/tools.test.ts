@@ -192,6 +192,34 @@ test('startReviewTool with reviewId claims a pending review, then re-returns the
   expect(reviews[0].startedAt).toBe(startedAt) // untouched by the second claim attempt
 })
 
+test('startReviewTool with reviewId re-claims a FAILED review (the retry path) and clears its error', async () => {
+  const { base } = await liveElves()
+  const reviewId = await seedPendingReview(base, 'fact-checker')
+  // Simulate an in-app run that died: fail the pending pass directly against
+  // the same status endpoint the server's launchReviewRun completion handler
+  // uses, the way it would after a spawned agent crashed before claiming.
+  await fetch(`${base}/projects/essay/reviews/${reviewId}/status`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ status: 'failed', error: '`claude` is not installed' }),
+  })
+  const failed = (await listReviewsTool(base, 'essay')).find((r) => r.id === reviewId)!
+  expect(failed.status).toBe('failed')
+  expect(failed.error).toBe('`claude` is not installed')
+
+  // A retried run's spawned agent calls start_review the same way a fresh
+  // claim would — failed → in-progress must be legal, and the old error
+  // must not linger on a review that's actively running again.
+  const started = await startReviewTool(base, 'essay', { reviewId })
+  expect(started.reviewId).toBe(reviewId)
+  expect(started.personality).toBe('fact-checker')
+
+  const reclaimed = (await listReviewsTool(base, 'essay')).find((r) => r.id === reviewId)!
+  expect(reclaimed.status).toBe('in-progress')
+  expect(reclaimed.agent).toBe(getAgentId())
+  expect(reclaimed.error).toBeNull()
+})
+
 test('startReviewTool without a reviewId or personality rejects with a helpful error', async () => {
   const { base } = await liveElves()
   await expect(startReviewTool(base, 'essay', {})).rejects.toThrow(/reviewId.*personality|personality.*reviewId/)

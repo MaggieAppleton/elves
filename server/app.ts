@@ -470,7 +470,7 @@ export function createServer(
       res.status(400).json({ error: 'projectId is required' })
       return
     }
-    if (agent.isRunning()) {
+    if (agent.isRunning('chat')) {
       res.status(409).json({ error: 'an agent is already running' })
       return
     }
@@ -496,7 +496,7 @@ export function createServer(
       if (!res.writableFinished) console.warn('[elves] agent run stream closed by client before completion')
     })
     agent
-      .run({ prompt, projectId, hasSelection }, send)
+      .run('chat', { prompt, projectId, hasSelection }, send)
       .catch((err) => {
         console.error('[elves] agent run failed:', err)
         send({ type: 'error', message: 'the agent run failed unexpectedly' })
@@ -515,7 +515,7 @@ export function createServer(
       res.status(501).json({ error: 'agent runs are not configured on this server' })
       return
     }
-    agent.cancel()
+    agent.cancel('chat')
     res.json({ ok: true })
   })
 
@@ -691,6 +691,47 @@ export function createServer(
     if (onReviews) onReviews(id, await readReviews(reviewsPath(id)))
   }
 
+  // Fire-and-forget: spawn an in-app agent to claim and run review <reviewId>,
+  // reusing the SAME headless runner the chat box drives (server/agentRun.ts).
+  // The spawned agent is "just another MCP client" — it calls start_review,
+  // add_comment, complete_review exactly as an external agent would, so the
+  // whole review state machine, comment tagging, and WS broadcasts are
+  // untouched. No SSE stream here: the panel tracks progress over the reviews
+  // WS broadcast (pending → in-progress → done), not a transcript.
+  async function launchReviewRun(projectId: string, reviewId: string): Promise<void> {
+    const key = `review:${reviewId}`
+    if (!agent || agent.isRunning(key)) return // no runner wired, or already running: stays pending
+    let lastError: string | null = null
+    const prompt =
+      `A review pass is waiting for you on this canvas, id \`${reviewId}\`. Call \`start_review\` with ` +
+      `reviewId \`${reviewId}\`, follow the returned brief exactly, leave your comments tagged with that ` +
+      `reviewId, and finish by calling \`complete_review\`. Do only this review — nothing else.`
+    await agent.run(key, { prompt, projectId, hasSelection: false }, (e) => {
+      if (e.type === 'error') lastError = e.message
+    })
+    // The child exited. If the pass never reached done (or wasn't dismissed
+    // out from under it — e.g. the user × cancelled mid-run), mark it failed
+    // so the panel shows Retry instead of leaving it stuck "Starting…" forever.
+    try {
+      const reviews = await readReviews(reviewsPath(projectId))
+      const review = reviews.find((r) => r.id === reviewId)
+      if (review && (review.status === 'pending' || review.status === 'in-progress')) {
+        await transitionReview(
+          reviewsPath(projectId),
+          reviewId,
+          { status: 'failed', error: lastError ?? 'the review agent stopped before finishing' },
+          new Date().toISOString(),
+        )
+        await broadcastReviews(projectId)
+      }
+    } catch (err) {
+      // Lost the race to done/dismissed between the read above and this write
+      // (ReviewError 409) — the pass finished or was cancelled on its own
+      // terms, which is the outcome we wanted anyway.
+      if (!(err instanceof ReviewError)) throw err
+    }
+  }
+
   app.get(
     '/projects/:id/reviews',
     wrap(async (req, res) => {
@@ -724,7 +765,44 @@ export function createServer(
         new Date().toISOString(),
       )
       await broadcastReviews(req.params.id)
+      // A UI summon (no `agent` in the body) is born pending — launch the
+      // in-app runner to claim and run it. An ad-hoc chat pass (`agent` given)
+      // is already in-progress, claimed by the caller itself; nothing to launch.
+      if (review.status === 'pending') {
+        void launchReviewRun(req.params.id, review.id).catch((err) =>
+          console.error('[elves] review run failed to launch:', err),
+        )
+      }
       res.json({ review })
+    }),
+  )
+
+  // Retry: re-launch a run for a review stuck `failed` (or re-summon a
+  // `pending` one that never got picked up). 202 — the launch is fire-and-
+  // forget, same as the summon path; the panel watches progress over the
+  // reviews WS broadcast.
+  app.post(
+    '/projects/:id/reviews/:reviewId/run',
+    wrap(async (req, res) => {
+      const paths = await requireProject(req.params.id, res)
+      if (!paths) return
+      const reviews = await readReviews(reviewsPath(req.params.id))
+      const review = reviews.find((r) => r.id === req.params.reviewId)
+      if (!review) {
+        res.status(404).json({ error: 'unknown review' })
+        return
+      }
+      // Only a stalled pass is re-runnable. A finished (`done`) or cleared
+      // (`dismissed`) review would just spawn a CLI whose start_review claim the
+      // state machine rejects anyway — refuse up front instead of wasting it.
+      if (review.status !== 'failed' && review.status !== 'pending') {
+        res.status(409).json({ error: `cannot re-run a ${review.status} review` })
+        return
+      }
+      void launchReviewRun(req.params.id, req.params.reviewId).catch((err) =>
+        console.error('[elves] review run failed to launch:', err),
+      )
+      res.status(202).json({ ok: true })
     }),
   )
 
@@ -733,11 +811,17 @@ export function createServer(
     wrap(async (req, res) => {
       const paths = await requireProject(req.params.id, res)
       if (!paths) return
-      const { status, agent, verdict } = req.body ?? {}
+      const { status, agent: agentId, verdict, error } = req.body ?? {}
       if (!isReviewStatus(status)) {
         res.status(400).json({ error: 'unknown status' })
         return
       }
+      // Dismissing a running pass must kill its child FIRST — otherwise the
+      // runner's own completion handler (launchReviewRun) would race this
+      // write, see the record still pending/in-progress once the kill lands,
+      // and re-mark it failed right after the user dismissed it. Idempotent
+      // no-op if nothing is running under this key.
+      if (status === 'dismissed') agent?.cancel(`review:${req.params.reviewId}`)
       try {
         // Completion stamps the pass's comment footprint, so it needs the
         // canvas as it stands; the other transitions never read the document.
@@ -745,7 +829,7 @@ export function createServer(
         const review = await transitionReview(
           reviewsPath(req.params.id),
           req.params.reviewId,
-          { status, agent: agent ?? null, verdict: verdict ?? null },
+          { status, agent: agentId ?? null, verdict: verdict ?? null, error: error ?? null },
           new Date().toISOString(),
           canvas,
         )

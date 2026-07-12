@@ -14,6 +14,7 @@ interface Props {
   reviews: Review[]
   onSummon: (personality: PersonalityId, focus: string | null) => void
   onDismiss: (reviewId: string) => void
+  onRetry: (reviewId: string) => void
 }
 
 // Each personality's swatch borrows the label colour of its signature comment
@@ -68,7 +69,7 @@ function EyeglassesIcon() {
   )
 }
 
-export function ReviewPanel({ projectId, editor, reviews, onSummon, onDismiss }: Props) {
+export function ReviewPanel({ projectId, editor, reviews, onSummon, onDismiss, onRetry }: Props) {
   const [open, setOpen] = useState(false)
   const [focus, setFocus] = useState('')
   const ref = useRef<HTMLDivElement>(null)
@@ -90,9 +91,12 @@ export function ReviewPanel({ projectId, editor, reviews, onSummon, onDismiss }:
   }, [open])
 
   const visible = reviews.filter((r) => r.status !== 'dismissed')
-  const active = visible.filter((r) => r.status === 'pending' || r.status === 'in-progress')
+  // `failed` stays in the active group (not recentDone) so it's visible with
+  // its Retry button until the user dismisses it — it isn't a finished pass.
+  const active = visible.filter(
+    (r) => r.status === 'pending' || r.status === 'in-progress' || r.status === 'failed',
+  )
   const recentDone = visible.filter((r) => r.status === 'done').slice(0, 5)
-  const anyPending = active.some((r) => r.status === 'pending')
 
   // Live open/total per finished pass, tracked REACTIVELY against the tldraw
   // store (useValue): a comment landing or being resolved re-renders the tally
@@ -140,7 +144,13 @@ export function ReviewPanel({ projectId, editor, reviews, onSummon, onDismiss }:
         {active.length > 0 && (
           <span
             className="elves-review__badge"
-            data-state={active.some((r) => r.status === 'in-progress') ? 'in-progress' : 'pending'}
+            data-state={
+              active.some((r) => r.status === 'in-progress')
+                ? 'in-progress'
+                : active.some((r) => r.status === 'failed')
+                  ? 'failed'
+                  : 'pending'
+            }
           />
         )}
       </button>
@@ -202,6 +212,9 @@ export function ReviewPanel({ projectId, editor, reviews, onSummon, onDismiss }:
                         {p.name}
                         {r.focus ? <span className="elves-review__pass-focus"> · {r.focus}</span> : null}
                       </span>
+                      {r.status === 'pending' && (
+                        <span className="elves-review__pass-state">Starting…</span>
+                      )}
                       {r.status === 'in-progress' && (
                         <span className="elves-review__pass-state">
                           {agent?.name ?? r.agent} is reading…
@@ -217,6 +230,16 @@ export function ReviewPanel({ projectId, editor, reviews, onSummon, onDismiss }:
                           {tally.open > 0 ? `${tally.open} open · ${tally.total} notes` : `${tally.total} notes`}
                         </button>
                       )}
+                      {r.status === 'failed' && (
+                        <button
+                          className="elves-review__retry"
+                          data-testid={`review-retry-${r.personality}`}
+                          title="Try this pass again"
+                          onClick={() => onRetry(r.id)}
+                        >
+                          Retry
+                        </button>
+                      )}
                       <button
                         className="elves-review__dismiss"
                         data-testid={`review-dismiss-${r.personality}`}
@@ -229,15 +252,12 @@ export function ReviewPanel({ projectId, editor, reviews, onSummon, onDismiss }:
                     {r.status === 'done' && r.verdict && (
                       <div className="elves-review__verdict" data-testid="review-verdict">{r.verdict}</div>
                     )}
+                    {r.status === 'failed' && r.error && (
+                      <div className="elves-review__error" data-testid="review-error">{r.error}</div>
+                    )}
                   </div>
                 )
               })}
-              {anyPending && (
-                <div className="elves-review__hint" data-testid="review-hint">
-                  Waiting for an agent — ask yours to “pick up my Elves review”, or run the
-                  personality’s prompt from its MCP client.
-                </div>
-              )}
             </>
           )}
         </div>

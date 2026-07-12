@@ -29,6 +29,18 @@ export async function summonReview(
   return review
 }
 
+/** Retry a `failed` pass (or re-summon a `pending` one that never got picked
+ * up): fires the server's in-app runner again, keyed the same way the original
+ * summon was. Fire-and-forget from the client's perspective — progress shows
+ * up over the reviews WS broadcast like any other transition. */
+export async function retryReview(projectId: string, reviewId: string): Promise<void> {
+  const res = await fetch(
+    `${BASE}/projects/${encodeURIComponent(projectId)}/reviews/${encodeURIComponent(reviewId)}/run`,
+    { method: 'POST' },
+  )
+  if (!res.ok) throw new Error(`failed to retry review: ${res.status}`)
+}
+
 /** The user-only transition: cancel a pending summon or clear a pass from the panel. */
 export async function dismissReview(projectId: string, reviewId: string): Promise<Review> {
   const res = await fetch(

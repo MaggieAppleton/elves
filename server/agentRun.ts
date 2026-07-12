@@ -11,8 +11,11 @@ import { spawn as nodeSpawn } from 'node:child_process'
  * reasoning + tool calls stream out here as normalized {@link AgentEvent}s that
  * the box renders as a transcript.
  *
- * Fresh run each time: no persistent session, no terminal attach. One run at a
- * time — a second request while one is active is refused.
+ * Fresh run each time: no persistent session, no terminal attach. Runs are keyed
+ * by caller (the chat box uses `'chat'`, a review run uses `review:<reviewId>`):
+ * a given key is single-flight — a second request under the SAME key while one
+ * is active is refused — but different keys run concurrently, so a chat run and
+ * one or more review runs can all be in flight at once.
  *
  * Safety: the child is locked to the elves MCP tools plus read-only web
  * (WebSearch/WebFetch) and explicitly denied shell/file tools, so its blast
@@ -148,7 +151,10 @@ export interface CliAdapter {
 export const claudeAdapter: CliAdapter = {
   buildCommand(input, ctx) {
     return {
-      cmd: 'claude',
+      // ELVES_CLI_BIN overrides the actual binary invoked (default `claude`) —
+      // lets e2e point this at a deterministic stub, or a real `claude` living
+      // at a nonstandard path, without touching adapter selection (ELVES_CLI).
+      cmd: process.env.ELVES_CLI_BIN || 'claude',
       args: [
         '-p',
         input.prompt,
@@ -210,9 +216,9 @@ export interface AgentRunnerDeps {
 }
 
 export interface AgentRunner {
-  run(input: AgentRunInput, onEvent: (e: AgentEvent) => void): Promise<void>
-  cancel(): void
-  isRunning(): boolean
+  run(key: string, input: AgentRunInput, onEvent: (e: AgentEvent) => void): Promise<void>
+  cancel(key: string): void
+  isRunning(key: string): boolean
 }
 
 /** ENOENT means the CLI isn't installed / not on PATH — the single most likely
@@ -227,18 +233,22 @@ function friendlySpawnError(cmd: string, err: NodeJS.ErrnoException): string {
 export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
   const spawnFn = deps.spawn ?? (nodeSpawn as unknown as SpawnFn)
   const cliName = deps.cliName ?? 'claude'
-  let active: ChildLike | null = null
+  // Concurrent runs, keyed by caller: 'chat' for the chat box, 'review:<id>'
+  // for an in-app review run. A key is single-flight (see run() below); across
+  // keys there's no coordination at all — that's the whole point of the map.
+  const active = new Map<string, ChildLike>()
 
   return {
-    isRunning: () => active !== null,
-    cancel() {
-      if (active) {
-        active.kill('SIGTERM')
-        active = null
+    isRunning: (key) => active.has(key),
+    cancel(key) {
+      const child = active.get(key)
+      if (child) {
+        child.kill('SIGTERM')
+        active.delete(key)
       }
     },
-    run(input, onEvent) {
-      if (active) {
+    run(key, input, onEvent) {
+      if (active.has(key)) {
         onEvent({ type: 'error', message: 'an agent is already running — wait for it to finish or cancel it.' })
         return Promise.resolve()
       }
@@ -264,7 +274,7 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
         return Promise.resolve()
       }
 
-      active = child
+      active.set(key, child)
       onEvent({ type: 'started' })
 
       // A terminal event (done/error) may come from the parsed stream OR be
@@ -297,7 +307,10 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
 
       return new Promise<void>((resolve) => {
         const finish = () => {
-          active = null
+          // Only this run's own entry is ours to clear — a cancel() may have
+          // already deleted it (or, in principle, a new run under the same key
+          // could have replaced it), so check identity before deleting.
+          if (active.get(key) === child) active.delete(key)
           resolve()
         }
         child.on('error', (err) => {

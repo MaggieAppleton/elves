@@ -26,86 +26,100 @@ test.beforeEach(async ({ request }) => {
   await resetReviews(request)
 })
 
-test('summoning a reviewer creates a pending pass; cancelling clears it', async ({ page, request }) => {
-  await openCanvas(page)
-
-  await page.getByTestId('review-button').click()
-  await page.getByTestId('review-focus').fill('just the opening')
-  await page.getByTestId('review-summon-devils-advocate').click()
-
-  // The pass shows up in the open panel as pending, with the how-to hint.
-  const pass = page.getByTestId('review-pass-devils-advocate')
-  await expect(pass).toBeVisible()
-  await expect(pass).toHaveAttribute('data-status', 'pending')
-  await expect(pass).toContainText('just the opening')
-  await expect(page.getByTestId('review-hint')).toBeVisible()
-
-  // And on the server, where an agent's list_reviews will find it.
-  const { reviews } = await (await request.get(`${BASE}/projects/${projectId}/reviews`)).json()
-  const pending = reviews.filter((r: any) => r.status === 'pending')
-  expect(pending).toHaveLength(1)
-  expect(pending[0].personality).toBe('devils-advocate')
-  expect(pending[0].focus).toBe('just the opening')
-
-  // Cancel from the panel.
-  await page.getByTestId('review-dismiss-devils-advocate').click()
-  await expect(pass).toHaveCount(0)
-})
-
-test('a full pass — claim, tagged comment, verdict — reports live in the panel', async ({ page, request }) => {
+// Summoning now spawns a headless agent SERVER-SIDE (server/app.ts's
+// launchReviewRun) rather than leaving the pass `pending` for an external agent
+// to pick up. That agent can't be stubbed via browser-level page.route (it's
+// not the browser making the request) — playwright.config.ts instead points
+// the server's ELVES_CLI_BIN at e2e/fixtures/stub-agent.mjs, a deterministic
+// stand-in that plays the review over the same HTTP surface the elves MCP uses.
+// These tests exercise the real spawn → claim → comment → verdict pipeline, so
+// they use generous polls rather than instant assertions.
+test('summoning runs a full pass in-app', async ({ page, request }) => {
   await openCanvas(page)
   await page.getByTestId('new-prose').click()
   await expect(page.locator('.elves-card--prose').first()).toBeVisible()
   await expect.poll(async () => (await serverCardIds(request, projectId)).length).toBe(1)
-  const [cardId] = await serverCardIds(request, projectId)
-  // Finish the newly-created card's edit session before the simulated agent
-  // writes. Current clients deliberately defer remote snapshot loads while the
-  // user is typing so an agent update cannot discard unsaved keystrokes.
+  // Finish the newly-created card's edit session before the stub agent writes.
+  // Current clients deliberately defer remote snapshot loads while the user is
+  // typing so an agent update cannot discard unsaved keystrokes.
   await page.keyboard.press('Escape')
 
-  // Summon from the panel…
   await page.getByTestId('review-button').click()
   await page.getByTestId('review-summon-trimmer').click()
-  await expect(page.getByTestId('review-pass-trimmer')).toHaveAttribute('data-status', 'pending')
-  const { reviews } = await (await request.get(`${BASE}/projects/${projectId}/reviews`)).json()
-  const review = reviews.find((r: any) => r.status === 'pending')
 
-  // …then play the agent over the same HTTP surface the MCP uses: claim,
-  // leave one comment tagged with the pass, complete with a verdict.
-  await request.post(`${BASE}/projects/${projectId}/reviews/${review.id}/status`, {
-    data: { status: 'in-progress', agent: 'claude' },
-  })
-  await expect(page.getByTestId('review-pass-trimmer')).toHaveAttribute('data-status', 'in-progress')
-
-  await request.post(`${BASE}/projects/${projectId}/changeset`, {
-    data: {
-      id: `cs-${Date.now()}`,
-      author: 'claude',
-      ops: [{
-        kind: 'add_comment',
-        cardId,
-        comment: { type: 'tighten', text: 'same point twice — keep the concrete one', reviewId: review.id },
-      }],
-    },
-  })
-  await request.post(`${BASE}/projects/${projectId}/reviews/${review.id}/status`, {
-    data: { status: 'done', verdict: 'Lean already; one duplicated point.' },
-  })
-
-  // The panel reports the finished pass: verdict + live tally.
   const pass = page.getByTestId('review-pass-trimmer')
-  await expect(pass).toHaveAttribute('data-status', 'done')
-  await expect(page.getByTestId('review-verdict')).toContainText('one duplicated point')
+  await expect(pass).toBeVisible()
+
+  // The stub claims almost immediately, but it's a real child process — give it
+  // room. It advances pending -> in-progress -> done on its own; the stub is
+  // fast enough that polling can catch it already past in-progress, so assert
+  // the intermediate state loosely (it left pending via in-progress, not by
+  // jumping straight to some other state) before waiting for done.
+  await expect.poll(
+    async () => (await pass.getAttribute('data-status')),
+    { timeout: 20000 },
+  ).not.toBe('pending')
+  expect(['in-progress', 'done']).toContain(await pass.getAttribute('data-status'))
+  await expect.poll(
+    async () => (await pass.getAttribute('data-status')),
+    { timeout: 20000 },
+  ).toBe('done')
+
+  await expect(page.getByTestId('review-verdict')).toContainText('Stub verdict')
   await expect(page.getByTestId('review-tally-trimmer')).toContainText('1 open · 1 notes')
 
-  // The tagged comment renders on the card in its own (new) type styling.
+  // The tagged comment renders on the card in its own type styling.
   const pin = page.locator('.elves-comment[data-type="tighten"]')
   await expect(pin).toBeVisible()
-  await expect(pin).toContainText('same point twice')
+  await expect(pin).toContainText('stub note')
 
-  // Resolving the comment drains the live tally. (Clicking on the canvas
-  // closes the dropdown, like any popover — reopen it to read the tally.)
-  await page.getByTestId('comment-resolve').first().click()
+  // The old "wait for an external agent" hint is gone entirely — the app runs
+  // the pass itself now.
+  await expect(page.getByTestId('review-hint')).toHaveCount(0)
+})
+
+test('a failing run marks the pass failed, with Retry', async ({ page }) => {
+  await openCanvas(page)
+
+  // focus '__fail__' tells the stub to exit(1) without claiming — the server's
+  // launchReviewRun completion handler then marks the pass failed itself.
   await page.getByTestId('review-button').click()
-  await expect(page.getByTestId('review-tally-trimmer')).toHaveText('1 notes')
+  await page.getByTestId('review-focus').fill('__fail__')
+  await page.getByTestId('review-summon-devils-advocate').click()
+
+  const pass = page.getByTestId('review-pass-devils-advocate')
+  await expect(pass).toBeVisible()
+  await expect.poll(
+    async () => (await pass.getAttribute('data-status')),
+    { timeout: 20000 },
+  ).toBe('failed')
+
+  await expect(page.getByTestId('review-error')).toBeVisible()
+  const retry = page.getByTestId('review-retry-devils-advocate')
+  await expect(retry).toBeVisible()
+
+  // Retry re-spawns the stub, which fails again (focus is still __fail__) — the
+  // pass should cycle back through in-progress and land failed once more, with
+  // Retry still offered.
+  await retry.click()
+  await expect.poll(
+    async () => (await pass.getAttribute('data-status')),
+    { timeout: 20000 },
+  ).toBe('failed')
+  await expect(retry).toBeVisible()
+
+  await expect(page.getByTestId('review-hint')).toHaveCount(0)
+})
+
+test('dismissing a running/failed pass clears it', async ({ page }) => {
+  await openCanvas(page)
+
+  await page.getByTestId('review-button').click()
+  await page.getByTestId('review-summon-first-reader').click()
+
+  const pass = page.getByTestId('review-pass-first-reader')
+  await expect(pass).toBeVisible()
+
+  await page.getByTestId('review-dismiss-first-reader').click()
+  await expect(pass).toHaveCount(0)
 })
