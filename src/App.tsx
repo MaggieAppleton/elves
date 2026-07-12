@@ -634,12 +634,14 @@ export default function App() {
     })
     const pid = projectIdRef.current
     if (!pid) return
+    const isCurrentMount = () =>
+      projectIdRef.current === pid && editorRef.current === ed && !ed.isDisposed
     loadCanvas(pid)
       .then((snapshot) => {
         // This editor may have unmounted while its canvas request was in flight.
         // A stale continuation must not load into the old store or replace the
         // active project's autosave / selection ownership below.
-        if (projectIdRef.current !== pid || editorRef.current !== ed || ed.isDisposed) return
+        if (!isCurrentMount()) return
         if (snapshot?.document) loadSnapshot(ed.store, snapshot)
         // Load succeeded — an empty-but-new project counts, since its file is
         // legitimately empty. Only now is it safe to persist: wiring the save
@@ -670,6 +672,7 @@ export default function App() {
         void reconcilePendingChangeSets(ed, pid)
       })
       .catch((err) => {
+        if (!isCurrentMount()) return
         // Load failed — persistence stays disabled to protect on-disk data, and
         // buffered change-sets can't be safely applied onto an unloaded store, so
         // drop this project's rather than let them accumulate.
