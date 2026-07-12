@@ -228,6 +228,11 @@ const FIG_PAD_X = 32 // 16 left + 16 right
 const FIG_PAD_Y = 28 // 14 top + 14 bottom
 const FIG_EYEBROW = 20 // image-glyph row + its gap
 const FIG_GAP = 6
+// The title (unlike the description) carries a right pad clearing the absolutely
+// positioned status chip (.elves-figure__title padding-right: 66px). Measure it in
+// that narrower column, or a title that wraps to two lines on screen measures as
+// one — under-reserving a line and stealing the card's bottom padding.
+const FIG_TITLE_PAD_R = 66
 // The description area never measures shorter than the editing textarea's
 // min-height (.elves-figure__desc-input min-height: 3.2em @ 13.5px ≈ 44px).
 // Without this floor a blank figure's box is measured to one line, the taller
@@ -244,7 +249,7 @@ export function measuredFigureHeight(
   const textWidth = Math.max(60, width - FIG_PAD_X)
   const t = editor.textMeasure.measureText(title || ' ', {
     fontFamily: FONT_FAMILY, fontSize: 15, lineHeight: 1.3, fontWeight: '600', fontStyle: 'normal',
-    maxWidth: textWidth, padding: '0px',
+    maxWidth: Math.max(60, width - FIG_PAD_X - FIG_TITLE_PAD_R), padding: '0px',
   })
   let h = FIG_EYEBROW + FIG_GAP + clampLines(t.h, 15, 1.3, 2)
   // A figure needs a description to plan the visual; reserve room even when empty

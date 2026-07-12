@@ -3,7 +3,7 @@ import type { Editor } from 'tldraw'
 import type { Reference } from '../../src/model/types'
 import {
   measuredCardHeight, measuredReferenceHeight, measuredSectionSize, fittedGistFontSize,
-  measuredQuestionHeight, fittedQuestionGistFontSize,
+  measuredQuestionHeight, fittedQuestionGistFontSize, measuredFigureHeight,
 } from '../../src/shapes/autosize'
 
 function ref(overrides: Partial<Reference> = {}): Reference {
@@ -90,6 +90,33 @@ describe('measuredReferenceHeight', () => {
     const annotationCall = calls.find((c) => c.text === 'note')
     expect(annotationCall).toBeDefined()
     expect(annotationCall!.maxWidth).toBe(250 - 26)
+  })
+})
+
+describe('measuredFigureHeight', () => {
+  it('measures the title in the narrower column that clears the status chip (66px), the description at full width', () => {
+    const { editor, calls } = fakeEditor()
+    measuredFigureHeight(editor, 'A figure title', 'A description', 250)
+    const titleCall = calls.find((c) => c.fontWeight === '600')
+    const descCall = calls.find((c) => c.fontWeight === '400')
+    expect(titleCall!.maxWidth).toBe(250 - 32 - 66) // title reserves the chip clearance
+    expect(descCall!.maxWidth).toBe(250 - 32) // description spans the full padded width
+  })
+
+  it("reserves the extra title line the status chip forces, so a wrapping title doesn't steal bottom padding", () => {
+    const { editor } = fakeEditor()
+    // A title that fits one line at the full padded width (perLine = (250-32)/10 = 21)
+    // but wraps to two once the 66px chip clearance is subtracted (perLine = 15).
+    const title = 'a'.repeat(18)
+    const withClearance = measuredFigureHeight(editor, title, 'desc', 250)
+    // 18 chars: 1 line at width-32 (21/line), 2 lines at width-98 (15/line). Measuring
+    // in the wider column would under-count by one 15px title line — the missing pad.
+    const oneLine = measuredFigureHeight(editor, 'a'.repeat(10), 'desc', 250)
+    // The wrapping title reserves ~one extra 15px/1.3 title line (≈19.5px, subject to
+    // the final Math.ceil) that the wide-column measurement would have dropped.
+    const extraLine = 15 * 1.3
+    expect(withClearance - oneLine).toBeGreaterThanOrEqual(Math.floor(extraLine))
+    expect(withClearance - oneLine).toBeLessThanOrEqual(Math.ceil(extraLine))
   })
 })
 
