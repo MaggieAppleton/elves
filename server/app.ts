@@ -52,6 +52,10 @@ class BodyTooLargeError extends Error {
 
 type FetchResponse = Awaited<ReturnType<typeof safeFetch>>
 
+async function discardBody(res: FetchResponse): Promise<void> {
+  await res.body?.cancel()
+}
+
 async function readBodyLimited(res: FetchResponse, limit: number, signal: AbortSignal): Promise<Buffer> {
   if (!res.body) return Buffer.alloc(0)
   const reader = res.body.getReader()
@@ -108,16 +112,21 @@ function unfurlDepsFor(assetsDir: string): UnfurlDeps {
   return {
     fetchText: async (url) => withTimeout(url, 'text/html,application/xhtml+xml', async (res, signal) => {
       const ct = (res.headers.get('content-type') ?? '').toLowerCase()
-      if (!res.ok || !ct.includes('html')) throw new Error(`not html (${res.status})`)
+      if (!res.ok || !ct.includes('html')) {
+        await discardBody(res)
+        throw new Error(`not html (${res.status})`)
+      }
       const html = (await readBodyLimited(res, MAX_HTML_BYTES, signal)).toString('utf8')
       return { html, finalUrl: res.url || url }
     }),
     fetchImage: async (url): Promise<FetchedImage | null> => {
       try {
         return await withTimeout(url, 'image/*', async (res, signal) => {
-          if (!res.ok) return null
           const contentType = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase()
-          if (!contentType.startsWith('image/')) return null
+          if (!res.ok || !contentType.startsWith('image/')) {
+            await discardBody(res)
+            return null
+          }
           const bytes = await readBodyLimited(res, MAX_IMAGE_BYTES, signal)
           return bytes.length === 0 ? null : { bytes, contentType }
         })

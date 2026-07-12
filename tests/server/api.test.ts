@@ -322,6 +322,27 @@ test('unfurl cancels oversized streamed HTML and degrades to a minimal reference
   expect(pulls).toBeLessThan(chunks.length)
 })
 
+test.each([
+  ['non-OK', 502, 'text/html'],
+  ['non-HTML', 200, 'text/plain'],
+])('unfurl cancels a %s final HTML response before falling back', async (_case, status, contentType) => {
+  const app = await appWithTmp()
+  await request(app).post('/projects').send({ name: 'Essay' })
+  let cancelled = false
+  vi.stubGlobal('fetch', async () => new Response(new ReadableStream({
+    start(controller) { controller.enqueue(new TextEncoder().encode('rejected body')) },
+    cancel() { cancelled = true },
+  }), { status, headers: { 'content-type': contentType } }))
+
+  const res = await request(app)
+    .post('/projects/essay/unfurl')
+    .send({ url: 'http://93.184.216.34/page' })
+
+  expect(res.status).toBe(200)
+  expect(res.body.reference.title).toBeNull()
+  expect(cancelled).toBe(true)
+})
+
 test('unfurl cancels an oversized streamed image and keeps its asset null', async () => {
   const app = await appWithTmp()
   await request(app).post('/projects').send({ name: 'Essay' })
@@ -354,6 +375,36 @@ test('unfurl cancels an oversized streamed image and keeps its asset null', asyn
   expect(res.body.reference.faviconAssetId).toBeNull()
   expect(cancelled).toBe(true)
   expect(pulls).toBeLessThan(chunks.length)
+})
+
+test.each([
+  ['non-OK', 502, 'image/png'],
+  ['non-image', 200, 'text/plain'],
+])('unfurl cancels a %s final image response and keeps its asset null', async (_case, status, contentType) => {
+  const app = await appWithTmp()
+  await request(app).post('/projects').send({ name: 'Essay' })
+  let cancelled = false
+  vi.stubGlobal('fetch', async (url: string | URL) => {
+    if (String(url).endsWith('/page')) {
+      return new Response(
+        '<html><head><title>Normal page</title><link rel="icon" href="/rejected.png"></head></html>',
+        { headers: { 'content-type': 'text/html' } },
+      )
+    }
+    return new Response(new ReadableStream({
+      start(controller) { controller.enqueue(new Uint8Array([1, 2, 3])) },
+      cancel() { cancelled = true },
+    }), { status, headers: { 'content-type': contentType } })
+  })
+
+  const res = await request(app)
+    .post('/projects/essay/unfurl')
+    .send({ url: 'http://93.184.216.34/page' })
+
+  expect(res.status).toBe(200)
+  expect(res.body.reference.title).toBe('Normal page')
+  expect(res.body.reference.faviconAssetId).toBeNull()
+  expect(cancelled).toBe(true)
 })
 
 test('unfurl keeps its deadline active while consuming the HTML body', async () => {
