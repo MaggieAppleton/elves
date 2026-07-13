@@ -11,6 +11,7 @@
   transform: translateX(-50%);
   z-index: 1000; /* above toolbar/switcher (which top out at 500) */
   width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
   max-height: calc(100dvh - 32px);
   box-sizing: border-box;
   display: flex;
@@ -181,7 +182,11 @@
 
 /* --- Transcript --------------------------------------------------------- */
 .elves-agentbox__transcript {
-  min-height: 0;
+  flex: 1 1 96px;
+  box-sizing: border-box;
+  min-height: min(48px, 22vh);
+  min-height: min(48px, 22dvh);
+  max-height: min(42vh, 340px);
   max-height: min(42dvh, 340px);
   overflow-y: auto;
   overflow-x: hidden;
@@ -273,7 +278,9 @@
   flex: 1;
   box-sizing: border-box;
   resize: none;
-  max-height: clamp(36px, calc(100dvh - 97px), 140px);
+  /* Reserve the header, row padding, panel inset, and a readable transcript. */
+  max-height: clamp(36px, calc(100vh - 145px), 140px);
+  max-height: clamp(36px, calc(100dvh - 145px), 140px);
   padding: 9px 12px;
   font: inherit;
   font-size: 14px;
