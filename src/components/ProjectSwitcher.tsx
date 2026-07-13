@@ -90,11 +90,13 @@ export function ProjectSwitcher({ projects, currentId, onSwitch, onCreate, onRen
   return (
     <div className="elves-switcher" ref={ref}>
       <button
+        id="project-switcher-trigger"
         ref={triggerRef}
         className="elves-switcher__button"
         data-testid="project-switcher"
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-controls="project-switcher-menu"
         onClick={() => {
           if (open) setOpen(false)
           else openAt(0)
@@ -109,7 +111,13 @@ export function ProjectSwitcher({ projects, currentId, onSwitch, onCreate, onRen
         <CaretIcon />
       </button>
       {open && (
-        <div className="elves-switcher__menu" role="menu" onKeyDown={handleMenuKeyDown}>
+        <div
+          id="project-switcher-menu"
+          className="elves-switcher__menu"
+          role="menu"
+          aria-labelledby="project-switcher-trigger"
+          onKeyDown={handleMenuKeyDown}
+        >
           {projects.map((p, index) => (
             <button
               key={p.id}

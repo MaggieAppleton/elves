@@ -72,11 +72,15 @@ test('project switcher follows the menu keyboard and focus model', async ({ page
 
   const trigger = page.getByTestId('project-switcher')
   const menu = page.getByRole('menu')
+  const triggerName = await trigger.locator('.elves-switcher__name').innerText()
   const firstItem = menu.getByRole('menuitemradio').first()
   const lastItem = page.getByTestId('project-rename')
 
   await trigger.focus()
   await page.keyboard.press('Enter')
+  const namedMenu = page.getByRole('menu', { name: triggerName, exact: true })
+  await expect(namedMenu).toHaveAttribute('id', 'project-switcher-menu')
+  await expect(trigger).toHaveAttribute('aria-controls', 'project-switcher-menu')
   await expect(firstItem).toBeFocused()
 
   await page.keyboard.press('End')
