@@ -17,20 +17,46 @@ import { withProjectLock, withProjectNamespaceLock } from '../../server/projectL
 const lockProbe = vi.hoisted(() => {
   type Entry = { kind: 'project' | 'multi' | 'namespace'; dataRoot: string; ids: string[] }
   const entries: Entry[] = []
-  const waiters: Array<{ predicate: (current: Entry[]) => boolean; resolve: () => void }> = []
+  const waiters: Array<{
+    predicate: (current: Entry[]) => boolean
+    resolve: () => void
+    reject: (error: Error) => void
+    deadline: ReturnType<typeof setTimeout>
+  }> = []
   return {
     entries,
     record(entry: Entry) {
       entries.push(entry)
       for (let i = waiters.length - 1; i >= 0; i--) {
-        if (waiters[i].predicate(entries)) waiters.splice(i, 1)[0].resolve()
+        if (!waiters[i].predicate(entries)) continue
+        const waiter = waiters.splice(i, 1)[0]
+        clearTimeout(waiter.deadline)
+        waiter.resolve()
       }
     },
-    waitFor(predicate: (current: Entry[]) => boolean): Promise<void> {
+    waitFor(predicate: (current: Entry[]) => boolean, timeoutMs = 2_000): Promise<void> {
       if (predicate(entries)) return Promise.resolve()
-      return new Promise((resolve) => { waiters.push({ predicate, resolve }) })
+      return new Promise((resolve, reject) => {
+        const waiter = {
+          predicate,
+          resolve,
+          reject,
+          deadline: setTimeout(() => {
+            const index = waiters.indexOf(waiter)
+            if (index !== -1) waiters.splice(index, 1)
+            reject(new Error(`lock probe timed out after ${timeoutMs}ms`))
+          }, timeoutMs),
+        }
+        waiters.push(waiter)
+      })
     },
-    reset() { entries.length = 0 },
+    reset() {
+      entries.length = 0
+      for (const waiter of waiters.splice(0)) {
+        clearTimeout(waiter.deadline)
+        waiter.reject(new Error('lock probe reset'))
+      }
+    },
   }
 })
 
@@ -63,9 +89,9 @@ async function root() {
   return d
 }
 afterEach(async () => {
+  lockProbe.reset()
   await Promise.all(dirs.map((d) => fs.rm(d, { recursive: true, force: true })))
   dirs = []
-  lockProbe.reset()
 })
 
 test('slugify makes a filesystem-safe id', () => {

@@ -9,19 +9,45 @@ import { withProjectLock } from '../../server/projectLock'
 const lockProbe = vi.hoisted(() => {
   type Entry = { kind: 'project' | 'multi'; dataRoot: string; ids: string[] }
   const entries: Entry[] = []
-  const waiters: Array<{ predicate: (current: Entry[]) => boolean; resolve: () => void }> = []
+  const waiters: Array<{
+    predicate: (current: Entry[]) => boolean
+    resolve: () => void
+    reject: (error: Error) => void
+    deadline: ReturnType<typeof setTimeout>
+  }> = []
   return {
     record(entry: Entry) {
       entries.push(entry)
       for (let i = waiters.length - 1; i >= 0; i--) {
-        if (waiters[i].predicate(entries)) waiters.splice(i, 1)[0].resolve()
+        if (!waiters[i].predicate(entries)) continue
+        const waiter = waiters.splice(i, 1)[0]
+        clearTimeout(waiter.deadline)
+        waiter.resolve()
       }
     },
-    waitFor(predicate: (current: Entry[]) => boolean): Promise<void> {
+    waitFor(predicate: (current: Entry[]) => boolean, timeoutMs = 2_000): Promise<void> {
       if (predicate(entries)) return Promise.resolve()
-      return new Promise((resolve) => { waiters.push({ predicate, resolve }) })
+      return new Promise((resolve, reject) => {
+        const waiter = {
+          predicate,
+          resolve,
+          reject,
+          deadline: setTimeout(() => {
+            const index = waiters.indexOf(waiter)
+            if (index !== -1) waiters.splice(index, 1)
+            reject(new Error(`lock probe timed out after ${timeoutMs}ms`))
+          }, timeoutMs),
+        }
+        waiters.push(waiter)
+      })
     },
-    reset() { entries.length = 0 },
+    reset() {
+      entries.length = 0
+      for (const waiter of waiters.splice(0)) {
+        clearTimeout(waiter.deadline)
+        waiter.reject(new Error('lock probe reset'))
+      }
+    },
   }
 })
 
@@ -78,43 +104,134 @@ async function waitForRenameQueue(dataRoot: string, oldId: string, newId: string
   ))
 }
 
-async function mutationBeforeRename<T, U>(
+function startHandled<T>(task: () => Promise<T>): Promise<T> {
+  const result = Promise.resolve().then(task)
+  void result.catch(() => undefined)
+  return result
+}
+
+const activeRaceHelpers = new Set<Promise<void>>()
+
+function trackRaceHelper<T>(run: Promise<T>): Promise<T> {
+  const settled = run.then(() => undefined, () => undefined)
+  activeRaceHelpers.add(settled)
+  void settled.then(() => { activeRaceHelpers.delete(settled) })
+  return run
+}
+
+function mutationBeforeRename<T, U>(
   dataRoot: string,
   mutation: () => Promise<T>,
   rename: () => Promise<U>,
 ): Promise<[T, U]> {
-  const hold = await holdProject(dataRoot, 'essay')
-  lockProbe.reset()
-  const mutationResult = mutation()
-  await waitForProjectQueue(dataRoot, 'essay')
-  const renameResult = rename()
-  await waitForRenameQueue(dataRoot, 'essay', 'final')
-  hold.release()
-  await hold.done
-  return Promise.all([mutationResult, renameResult])
+  return trackRaceHelper((async () => {
+    const hold = await holdProject(dataRoot, 'essay')
+    let released = false
+    let mutationResult: Promise<T> | undefined
+    let renameResult: Promise<U> | undefined
+    const release = () => {
+      if (released) return
+      released = true
+      hold.release()
+    }
+    try {
+      lockProbe.reset()
+      mutationResult = startHandled(mutation)
+      await waitForProjectQueue(dataRoot, 'essay')
+      renameResult = startHandled(rename)
+      await waitForRenameQueue(dataRoot, 'essay', 'final')
+      release()
+      await hold.done
+      return await Promise.all([mutationResult, renameResult])
+    } finally {
+      release()
+      await hold.done
+      await Promise.allSettled([mutationResult, renameResult].filter(
+        (result): result is Promise<T> | Promise<U> => result !== undefined,
+      ))
+    }
+  })())
 }
 
-async function renameBeforeMutation<T, U>(
+function renameBeforeMutation<T, U>(
   dataRoot: string,
   rename: () => Promise<T>,
   mutation: () => Promise<U>,
 ): Promise<[T, U]> {
-  const hold = await holdProject(dataRoot, 'essay')
-  lockProbe.reset()
-  const renameResult = rename()
-  await waitForRenameQueue(dataRoot, 'essay', 'final')
-  const mutationResult = mutation()
-  await waitForProjectQueue(dataRoot, 'essay')
-  hold.release()
-  await hold.done
-  return Promise.all([renameResult, mutationResult])
+  return trackRaceHelper((async () => {
+    const hold = await holdProject(dataRoot, 'essay')
+    let released = false
+    let renameResult: Promise<T> | undefined
+    let mutationResult: Promise<U> | undefined
+    const release = () => {
+      if (released) return
+      released = true
+      hold.release()
+    }
+    try {
+      lockProbe.reset()
+      renameResult = startHandled(rename)
+      await waitForRenameQueue(dataRoot, 'essay', 'final')
+      mutationResult = startHandled(mutation)
+      await waitForProjectQueue(dataRoot, 'essay')
+      release()
+      await hold.done
+      return await Promise.all([renameResult, mutationResult])
+    } finally {
+      release()
+      await hold.done
+      await Promise.allSettled([renameResult, mutationResult].filter(
+        (result): result is Promise<T> | Promise<U> => result !== undefined,
+      ))
+    }
+  })())
 }
 afterEach(async () => {
+  lockProbe.reset()
+  await Promise.allSettled([...activeRaceHelpers])
   vi.useRealTimers()
   vi.unstubAllGlobals()
   await Promise.all(dirs.map((d) => fs.rm(d, { recursive: true, force: true })))
   dirs = []
+})
+
+test('lock probe reset rejects a pending waiter', async () => {
+  const pending = lockProbe.waitFor(() => false)
+  const rejected = expect(pending).rejects.toThrow('reset')
   lockProbe.reset()
+  await rejected
+})
+
+test('lock probe deadline rejects a pending waiter', async () => {
+  vi.useFakeTimers()
+  const pending = lockProbe.waitFor(() => false, 100)
+  const rejected = expect(pending).rejects.toThrow('timed out')
+  await vi.advanceTimersByTimeAsync(100)
+  await rejected
+})
+
+test('race helper releases its held lock and drains HTTP when queue setup fails', async () => {
+  const app = await appWithTmp()
+  const dataRoot = dirs[dirs.length - 1]
+  await request(app).post('/projects').send({ name: 'Essay' })
+  const snapshot = { document: { records: [{ id: 'drained' }] }, session: null }
+  let attempted!: () => void
+  const renameAttempted = new Promise<void>((resolve) => { attempted = resolve })
+  const raced = mutationBeforeRename(
+    dataRoot,
+    () => request(app).post('/projects/essay/canvas').send(snapshot).then((response) => response),
+    async () => {
+      attempted()
+      throw new Error('rename setup failed')
+    },
+  )
+  await renameAttempted
+  lockProbe.reset()
+  await expect(raced).rejects.toThrow()
+  await expect(withProjectLock(dataRoot, 'essay', async () => 'released')).resolves.toBe('released')
+  const canvas = await request(app).get('/projects/essay/canvas')
+  expect(canvas.status).toBe(200)
+  expect(canvas.body).toEqual(snapshot)
 })
 
 // A minimal card shape record for canvas fixtures; override props as needed.
@@ -300,7 +417,9 @@ test('a canvas save queued before rename completes and moves with the project', 
   )
   expect(save.status).toBe(200)
   expect(rename.status).toBe(200)
-  expect((await request(app).get('/projects/final/canvas')).body).toEqual(snapshot)
+  const movedCanvas = await request(app).get('/projects/final/canvas')
+  expect(movedCanvas.status).toBe(200)
+  expect(movedCanvas.body).toEqual(snapshot)
   await expect(fs.access(join(dataRoot, 'projects', 'essay'))).rejects.toMatchObject({ code: 'ENOENT' })
 })
 
@@ -341,6 +460,7 @@ test('a review creation queued before rename completes in the renamed project', 
   expect(rename.status).toBe(200)
   expect(create.body.review).toMatchObject({ personality: 'trimmer', status: 'in-progress' })
   const reviews = await request(app).get('/projects/final/reviews')
+  expect(reviews.status).toBe(200)
   expect(reviews.body.reviews).toContainEqual(create.body.review)
   await expect(fs.access(join(dataRoot, 'projects', 'essay'))).rejects.toMatchObject({ code: 'ENOENT' })
 })
@@ -360,6 +480,7 @@ test('rename queued before an HTTP canvas save makes the old-id writer 404 witho
   expect(saveResponse.status).toBe(404)
   await expect(fs.access(join(dataRoot, 'projects', 'essay'))).rejects.toMatchObject({ code: 'ENOENT' })
   const finalCanvas = await request(app).get('/projects/final/canvas')
+  expect(finalCanvas.status).toBe(200)
   expect(finalCanvas.body).toEqual({ document: null, session: null })
 })
 
@@ -393,7 +514,9 @@ test('rename queued before review creation makes the old-id writer 404 without a
   )
   expect(renameResponse.status).toBe(200)
   expect(reviewResponse.status).toBe(404)
-  expect((await request(app).get('/projects/final/reviews')).body).toEqual({ reviews: [] })
+  const finalReviews = await request(app).get('/projects/final/reviews')
+  expect(finalReviews.status).toBe(200)
+  expect(finalReviews.body).toEqual({ reviews: [] })
   await expect(fs.access(join(dataRoot, 'projects', 'essay'))).rejects.toMatchObject({ code: 'ENOENT' })
 })
 

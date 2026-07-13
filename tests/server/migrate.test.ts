@@ -8,19 +8,45 @@ import { withProjectNamespaceLock } from '../../server/projectLock'
 
 const namespaceEntries = vi.hoisted(() => {
   const entries: string[] = []
-  const waiters: Array<{ dataRoot: string; resolve: () => void }> = []
+  const waiters: Array<{
+    dataRoot: string
+    resolve: () => void
+    reject: (error: Error) => void
+    deadline: ReturnType<typeof setTimeout>
+  }> = []
   return {
     record(dataRoot: string) {
       entries.push(dataRoot)
       for (let i = waiters.length - 1; i >= 0; i--) {
-        if (waiters[i].dataRoot === dataRoot) waiters.splice(i, 1)[0].resolve()
+        if (waiters[i].dataRoot !== dataRoot) continue
+        const waiter = waiters.splice(i, 1)[0]
+        clearTimeout(waiter.deadline)
+        waiter.resolve()
       }
     },
-    waitFor(dataRoot: string): Promise<void> {
+    waitFor(dataRoot: string, timeoutMs = 2_000): Promise<void> {
       if (entries.includes(dataRoot)) return Promise.resolve()
-      return new Promise((resolve) => { waiters.push({ dataRoot, resolve }) })
+      return new Promise((resolve, reject) => {
+        const waiter = {
+          dataRoot,
+          resolve,
+          reject,
+          deadline: setTimeout(() => {
+            const index = waiters.indexOf(waiter)
+            if (index !== -1) waiters.splice(index, 1)
+            reject(new Error(`namespace probe timed out after ${timeoutMs}ms`))
+          }, timeoutMs),
+        }
+        waiters.push(waiter)
+      })
     },
-    reset() { entries.length = 0 },
+    reset() {
+      entries.length = 0
+      for (const waiter of waiters.splice(0)) {
+        clearTimeout(waiter.deadline)
+        waiter.reject(new Error('namespace probe reset'))
+      }
+    },
   }
 })
 
@@ -43,6 +69,7 @@ async function root() {
   return d
 }
 afterEach(async () => {
+  namespaceEntries.reset()
   await Promise.all(dirs.map((d) => fs.rm(d, { recursive: true, force: true })))
   dirs = []
 })
