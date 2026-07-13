@@ -32,14 +32,15 @@ function makeFakeRunner() {
   const cancelled: string[] = []
   const runner: AgentRunner = {
     isRunning: (key) => active.has(key),
-    cancel(key) {
+    cancel(key, runId) {
       cancelled.push(key)
       const c = controls.get(key)
-      if (c) {
-        controls.delete(key)
-        active.delete(key)
-        c.resolve()
-      }
+      if (!c) return { status: 'not-running' }
+      if (runId !== key.slice('review:'.length)) return { status: 'run-mismatch' }
+      controls.delete(key)
+      active.delete(key)
+      c.resolve()
+      return { status: 'accepted' }
     },
     run(key, input, onEvent) {
       calls.push({ key, input })

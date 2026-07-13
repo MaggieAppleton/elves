@@ -143,18 +143,37 @@ export function AgentBox({ open, projectId, selectedCount, onClose }: Props) {
 
   const cancel = () => {
     if (runPhase !== 'running') return
-    handleRef.current?.requestCancel()
+    const handle = handleRef.current
+    if (!handle) return
     setRunPhase('cancelling')
+    void handle.requestCancel().catch((err) => {
+      if (handleRef.current !== handle) return
+      setEntries((prev) => [...prev, {
+        kind: 'error',
+        message: err instanceof Error ? err.message : 'the run could not be cancelled',
+      }])
+      setRunPhase('running')
+    })
   }
 
   // Close and forget: cancel any in-flight run, empty the transcript and
   // input, then close — unlike plain close, which preserves the chat.
   const closeAndClear = () => {
     const handle = handleRef.current
-    handleRef.current = null
-    handle?.requestCancel()
     handle?.dispose()
-    setRunPhase('idle')
+    if (handle) {
+      setRunPhase('cancelling')
+      void handle.requestCancel().catch((err) => {
+        if (handleRef.current !== handle) return
+        setEntries([{
+          kind: 'error',
+          message: err instanceof Error ? err.message : 'the run could not be cancelled',
+        }])
+        setRunPhase('running')
+      })
+    } else {
+      setRunPhase('idle')
+    }
     setEntries([])
     setPrompt('')
     setCollapsed(false)

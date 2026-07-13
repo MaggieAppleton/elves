@@ -3,18 +3,23 @@ import http from 'node:http'
 import { tmpdir } from 'node:os'
 import request from 'supertest'
 import { createServer } from '../../server/app'
-import type { AgentRunner, AgentEvent } from '../../server/agentRun'
+import type { AgentRunner, AgentEvent, AgentCancelResult } from '../../server/agentRun'
 
 // A scriptable AgentRunner: `run` replays a fixed list of events then resolves.
 // `running` is toggleable so we can exercise the "already running" 409. Chat
 // routes always pass key 'chat' (see server/app.ts), so `running` models
-// whether THAT key is busy — a fake this simple doesn't need a real per-key map.
-function fakeAgent(events: AgentEvent[] = [], running = false): AgentRunner & { cancelled: string[] } {
+// whether that key is busy; cancellation records both the key and run id.
+function fakeAgent(
+  events: AgentEvent[] = [],
+  running = false,
+  cancelResult: AgentCancelResult = { status: 'accepted' },
+): AgentRunner & { cancelled: { key: string; runId: string }[] } {
   const impl = {
-    cancelled: [] as string[],
+    cancelled: [] as { key: string; runId: string }[],
     isRunning: (_key: string) => running,
-    cancel(key: string) {
-      impl.cancelled.push(key)
+    cancel(key: string, runId: string) {
+      impl.cancelled.push({ key, runId })
+      return cancelResult
     },
     async run(_key: string, _input: unknown, onEvent: (e: AgentEvent) => void) {
       for (const e of events) onEvent(e)
@@ -70,7 +75,9 @@ test('POST /agent/run streams SSE events then an end marker', async () => {
       { type: 'done', reply: 'Critiqued.' },
     ]),
   )
-  const res = await postForStream(port, { prompt: 'critique this card', projectId: 'essay', hasSelection: true })
+  const res = await postForStream(port, {
+    prompt: 'critique this card', projectId: 'essay', hasSelection: true, runId: 'run-a',
+  })
 
   expect(res.status).toBe(200)
   expect(res.contentType).toContain('text/event-stream')
@@ -81,34 +88,40 @@ test('POST /agent/run streams SSE events then an end marker', async () => {
 })
 
 test('POST /agent/run rejects a missing prompt', async () => {
-  const res = await request(app(fakeAgent())).post('/agent/run').send({ projectId: 'essay' })
+  const res = await request(app(fakeAgent())).post('/agent/run').send({ projectId: 'essay', runId: 'run-a' })
   expect(res.status).toBe(400)
   expect(res.body.error).toMatch(/prompt/)
 })
 
 test('POST /agent/run rejects a missing projectId', async () => {
-  const res = await request(app(fakeAgent())).post('/agent/run').send({ prompt: 'hi' })
+  const res = await request(app(fakeAgent())).post('/agent/run').send({ prompt: 'hi', runId: 'run-a' })
   expect(res.status).toBe(400)
   expect(res.body.error).toMatch(/projectId/)
+})
+
+test('POST /agent/run rejects a missing runId', async () => {
+  const res = await request(app(fakeAgent())).post('/agent/run').send({ prompt: 'hi', projectId: 'essay' })
+  expect(res.status).toBe(400)
+  expect(res.body.error).toMatch(/runId/)
 })
 
 test('POST /agent/run returns 409 when an agent is already running', async () => {
   const res = await request(app(fakeAgent([], /* running */ true)))
     .post('/agent/run')
-    .send({ prompt: 'hi', projectId: 'essay' })
+    .send({ prompt: 'hi', projectId: 'essay', runId: 'run-a' })
   expect(res.status).toBe(409)
 })
 
 test('POST /agent/run returns 501 when no runner is configured', async () => {
-  const res = await request(app(undefined)).post('/agent/run').send({ prompt: 'hi', projectId: 'essay' })
+  const res = await request(app(undefined)).post('/agent/run').send({ prompt: 'hi', projectId: 'essay', runId: 'run-a' })
   expect(res.status).toBe(501)
 })
 
-test('POST /agent/cancel cancels the chat run (key "chat")', async () => {
+test('POST /agent/cancel cancels only the requested run', async () => {
   const agent = fakeAgent()
-  const res = await request(app(agent)).post('/agent/cancel').send({})
+  const res = await request(app(agent)).post('/agent/cancel').send({ runId: 'run-a' })
   expect(res.status).toBe(200)
-  expect(agent.cancelled).toEqual(['chat'])
+  expect(agent.cancelled).toEqual([{ key: 'chat', runId: 'run-a' }])
 })
 
 // A review run is keyed 'review:<id>', never 'chat' — so it must not trip the
@@ -116,12 +129,32 @@ test('POST /agent/cancel cancels the chat run (key "chat")', async () => {
 test('a review run in progress does not 409 a chat run', async () => {
   const agent: AgentRunner = {
     isRunning: (key) => key === 'review:rev-1',
-    cancel() {},
+    cancel: () => ({ status: 'not-running' }),
     async run(_key, _input, onEvent) {
       onEvent({ type: 'started' })
       onEvent({ type: 'done', reply: 'ok' })
     },
   }
-  const res = await request(app(agent)).post('/agent/run').send({ prompt: 'hi', projectId: 'essay' })
+  const res = await request(app(agent)).post('/agent/run').send({
+    prompt: 'hi', projectId: 'essay', runId: 'run-a',
+  })
   expect(res.status).toBe(200)
+})
+
+test.each([
+  ['not-running', 409],
+  ['run-mismatch', 409],
+  ['signal-failed', 503],
+] as const)('POST /agent/cancel maps %s truthfully', async (status, httpStatus) => {
+  const res = await request(app(fakeAgent([], false, { status })))
+    .post('/agent/cancel')
+    .send({ runId: 'run-a' })
+  expect(res.status).toBe(httpStatus)
+  expect(res.body).toMatchObject({ code: status, error: expect.any(String) })
+})
+
+test('POST /agent/cancel rejects a missing runId', async () => {
+  const res = await request(app(fakeAgent())).post('/agent/cancel').send({})
+  expect(res.status).toBe(400)
+  expect(res.body.error).toMatch(/runId/)
 })

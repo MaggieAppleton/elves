@@ -80,12 +80,10 @@ test('a failed connection surfaces a reach-the-server error', async () => {
   expect(events).toEqual([{ type: 'error', message: expect.stringContaining('could not reach the server') }])
 })
 
-test('requestCancel POSTs without aborting the stream or settling done', async () => {
+test('requestCancel sends the run UUID without aborting the stream or settling done', async () => {
   const stream = openSseResponse()
-  let runSignal!: AbortSignal
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (String(url).endsWith('/agent/cancel')) return new Response('{"ok":true}', { status: 200 })
-    runSignal = init?.signal as AbortSignal
     return stream.response
   })
   vi.stubGlobal('fetch', fetchMock)
@@ -98,25 +96,54 @@ test('requestCancel POSTs without aborting the stream or settling done', async (
   stream.push('data: {"type":"started"}')
   await started.promise
 
-  handle.requestCancel()
-  await Promise.resolve()
+  await handle.requestCancel()
 
-  expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/agent/cancel'), { method: 'POST' })
-  expect(runSignal.aborted).toBe(false)
+  const runCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/agent/run'))
+  const cancelCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/agent/cancel'))
+  const runBody = JSON.parse(String(runCall?.[1]?.body))
+  const cancelBody = JSON.parse(String(cancelCall?.[1]?.body))
+  expect(runBody.runId).toMatch(/^[0-9a-f-]{36}$/)
+  expect(cancelBody).toEqual({ runId: runBody.runId })
+  expect(runCall?.[1]?.signal).toBeUndefined()
   expect(settled).toBe(false)
 
   stream.close()
   await handle.done
 })
 
-test('dispose stops local consumption without later callbacks repopulating cleared UI', async () => {
-  const pending = deferred<Response>()
-  vi.stubGlobal('fetch', vi.fn(async () => pending.promise))
+test('requestCancel rejects with the server message when cancellation is not accepted', async () => {
+  const stream = openSseResponse()
+  vi.stubGlobal('fetch', vi.fn(async (url: string) =>
+    String(url).endsWith('/agent/cancel')
+      ? new Response(JSON.stringify({ error: 'could not signal the active agent run' }), { status: 503 })
+      : stream.response,
+  ))
+  const handle = runAgent({ prompt: 'x', projectId: 'p', hasSelection: false }, () => {})
+
+  await expect(handle.requestCancel()).rejects.toThrow('could not signal the active agent run')
+
+  stream.close()
+  await handle.done
+})
+
+test('dispose suppresses callbacks but keeps observing the stream until it ends', async () => {
+  const stream = openSseResponse()
+  const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => stream.response)
+  vi.stubGlobal('fetch', fetchMock)
   const events: AgentEvent[] = []
   const handle = runAgent({ prompt: 'x', projectId: 'p', hasSelection: false }, (e) => events.push(e))
+  let settled = false
+  void handle.done.then(() => { settled = true })
 
   handle.dispose()
-  pending.resolve(sseResponse(['data: {"type":"text","text":"stale"}\n\n']))
+  stream.push('data: {"type":"text","text":"stale"}')
+  await Promise.resolve()
+
+  expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeUndefined()
+  expect(settled).toBe(false)
+  expect(events).toEqual([])
+
+  stream.close()
   await handle.done
 
   expect(events).toEqual([])

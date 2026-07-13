@@ -11,11 +11,12 @@ export interface AgentRunInput {
 }
 
 export interface AgentRunHandle {
+  readonly runId: string
   /** Tell the server to terminate the child while continuing to observe its stream. */
-  requestCancel: () => void
-  /** Stop consuming this stream and suppress any callbacks that arrive afterward. */
+  requestCancel: () => Promise<void>
+  /** Suppress callbacks while continuing to observe this stream's termination. */
   dispose: () => void
-  /** Resolves when the stream ends naturally or local consumption is disposed. */
+  /** Resolves when the server closes the stream. */
   done: Promise<void>
 }
 
@@ -29,7 +30,7 @@ export interface AgentRunHandle {
  * carries only the transcript (its text + tool calls + final reply).
  */
 export function runAgent(input: AgentRunInput, onEvent: (e: AgentEvent) => void): AgentRunHandle {
-  const ctrl = new AbortController()
+  const runId = crypto.randomUUID()
   let disposed = false
   const emit = (event: AgentEvent) => {
     if (!disposed) onEvent(event)
@@ -41,8 +42,7 @@ export function runAgent(input: AgentRunInput, onEvent: (e: AgentEvent) => void)
       res = await fetch(`${BASE}/agent/run`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(input),
-        signal: ctrl.signal,
+        body: JSON.stringify({ ...input, runId }),
       })
     } catch {
       if (!disposed) emit({ type: 'error', message: 'could not reach the server — is it running?' })
@@ -85,12 +85,30 @@ export function runAgent(input: AgentRunInput, onEvent: (e: AgentEvent) => void)
   })()
 
   return {
-    requestCancel: () => {
-      fetch(`${BASE}/agent/cancel`, { method: 'POST' }).catch(() => {})
+    runId,
+    requestCancel: async () => {
+      let res: Response
+      try {
+        res = await fetch(`${BASE}/agent/cancel`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ runId }),
+        })
+      } catch {
+        throw new Error('could not reach the server to cancel the agent run')
+      }
+      if (res.ok) return
+      let message = `the run could not be cancelled (${res.status})`
+      try {
+        const body = await res.json()
+        if (body?.error) message = body.error
+      } catch {
+        /* keep the status-code message */
+      }
+      throw new Error(message)
     },
     dispose: () => {
       disposed = true
-      ctrl.abort()
     },
     done,
   }

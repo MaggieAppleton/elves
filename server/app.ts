@@ -515,6 +515,7 @@ export function createServer(
     }
     const prompt = req.body?.prompt
     const projectId = req.body?.projectId
+    const runId = req.body?.runId
     const hasSelection = !!req.body?.hasSelection
     if (typeof prompt !== 'string' || !prompt.trim()) {
       res.status(400).json({ error: 'prompt is required' })
@@ -522,6 +523,10 @@ export function createServer(
     }
     if (typeof projectId !== 'string' || !projectId) {
       res.status(400).json({ error: 'projectId is required' })
+      return
+    }
+    if (typeof runId !== 'string' || !runId) {
+      res.status(400).json({ error: 'runId is required' })
       return
     }
     if (agent.isRunning('chat')) {
@@ -550,7 +555,7 @@ export function createServer(
       if (!res.writableFinished) console.warn('[elves] agent run stream closed by client before completion')
     })
     agent
-      .run('chat', { prompt, projectId, hasSelection }, send)
+      .run('chat', { runId, prompt, projectId, hasSelection }, send)
       .catch((err) => {
         console.error('[elves] agent run failed:', err)
         send({ type: 'error', message: 'the agent run failed unexpectedly' })
@@ -562,15 +567,28 @@ export function createServer(
       })
   })
 
-  // Kill the currently-running agent (the box's Cancel button). Idempotent: a
-  // no-op when nothing is running.
-  app.post('/agent/cancel', (_req, res) => {
+  // Kill the specifically requested active run (the box's Cancel button).
+  app.post('/agent/cancel', (req, res) => {
     if (!agent) {
       res.status(501).json({ error: 'agent runs are not configured on this server' })
       return
     }
-    agent.cancel('chat')
-    res.json({ ok: true })
+    const runId = req.body?.runId
+    if (typeof runId !== 'string' || !runId) {
+      res.status(400).json({ error: 'runId is required' })
+      return
+    }
+    const result = agent.cancel('chat', runId)
+    if (result.status === 'accepted') {
+      res.json({ ok: true })
+      return
+    }
+    const message = result.status === 'not-running'
+      ? 'there is no active agent run to cancel'
+      : result.status === 'run-mismatch'
+        ? 'the requested agent run is no longer active'
+        : 'could not signal the active agent run'
+    res.status(result.status === 'signal-failed' ? 503 : 409).json({ code: result.status, error: message })
   })
 
   app.post(
@@ -760,7 +778,7 @@ export function createServer(
       `A review pass is waiting for you on this canvas, id \`${reviewId}\`. Call \`start_review\` with ` +
       `reviewId \`${reviewId}\`, follow the returned brief exactly, leave your comments tagged with that ` +
       `reviewId, and finish by calling \`complete_review\`. Do only this review — nothing else.`
-    await agent.run(key, { prompt, projectId, hasSelection: false }, (e) => {
+    await agent.run(key, { runId: reviewId, prompt, projectId, hasSelection: false }, (e) => {
       if (e.type === 'error') lastError = e.message
     })
     // The child exited. If the pass never reached done (or wasn't dismissed
@@ -875,7 +893,9 @@ export function createServer(
       // write, see the record still pending/in-progress once the kill lands,
       // and re-mark it failed right after the user dismissed it. Idempotent
       // no-op if nothing is running under this key.
-      if (status === 'dismissed') agent?.cancel(`review:${req.params.reviewId}`)
+      if (status === 'dismissed') {
+        agent?.cancel(`review:${req.params.reviewId}`, req.params.reviewId)
+      }
       try {
         // Completion stamps the pass's comment footprint, so it needs the
         // canvas as it stands; the other transitions never read the document.
