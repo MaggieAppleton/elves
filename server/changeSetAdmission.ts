@@ -66,6 +66,7 @@ function targetValidation(
 ): { missing: string[]; invalidMergeReps: string[] } {
   const cards = snapshotToCards(snapshot)
   const cardIds = new Set(cards.map((card) => card.id))
+  const cardsById = new Map(cards.map((card) => [card.id, card]))
   const sectionIds = new Set(snapshotToSections(snapshot).map((section) => section.id))
   const groupIds = new Set(snapshotToGroupIds(snapshot))
   const store = (snapshot as any)?.document?.store
@@ -81,6 +82,12 @@ function targetValidation(
     ...referencedSectionIds(changeSet).filter((id) => !sectionIds.has(id)),
     ...referencedGroupIds(changeSet).filter((id) => !groupIds.has(id)),
     ...referencedQuestionIds(changeSet).filter((id) => !questionIds.has(id)),
+    ...changeSet.ops.flatMap((op) => {
+      if (op.kind !== 'set_comment_summary') return []
+      const card = cardsById.get(op.cardId)
+      if (!card || card.comments.some((comment) => comment.id === op.commentId)) return []
+      return [op.commentId]
+    }),
   ])]
   const noteCardIds = new Set(cards.filter((card) => card.kind === 'note').map((card) => card.id))
   const invalidMergeReps = mergeRepresentativeIds(changeSet)

@@ -8,6 +8,7 @@ import {
   canvasRevision,
   consumeChangeSetSequence,
   ensureCanvasMetadata,
+  incrementCanvasRevision,
   legacyChangeSetReceipt,
   nextChangeSetToken,
   pendingChangeSetsForClient,
@@ -88,6 +89,36 @@ function create(id: string, text = id): ChangeSet {
     author: 'claude',
     ops: [{ kind: 'create_note_card', text, x: 1, y: 2 }],
   }
+}
+
+function summarizeComment(id: string, cardId = 'shape:a', commentId = 'comment:target'): ChangeSet {
+  return {
+    id,
+    author: 'claude',
+    ops: [{
+      kind: 'set_comment_summary',
+      cardId,
+      commentId,
+      summary: 'Summary',
+      summaryOfHash: 'hash',
+      summaryBy: 'model',
+      summaryAt: 'T',
+    }],
+  }
+}
+
+function addComment(snapshot: CanvasSnapshot, cardId: string, commentId = 'comment:target'): void {
+  ;(snapshot as any).document.store[cardId].props.comments.push({
+    id: commentId,
+    type: null,
+    text: 'Comment',
+    resolved: false,
+    author: 'claude',
+    summary: null,
+    summaryOfHash: null,
+    summaryBy: null,
+    summaryAt: null,
+  })
 }
 
 function admitCurrent(snapshot: CanvasSnapshot, changeSet: ChangeSet) {
@@ -291,6 +322,48 @@ describe('tokenized admission', () => {
     expect(nextChangeSetToken(start).sequence).toBe(0)
   })
 
+  test('a missing comment target is invalid and does not consume its token', () => {
+    const start = ready()
+    const before = JSON.stringify(start)
+    const result = admitCurrent(start, summarizeComment('missing-comment'))
+    expect(result).toMatchObject({
+      kind: 'invalid-target', missing: ['comment:target'], invalidMergeReps: [],
+    })
+    expect(canvasRevision(start)).toBe(0)
+    expect(nextChangeSetToken(start).sequence).toBe(0)
+    expectUnchanged(start, before)
+  })
+
+  test('a matching comment id on another card does not satisfy the specified card target', () => {
+    const start = ready()
+    addComment(start, 'shape:b')
+    const before = JSON.stringify(start)
+    const result = admitCurrent(start, summarizeComment('wrong-card'))
+    expect(result).toMatchObject({ kind: 'invalid-target', missing: ['comment:target'] })
+    expect(nextChangeSetToken(start).sequence).toBe(0)
+    expectUnchanged(start, before)
+  })
+
+  test('a rejected comment-summary token remains retryable after that card gains the comment', () => {
+    const start = ready()
+    const token = nextChangeSetToken(start)
+    const changeSet = summarizeComment('retry-comment')
+    const digest = changeSetDigest(changeSet)
+    expect(admitTokenizedChangeSet(start, token, changeSet, digest))
+      .toMatchObject({ kind: 'invalid-target', missing: ['comment:target'] })
+
+    const withComment = structuredClone(start)
+    addComment(withComment, 'shape:a')
+    const saved = incrementCanvasRevision(withComment)
+    const result = admitTokenizedChangeSet(saved, token, changeSet, digest)
+    expect(result.kind).toBe('applied')
+    if (result.kind !== 'applied') return
+    const comment = (result.snapshot as any).document.store['shape:a'].props.comments[0]
+    expect(comment.summary).toBe('Summary')
+    expect(canvasRevision(result.snapshot)).toBe(2)
+    expect(nextChangeSetToken(result.snapshot).sequence).toBe(1)
+  })
+
   test('a successful destructive operation retries as a duplicate before target validation', () => {
     const start = ready()
     const token = nextChangeSetToken(start)
@@ -473,6 +546,25 @@ describe('legacy admission compatibility', () => {
     expect(result).toMatchObject({ kind: 'invalid-target', missing: ['missing'] })
     expect(legacyChangeSetReceipt(start, changeSet.id)).toBeUndefined()
     expectUnchanged(start, before)
+  })
+
+  test('legacy comment summaries require the comment on the specified card', () => {
+    const start = canvas()
+    addComment(start, 'shape:b')
+    const changeSet = summarizeComment('legacy-comment')
+    const digest = changeSetDigest(changeSet)
+    const before = JSON.stringify(start)
+    expect(admitLegacyChangeSet(start, changeSet, digest))
+      .toMatchObject({ kind: 'invalid-target', missing: ['comment:target'] })
+    expectUnchanged(start, before)
+
+    addComment(start, 'shape:a')
+    const result = admitLegacyChangeSet(start, changeSet, digest)
+    expect(result.kind).toBe('applied')
+    if (result.kind !== 'applied') return
+    const comment = (result.snapshot as any).document.store['shape:a'].props.comments[0]
+    expect(comment.summary).toBe('Summary')
+    expect(legacyChangeSetReceipt(result.snapshot, changeSet.id)).toBe(digest)
   })
 
   test('legacy no-document work remains unapplied and records no receipt', () => {
