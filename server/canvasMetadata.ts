@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { isChangeSet, type ChangeSet } from '../src/model/changeset'
-import { semanticChangeSet, semanticChangeSetJson } from './changeSetIdentity'
+import {
+  changeSetDigest,
+  semanticChangeSet,
+  semanticChangeSetJson,
+  validateChangeSetBounds,
+} from './changeSetIdentity'
 import type { CanvasSnapshot } from './store'
 
 export const SERVER_CANVAS_METADATA_KEY = '__elves'
@@ -104,11 +109,20 @@ function metadataFrom(snapshot: CanvasSnapshot): ServerCanvasMetadata | null {
   }
 
   const pendingChangeSets: StoredPendingChangeSet[] = []
+  const recentDigestBySequence = new Map(
+    recentDigests.map((entry) => [entry.sequence, entry.digest]),
+  )
   let pendingBytes = 0
+  let previousPendingSequence = -1
   for (const entry of raw.pendingChangeSets) {
     if (!isRecord(entry) || !isToken(entry.token) || entry.token.epoch !== raw.epoch ||
       entry.token.sequence >= raw.nextSequence || typeof entry.digest !== 'string' ||
-      entry.digest.length === 0 || !isChangeSet(entry.changeSet)) return invalidMetadata()
+      entry.digest.length === 0) return invalidMetadata()
+    if (entry.token.sequence <= previousPendingSequence ||
+      recentDigestBySequence.get(entry.token.sequence) !== entry.digest) return invalidMetadata()
+    previousPendingSequence = entry.token.sequence
+    if (!isChangeSet(entry.changeSet) || !validateChangeSetBounds(entry.changeSet).ok ||
+      changeSetDigest(entry.changeSet) !== entry.digest) return invalidMetadata()
     const changeSet = semanticChangeSet(entry.changeSet)
     pendingBytes += Buffer.byteLength(semanticChangeSetJson(changeSet), 'utf8')
     if (pendingBytes > MAX_PENDING_CHANGE_SET_BYTES) return invalidMetadata()

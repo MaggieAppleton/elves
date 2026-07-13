@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'vitest'
 import type { ChangeSet } from '../../src/model/changeset'
 import type { CanvasSnapshot } from '../../server/store'
-import { semanticChangeSetJson } from '../../server/changeSetIdentity'
+import {
+  MAX_CHANGE_SET_ARRAY_ITEMS,
+  MAX_CHANGE_SET_OPS,
+  MAX_CHANGE_SET_SEMANTIC_BYTES,
+  changeSetDigest,
+  semanticChangeSetJson,
+} from '../../server/changeSetIdentity'
 import {
   SERVER_CANVAS_METADATA_KEY,
   MAX_RECENT_CHANGE_SET_DIGESTS,
@@ -45,6 +51,20 @@ function ensured(snapshot: CanvasSnapshot = legacy()): CanvasSnapshot {
 
 function metadata(snapshot: CanvasSnapshot): any {
   return snapshot[SERVER_CANVAS_METADATA_KEY]
+}
+
+function addPending(snapshot: CanvasSnapshot, changeSet: ChangeSet) {
+  return addPendingChangeSet(snapshot, changeSet, changeSetDigest(changeSet))
+}
+
+function withPending(...changeSets: ChangeSet[]): CanvasSnapshot {
+  let snapshot = ensured()
+  for (const changeSet of changeSets) {
+    const result = addPending(snapshot, changeSet)
+    expect(result.status).toBe('added')
+    if (result.status === 'added') snapshot = result.snapshot
+  }
+  return snapshot
 }
 
 describe('metadata creation and validation', () => {
@@ -150,15 +170,92 @@ describe('revision and sequence state', () => {
 })
 
 describe('bounded pending and legacy compatibility state', () => {
+  test('rehydration rejects duplicate pending token sequences', () => {
+    const duplicate = structuredClone(withPending(note('first'), note('second')))
+    metadata(duplicate).pendingChangeSets[1].token.sequence = 0
+    expect(() => canvasRevision(duplicate)).toThrow(InvalidCanvasMetadataError)
+  })
+
+  test('rehydration rejects descending pending token sequences', () => {
+    const descending = structuredClone(withPending(note('first'), note('second')))
+    metadata(descending).pendingChangeSets.reverse()
+    expect(() => canvasRevision(descending)).toThrow(InvalidCanvasMetadataError)
+  })
+
+  test('rehydration allows increasing pending token sequences with materialization gaps', () => {
+    const gapped = structuredClone(withPending(note('first'), note('second'), note('third')))
+    metadata(gapped).pendingChangeSets.splice(1, 1)
+    expect(canvasRevision(gapped)).toBe(3)
+    expect(pendingChangeSetsForClient(gapped).map((entry) => entry.token.sequence)).toEqual([0, 2])
+  })
+
+  test('rehydration rejects a pending digest that is not the canonical payload digest', () => {
+    const snapshot = structuredClone(withPending(note('pending')))
+    metadata(snapshot).pendingChangeSets[0].digest = 'forged'
+    metadata(snapshot).recentDigests[0].digest = 'forged'
+    expect(() => canvasRevision(snapshot)).toThrow(InvalidCanvasMetadataError)
+  })
+
+  test('rehydration rejects a mismatched retained digest for pending state', () => {
+    const mismatched = structuredClone(withPending(note('pending')))
+    metadata(mismatched).recentDigests[0].digest = 'different'
+    expect(() => canvasRevision(mismatched)).toThrow(InvalidCanvasMetadataError)
+  })
+
+  test('rehydration rejects a missing retained digest for pending state', () => {
+    const missing = structuredClone(withPending(note('pending')))
+    metadata(missing).recentDigests = []
+    expect(() => canvasRevision(missing)).toThrow(InvalidCanvasMetadataError)
+  })
+
+  test('rehydration rejects pending change sets beyond Task 1 operation bounds', () => {
+    const oversized: ChangeSet = {
+      id: 'too-many-ops',
+      author: 'claude',
+      ops: Array.from({ length: MAX_CHANGE_SET_OPS + 1 }, () => ({
+        kind: 'delete_card' as const,
+        cardId: 'shape:a',
+      })),
+    }
+    const snapshot = withPending(oversized)
+    expect(() => canvasRevision(snapshot)).toThrow(InvalidCanvasMetadataError)
+  })
+
+  test('rehydration rejects pending change sets beyond Task 1 array bounds', () => {
+    const oversized: ChangeSet = {
+      id: 'too-many-array-items',
+      author: 'claude',
+      ops: [{
+        kind: 'group_cards',
+        cardIds: Array.from({ length: MAX_CHANGE_SET_ARRAY_ITEMS + 1 }, (_, index) => `shape:${index}`),
+      }],
+    }
+    const snapshot = withPending(oversized)
+    expect(() => canvasRevision(snapshot)).toThrow(InvalidCanvasMetadataError)
+  })
+
+  test('rehydration rejects a pending change set beyond the Task 1 semantic byte bound', () => {
+    const base = note('too-many-bytes', '')
+    const overhead = Buffer.byteLength(semanticChangeSetJson(base), 'utf8')
+    const oversized = note(
+      'too-many-bytes',
+      'x'.repeat(MAX_CHANGE_SET_SEMANTIC_BYTES + 1 - overhead),
+    )
+    expect(Buffer.byteLength(semanticChangeSetJson(oversized), 'utf8'))
+      .toBe(MAX_CHANGE_SET_SEMANTIC_BYTES + 1)
+    const snapshot = withPending(oversized)
+    expect(() => canvasRevision(snapshot)).toThrow(InvalidCanvasMetadataError)
+  })
+
   test('pending entries are capped at 32 and exposed without internal digests', () => {
     let snapshot = ensured()
     const epoch = nextChangeSetToken(snapshot).epoch
     for (let index = 0; index < MAX_PENDING_CHANGE_SETS; index++) {
-      const result = addPendingChangeSet(snapshot, note(`pending-${index}`), `digest-${index}`)
+      const result = addPending(snapshot, note(`pending-${index}`))
       expect(result.status).toBe('added')
       if (result.status === 'added') snapshot = result.snapshot
     }
-    const overflow = addPendingChangeSet(snapshot, note('overflow'), 'overflow')
+    const overflow = addPending(snapshot, note('overflow'))
     expect(overflow).toEqual({ status: 'full', snapshot: null })
     const pending = pendingChangeSetsForClient(snapshot)
     expect(pending).toHaveLength(MAX_PENDING_CHANGE_SETS)
@@ -176,7 +273,7 @@ describe('bounded pending and legacy compatibility state', () => {
       const overhead = Buffer.byteLength(semanticChangeSetJson(base), 'utf8')
       const exact = note(`million-${index}`, 'x'.repeat(1_000_000 - overhead))
       expect(Buffer.byteLength(semanticChangeSetJson(exact), 'utf8')).toBe(1_000_000)
-      const result = addPendingChangeSet(snapshot, exact, `digest-${index}`)
+      const result = addPending(snapshot, exact)
       expect(result.status).toBe('added')
       if (result.status === 'added') snapshot = result.snapshot
     }
@@ -184,7 +281,7 @@ describe('bounded pending and legacy compatibility state', () => {
       (total, entry) => total + Buffer.byteLength(semanticChangeSetJson(entry.changeSet), 'utf8'),
       0,
     )).toBe(MAX_PENDING_CHANGE_SET_BYTES)
-    expect(addPendingChangeSet(snapshot, note('one-more-byte', 'x'), 'overflow'))
+    expect(addPending(snapshot, note('one-more-byte', 'x')))
       .toEqual({ status: 'too-large', snapshot: null })
   })
 
@@ -213,7 +310,7 @@ describe('public snapshots, replacement, and clear', () => {
   test('replacement strips forged incoming metadata and preserves protocol state', () => {
     let current = ensured()
     current = consumeChangeSetSequence(current, 'digest-0')
-    const pending = addPendingChangeSet(current, note('pending'), 'pending-digest')
+    const pending = addPending(current, note('pending'))
     expect(pending.status).toBe('added')
     if (pending.status === 'added') current = pending.snapshot
     current = recordLegacyChangeSetReceipt(current, 'legacy-id', 'legacy-digest')
@@ -242,7 +339,7 @@ describe('public snapshots, replacement, and clear', () => {
   test('clear writes a tombstone, advances revision once, and rotates the epoch', () => {
     let current = ensured()
     current = consumeChangeSetSequence(current, 'digest-0')
-    const pending = addPendingChangeSet(current, note('pending'), 'pending-digest')
+    const pending = addPending(current, note('pending'))
     if (pending.status === 'added') current = pending.snapshot
     current = recordLegacyChangeSetReceipt(current, 'legacy', 'digest')
     const oldRevision = canvasRevision(current)
