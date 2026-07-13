@@ -38,20 +38,56 @@ test('the + Link button unfurls a pasted url into a clickable reference card', a
     year: null, venue: null, description: 'about malleable software', faviconAssetId: null,
     thumbnailAssetId: null, doi: null, arxivId: null, fetchedBy: 'unfurl', fetchedAt: null,
   }
-  await context.route('**/projects/*/unfurl', (route) =>
-    route.fulfill({ contentType: 'application/json', body: JSON.stringify({ reference: fakeRef }) }),
-  )
+  let releaseUnfurl!: () => void
+  const unfurlMayFinish = new Promise<void>((resolve) => { releaseUnfurl = resolve })
+  await context.route('**/projects/*/unfurl', async (route) => {
+    await unfurlMayFinish
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ reference: fakeRef }) })
+  })
 
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
 
   // The + Link flow opens an in-app modal to paste the url; Enter submits.
-  await page.getByTestId('new-reference').click()
+  const trigger = page.getByTestId('new-reference')
+  await trigger.click()
   await page.getByTestId('link-prompt-input').fill('example.com/malleable')
   await page.getByTestId('link-prompt-submit').click()
+  await expect(page.getByRole('dialog', { name: 'Add a reference' })).toBeFocused()
+  releaseUnfurl()
 
   await expect(page.getByTestId('ref-card')).toBeVisible()
   await expect(page.getByTestId('ref-title')).toHaveText('Intercepted Reference')
+  await expect(trigger).toBeFocused()
   // The ↗ control targets the source url.
   await expect(page.getByTestId('ref-open')).toHaveAttribute('title', /example\.com\/malleable/)
+})
+
+test('the link prompt traps focus and restores it to the Link button when closed', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  const trigger = page.getByTestId('new-reference')
+  const prompt = page.getByTestId('link-prompt')
+  const input = page.getByTestId('link-prompt-input')
+  const submit = page.getByTestId('link-prompt-submit')
+
+  await trigger.click()
+  await expect(input).toBeFocused()
+  await input.fill('example.com')
+
+  await page.keyboard.press('Shift+Tab')
+  await expect(submit).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(input).toBeFocused()
+
+  await page.keyboard.press('Escape')
+  await expect(prompt).toBeHidden()
+  await expect(trigger).toBeFocused()
+
+  await trigger.click()
+  await expect(input).toBeFocused()
+  await page.getByTestId('link-prompt-cancel').click()
+  await expect(prompt).toBeHidden()
+  await expect(trigger).toBeFocused()
 })
