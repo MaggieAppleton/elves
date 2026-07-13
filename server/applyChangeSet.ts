@@ -1,7 +1,7 @@
 import { createShapeId } from '@tldraw/tlschema'
 import { getIndexAbove, IndexKey } from '@tldraw/utils'
 import type { CanvasSnapshot } from './store'
-import { ChangeSet, planMerge } from '../src/model/changeset'
+import { CHANGE_SET_STAMP_META_KEY, ChangeSet, planMerge } from '../src/model/changeset'
 import { makeComment, addComment, estimateCommentHeight } from '../src/model/comments'
 import {
   makeNoteCardProps, makeReferenceCardProps, makeFigureCardProps, claudeMayEditCardText,
@@ -180,6 +180,7 @@ function topIndex(store: StoreRecords): IndexKey | undefined {
 export function applyChangeSetToSnapshot(
   snapshot: CanvasSnapshot,
   cs: ChangeSet,
+  acceptedTokenStamp?: string,
 ): CanvasSnapshot | null {
   const doc = (snapshot as any)?.document
   if (!doc || !doc.store) return null
@@ -256,7 +257,7 @@ export function applyChangeSetToSnapshot(
           rotation: 0,
           isLocked: false,
           opacity: 1,
-          meta: {},
+          meta: acceptedTokenStamp ? { [CHANGE_SET_STAMP_META_KEY]: acceptedTokenStamp } : {},
           parentId: defaultPageId(store),
           index: getIndexAbove(topIndex(store)),
           props,
@@ -276,7 +277,7 @@ export function applyChangeSetToSnapshot(
           rotation: 0,
           isLocked: false,
           opacity: 1,
-          meta: {},
+          meta: acceptedTokenStamp ? { [CHANGE_SET_STAMP_META_KEY]: acceptedTokenStamp } : {},
           parentId: defaultPageId(store),
           index: getIndexAbove(topIndex(store)),
           props,
@@ -297,7 +298,7 @@ export function applyChangeSetToSnapshot(
           rotation: 0,
           isLocked: false,
           opacity: 1,
-          meta: {},
+          meta: acceptedTokenStamp ? { [CHANGE_SET_STAMP_META_KEY]: acceptedTokenStamp } : {},
           parentId: defaultPageId(store),
           index: getIndexAbove(topIndex(store)),
           props,
@@ -341,7 +342,7 @@ export function applyChangeSetToSnapshot(
           rotation: 0,
           isLocked: false,
           opacity: 1,
-          meta: {},
+          meta: acceptedTokenStamp ? { [CHANGE_SET_STAMP_META_KEY]: acceptedTokenStamp } : {},
           parentId: defaultPageId(store),
           index: getIndexAbove(topIndex(store)),
           props: makeSectionProps(op.text, cs.author),
@@ -383,7 +384,7 @@ export function applyChangeSetToSnapshot(
           rotation: 0,
           isLocked: false,
           opacity: 1,
-          meta: {},
+          meta: acceptedTokenStamp ? { [CHANGE_SET_STAMP_META_KEY]: acceptedTokenStamp } : {},
           parentId: defaultPageId(store),
           index: getIndexAbove(topIndex(store)),
           props,

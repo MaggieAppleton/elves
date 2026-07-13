@@ -115,6 +115,12 @@ export interface ChangeSet {
   ops: Op[]
 }
 
+export const CHANGE_SET_STAMP_META_KEY = 'elvesChangeSetToken'
+
+export function changeSetTokenStamp(token: { epoch: string; sequence: number }): string {
+  return `${token.epoch}:${token.sequence}`
+}
+
 const COMMENT_TYPES: readonly (CommentType | null)[] = [
   'needs-evidence', 'weak-argument', 'needs-citation', 'wants-figure',
   'counterpoint', 'tighten', 'unclear', 'structure', null,
@@ -359,6 +365,15 @@ export function referencedGroupIds(cs: ChangeSet): string[] {
   const ids: string[] = []
   for (const op of cs.ops) {
     if (op.kind === 'ungroup_cards') ids.push(op.groupId)
+  }
+  return ids
+}
+
+/** Question ids an op references as an existing question shape. */
+export function referencedQuestionIds(cs: ChangeSet): string[] {
+  const ids: string[] = []
+  for (const op of cs.ops) {
+    if (op.kind === 'set_question_summary') ids.push(op.questionId)
   }
   return ids
 }
