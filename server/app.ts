@@ -43,6 +43,47 @@ const FETCH_TIMEOUT_MS = 8000
 const MAX_HTML_BYTES = 2_000_000
 const MAX_IMAGE_BYTES = 5_000_000
 
+class BodyTooLargeError extends Error {
+  constructor(limit: number) {
+    super(`response body exceeds ${limit} bytes`)
+    this.name = 'BodyTooLargeError'
+  }
+}
+
+type FetchResponse = Awaited<ReturnType<typeof safeFetch>>
+
+async function discardBody(res: FetchResponse): Promise<void> {
+  await res.body?.cancel()
+}
+
+async function readBodyLimited(res: FetchResponse, limit: number, signal: AbortSignal): Promise<Buffer> {
+  if (!res.body) return Buffer.alloc(0)
+  const reader = res.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  const onAbort = () => { void reader.cancel(signal.reason).catch(() => undefined) }
+  signal.addEventListener('abort', onAbort, { once: true })
+  if (signal.aborted) onAbort()
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (signal.aborted) throw signal.reason
+      if (done) break
+      total += value.byteLength
+      if (total > limit) {
+        const error = new BodyTooLargeError(limit)
+        void reader.cancel(error).catch(() => undefined)
+        throw error
+      }
+      chunks.push(value)
+    }
+  } finally {
+    signal.removeEventListener('abort', onAbort)
+    reader.releaseLock()
+  }
+  return Buffer.concat(chunks, total)
+}
+
 // Real network + asset I/O for unfurl, scoped to one project's assets dir. The
 // fetches are http(s)-only, time-limited, and size-capped; images are stored as
 // local files so a reference card stays offline-usable and portable.
@@ -51,34 +92,47 @@ function unfurlDepsFor(assetsDir: string): UnfurlDeps {
   // initial URL AND of every redirect hop (never `redirect: 'follow'`), so a
   // pasted URL can't reach this machine's own network or a cloud metadata
   // endpoint, even via a redirect chain. See server/ssrf.ts.
-  const withTimeout = async (url: string, accept: string) => {
+  const withTimeout = async <T>(
+    url: string,
+    accept: string,
+    consume: (res: FetchResponse, signal: AbortSignal) => Promise<T>,
+  ): Promise<T> => {
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS)
     try {
-      return await safeFetch(url, {
+      const res = await safeFetch(url, {
         signal: ctrl.signal,
         headers: { 'user-agent': UNFURL_UA, accept },
       })
+      return await consume(res, ctrl.signal)
     } finally {
       clearTimeout(timer)
     }
   }
   return {
-    fetchText: async (url) => {
-      const res = await withTimeout(url, 'text/html,application/xhtml+xml')
+    fetchText: async (url) => withTimeout(url, 'text/html,application/xhtml+xml', async (res, signal) => {
       const ct = (res.headers.get('content-type') ?? '').toLowerCase()
-      if (!res.ok || !ct.includes('html')) throw new Error(`not html (${res.status})`)
-      const html = (await res.text()).slice(0, MAX_HTML_BYTES)
+      if (!res.ok || !ct.includes('html')) {
+        await discardBody(res)
+        throw new Error(`not html (${res.status})`)
+      }
+      const html = (await readBodyLimited(res, MAX_HTML_BYTES, signal)).toString('utf8')
       return { html, finalUrl: res.url || url }
-    },
+    }),
     fetchImage: async (url): Promise<FetchedImage | null> => {
-      const res = await withTimeout(url, 'image/*')
-      if (!res.ok) return null
-      const contentType = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase()
-      if (!contentType.startsWith('image/')) return null
-      const bytes = Buffer.from(await res.arrayBuffer())
-      if (bytes.length === 0 || bytes.length > MAX_IMAGE_BYTES) return null
-      return { bytes, contentType }
+      try {
+        return await withTimeout(url, 'image/*', async (res, signal) => {
+          const contentType = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase()
+          if (!res.ok || !contentType.startsWith('image/')) {
+            await discardBody(res)
+            return null
+          }
+          const bytes = await readBodyLimited(res, MAX_IMAGE_BYTES, signal)
+          return bytes.length === 0 ? null : { bytes, contentType }
+        })
+      } catch {
+        return null
+      }
     },
     saveImage: async (img) => {
       const ext = extForMime(img.contentType)
