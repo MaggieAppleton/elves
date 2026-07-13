@@ -7,6 +7,8 @@ import { applyChangeSetToSnapshot } from '../applyChangeSet'
 import { reconcileSummaries, reconcileCommentSummaries, reconcileQuestionSummaries } from './reconcile'
 import type { Summarizer } from './summarizer'
 import { summaryState, commentSummaryState } from '../../src/model/summary'
+import { canvasPathFor, getProject } from '../projects'
+import { withProjectLock } from '../projectLock'
 
 /**
  * Read a project's canvas, generate any needed summary updates (for cards,
@@ -31,10 +33,13 @@ import { summaryState, commentSummaryState } from '../../src/model/summary'
  * once it recovers.
  */
 export async function reconcileCanvasFile(
-  canvasPath: string,
+  dataRoot: string,
+  projectId: string,
   summarizer: Summarizer,
   now: () => string,
 ): Promise<{ changeSet: ChangeSet | null; pending: boolean }> {
+  const canvasPath = canvasPathFor(dataRoot, projectId)
+  if (!canvasPath) return { changeSet: null, pending: false }
   const canvas = await readCanvas(canvasPath)
   const cards = snapshotToSummarizableCards(canvas)
   const comments = snapshotToSummarizableComments(canvas)
@@ -55,6 +60,11 @@ export async function reconcileCanvasFile(
 
   if (!ops.length) return { changeSet: null, pending }
   const cs: ChangeSet = { id: `sum-${crypto.randomUUID()}`, author: 'claude', ops }
-  await withCanvasLock(canvasPath, (fresh) => applyChangeSetToSnapshot(fresh, cs))
-  return { changeSet: cs, pending }
+  return withProjectLock(dataRoot, projectId, async () => {
+    if (!(await getProject(dataRoot, projectId))) return { changeSet: null, pending }
+    const currentCanvasPath = canvasPathFor(dataRoot, projectId)
+    if (!currentCanvasPath) return { changeSet: null, pending }
+    await withCanvasLock(currentCanvasPath, (fresh) => applyChangeSetToSnapshot(fresh, cs))
+    return { changeSet: cs, pending }
+  })
 }

@@ -1,5 +1,6 @@
-import { listProjects, canvasPathFor } from './projects'
-import { readCanvas, writeCanvas } from './store'
+import { listProjects, getProject, canvasPathFor } from './projects'
+import { withProjectLock } from './projectLock'
+import { withCanvasLock } from './store'
 
 /**
  * One-time, in-place rename of the card discriminators in every stored canvas:
@@ -25,11 +26,15 @@ export async function migrateSourceCardsToNotes(dataRoot: string): Promise<void>
   }
 
   for (const project of projects) {
-    const path = canvasPathFor(dataRoot, project.id)
-    if (!path) continue
     try {
-      const snapshot = await readCanvas(path)
-      if (renameCardsInSnapshot(snapshot)) await writeCanvas(path, snapshot)
+      await withProjectLock(dataRoot, project.id, async () => {
+        if (!(await getProject(dataRoot, project.id))) return
+        const path = canvasPathFor(dataRoot, project.id)
+        if (!path) return
+        await withCanvasLock(path, (current) =>
+          renameCardsInSnapshot(current) ? current : null,
+        )
+      })
     } catch (err) {
       console.error(`[elves] note rename skipped for ${project.id}:`, err)
     }

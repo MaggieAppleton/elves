@@ -262,9 +262,8 @@ export function createServer(
     }
     running.add(projectId)
     try {
-      const canvasPath = canvasPathFor(dataRoot, projectId)
-      if (canvasPath && (await getProject(dataRoot, projectId))) {
-        const { changeSet, pending } = await reconcileCanvasFile(canvasPath, summarize.summarizer, now)
+      if (await getProject(dataRoot, projectId)) {
+        const { changeSet, pending } = await reconcileCanvasFile(dataRoot, projectId, summarize.summarizer, now)
         if (changeSet) onChangeSet?.(projectId, changeSet)
         if (pending) scheduleRetry(projectId)
         else clearRetry(projectId)

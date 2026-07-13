@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import request from 'supertest'
 import { createServer } from '../../server/app'
-import { createProject, canvasPathFor } from '../../server/projects'
+import { createProject, canvasPathFor, renameProject } from '../../server/projects'
 import {
   reconcileSummaries, reconcileCommentSummaries, reconcileQuestionSummaries,
   type ReconcileCard, type ReconcileComment, type ReconcileQuestion,
@@ -175,7 +175,7 @@ afterEach(async () => {
 /** A temp project with an on-disk canvas.json holding one long, unsummarized
  * card — reconcileCanvasFile's own file-driven entry point, as opposed to the
  * pure reconcileSummaries tests above which pass in-memory card arrays. */
-async function seedCanvasWithLongCard(): Promise<{ canvasPath: string }> {
+async function seedCanvasWithLongCard(): Promise<{ dataRoot: string; canvasPath: string }> {
   const d = await fs.mkdtemp(join(tmpdir(), 'elves-sum-'))
   dirs.push(d)
   await createProject(d, 'Essay', '2026-07-02T10:00:00.000Z')
@@ -188,20 +188,44 @@ async function seedCanvasWithLongCard(): Promise<{ canvasPath: string }> {
     session: null,
   }
   await fs.writeFile(canvasPath, JSON.stringify(snap), 'utf8')
-  return { canvasPath }
+  return { dataRoot: d, canvasPath }
 }
 
 test('reconcileCanvasFile reports pending when the summarizer is unreachable', async () => {
-  const { canvasPath } = await seedCanvasWithLongCard()
+  const { dataRoot } = await seedCanvasWithLongCard()
   const down = new FakeSummarizer(() => null)
-  const r1 = await reconcileCanvasFile(canvasPath, down, () => 'T')
+  const r1 = await reconcileCanvasFile(dataRoot, 'essay', down, () => 'T')
   expect(r1.changeSet).toBeNull()
   expect(r1.pending).toBe(true)
 
   const up = new FakeSummarizer(() => 'a gist')
-  const r2 = await reconcileCanvasFile(canvasPath, up, () => 'T')
+  const r2 = await reconcileCanvasFile(dataRoot, 'essay', up, () => 'T')
   expect(r2.changeSet?.ops.length).toBeGreaterThan(0)
   expect(r2.pending).toBe(false)
+})
+
+test('summary apply does not recreate a project renamed during model work', async () => {
+  const { dataRoot } = await seedCanvasWithLongCard()
+  let start!: () => void
+  let release!: (summary: string | null) => void
+  const started = new Promise<void>((resolve) => { start = resolve })
+  const reply = new Promise<string | null>((resolve) => { release = resolve })
+  const delayed: Summarizer = {
+    label: 'delayed/test',
+    summarize: async () => {
+      start()
+      return reply
+    },
+  }
+  const run = reconcileCanvasFile(dataRoot, 'essay', delayed, () => 'T')
+  await started
+  await renameProject(dataRoot, 'essay', 'Final')
+  release('a gist')
+  const result = await run
+  expect(result.changeSet).toBeNull()
+  await expect(fs.access(join(dataRoot, 'projects', 'essay'))).rejects.toMatchObject({ code: 'ENOENT' })
+  const moved = JSON.parse(await fs.readFile(canvasPathFor(dataRoot, 'final')!, 'utf8'))
+  expect(moved.document.store['shape:a'].props.summary ?? null).toBeNull()
 })
 
 test('createServer with a summarizer broadcasts + persists a summary after a canvas save', async () => {
