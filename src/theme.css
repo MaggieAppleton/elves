@@ -608,6 +608,36 @@ body {
   background: var(--elves-border);
 }
 
+@media (max-width: 640px) {
+  /* Six 44px icon targets plus the toolbar's gaps/padding fit within 320px.
+     The desktop labels remain in the DOM and reappear above this breakpoint. */
+  .elves-toolbar button {
+    width: 44px;
+    height: 44px;
+    justify-content: center;
+    padding: 0;
+  }
+  .elves-toolbar__label { display: none; }
+  .elves-btn-icon {
+    width: 18px;
+    height: 18px;
+  }
+
+  /* Put project/review actions on their own row beneath the creation tools. */
+  .elves-topbar {
+    top: 72px;
+    right: 8px;
+  }
+  .elves-switcher__button { min-height: 44px; }
+  .elves-switcher__menu {
+    width: min(300px, calc(100vw - 16px));
+    min-width: 0;
+    max-height: calc(100dvh - 130px);
+    overflow-y: auto;
+    box-sizing: border-box;
+  }
+}
+
 /* ---- Empty state (no projects yet) ------------------------------------- */
 .elves-empty {
   position: fixed;
