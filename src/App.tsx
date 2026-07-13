@@ -353,6 +353,7 @@ export default function App() {
   // (less draft). A modifier is required so it never fights typing in a card.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (linkPromptOpen) return
       if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key === '\\') {
         e.preventDefault()
         changeView(e.shiftKey ? lessDraft(view) : moreDraft(view))
@@ -360,7 +361,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [view])
+  }, [view, linkPromptOpen])
 
   // `/` opens the agent box — but ONLY when you're not typing. A bare key (no
   // modifier) would otherwise steal every slash you write, so bail out whenever
@@ -368,6 +369,7 @@ export default function App() {
   // slash there. Capture phase so we decide before tldraw sees the key.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (linkPromptOpen) return
       if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return
       const el = document.activeElement as HTMLElement | null
       const tag = el?.tagName
@@ -378,7 +380,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [])
+  }, [linkPromptOpen])
 
   // Keep the agent box's scope in sync with the live canvas selection. Selection
   // lives on session-scoped records, so we listen there; React bails on an

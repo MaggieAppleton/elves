@@ -91,3 +91,65 @@ test('the link prompt traps focus and restores it to the Link button when closed
   await expect(prompt).toBeHidden()
   await expect(trigger).toBeFocused()
 })
+
+test('the busy link prompt contains cancellation, focus, and global shortcuts', async ({ page, context }) => {
+  const fakeRef = {
+    url: 'https://example.com/busy', refType: 'article',
+    title: 'Busy Reference', authors: [], siteName: 'example.com',
+    year: null, venue: null, description: null, faviconAssetId: null,
+    thumbnailAssetId: null, doi: null, arxivId: null, fetchedBy: 'unfurl', fetchedAt: null,
+  }
+  let releaseUnfurl!: () => void
+  const unfurlMayFinish = new Promise<void>((resolve) => { releaseUnfurl = resolve })
+  await context.route('**/projects/*/unfurl', async (route) => {
+    await unfurlMayFinish
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ reference: fakeRef }) })
+  })
+
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  const trigger = page.getByTestId('new-reference')
+  const prompt = page.getByTestId('link-prompt')
+  const dialog = page.getByRole('dialog', { name: 'Add a reference' })
+  const stage = page.locator('.elves-stage')
+  await trigger.click()
+  await page.getByTestId('link-prompt-input').fill('example.com/busy')
+  await page.getByTestId('link-prompt-submit').click()
+  await expect(dialog).toBeFocused()
+
+  await page.keyboard.press('Escape')
+  await expect(prompt).toBeVisible()
+  await expect(dialog).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(dialog).toBeFocused()
+
+  await page.keyboard.press('Control+\\')
+  await expect(stage).toHaveAttribute('data-view', 'canvas')
+  await page.keyboard.press('Meta+\\')
+  await expect(stage).toHaveAttribute('data-view', 'canvas')
+  await page.keyboard.press('/')
+  await expect(page.locator('.elves-agentbox')).toBeHidden()
+
+  releaseUnfurl()
+  await expect(prompt).toBeHidden()
+  await expect(trigger).toBeFocused()
+})
+
+test('closing the link prompt does not also close an AgentBox behind it', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  await page.keyboard.press('/')
+  const agentBox = page.locator('.elves-agentbox')
+  await expect(agentBox).toBeVisible()
+
+  const trigger = page.getByTestId('new-reference')
+  await trigger.click()
+  await expect(page.getByTestId('link-prompt-input')).toBeFocused()
+  await page.keyboard.press('Escape')
+
+  await expect(page.getByTestId('link-prompt')).toBeHidden()
+  await expect(agentBox).toBeVisible()
+  await expect(trigger).toBeFocused()
+})

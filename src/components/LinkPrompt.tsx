@@ -46,7 +46,7 @@ export function LinkPrompt({ open, onCancel, onSubmit }: Props) {
       if (e.key === 'Escape') {
         e.preventDefault()
         e.stopPropagation()
-        onCancel()
+        if (!busy) onCancel()
         return
       }
       if (e.key !== 'Tab') return
@@ -80,7 +80,7 @@ export function LinkPrompt({ open, onCancel, onSubmit }: Props) {
     }
     document.addEventListener('keydown', onKey, true)
     return () => document.removeEventListener('keydown', onKey, true)
-  }, [open, onCancel])
+  }, [open, busy, onCancel])
 
   // Busy disables every form control; keep focus inside the modal on the dialog
   // itself until the unfurl completes.
