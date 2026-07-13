@@ -126,6 +126,14 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const editorRef = useRef<Editor | null>(null)
   const projectIdRef = useRef<string | null>(null)
+  // Project ids can repeat across an A → B → A switch, so id equality alone
+  // cannot identify the review lifecycle that launched an async fetch. Bump a
+  // visit token on every switch and require completions to match it.
+  const reviewVisitRef = useRef(0)
+  // Orders review snapshots within one visit. Every HTTP read claims a revision
+  // when it starts; a later read or realtime snapshot advances the revision so
+  // an older completion cannot replace newer review state.
+  const reviewRevisionRef = useRef(0)
   // False until the open project's canvas has loaded from disk. Every save path
   // checks this so a failed (or not-yet-finished) load can't serialize an empty
   // store over real on-disk data.
@@ -259,7 +267,10 @@ export default function App() {
           onStatus: setRealtimeStatus,
           onReconnect: resyncOnReconnect,
           onReviews: (projectId, next) => {
-            if (projectId === projectIdRef.current) setReviews(next)
+            if (projectId === projectIdRef.current) {
+              reviewRevisionRef.current++
+              setReviews(next)
+            }
           },
         },
       ),
@@ -269,36 +280,56 @@ export default function App() {
   // Load the open project's review passes; a summon/claim/completion from any
   // surface (panel, MCP, another tab) arrives through onReviews above.
   useEffect(() => {
+    const visit = ++reviewVisitRef.current
+    const revision = ++reviewRevisionRef.current
     setReviews([])
     if (!currentProjectId) return
     fetchReviews(currentProjectId)
       .then((list) => {
-        if (projectIdRef.current === currentProjectId) setReviews(list)
+        if (
+          reviewVisitRef.current === visit &&
+          reviewRevisionRef.current === revision &&
+          projectIdRef.current === currentProjectId
+        ) {
+          setReviews(list)
+        }
       })
       .catch((err) => console.error('Elves: failed to load reviews', err))
+    return () => {
+      if (reviewVisitRef.current === visit) reviewVisitRef.current++
+    }
   }, [currentProjectId])
+
+  const refreshReviewsForVisit = async (pid: string, visit: number) => {
+    if (reviewVisitRef.current !== visit || projectIdRef.current !== pid) return
+    const revision = ++reviewRevisionRef.current
+    const list = await fetchReviews(pid)
+    if (
+      reviewVisitRef.current === visit &&
+      reviewRevisionRef.current === revision &&
+      projectIdRef.current === pid
+    ) {
+      setReviews(list)
+    }
+  }
 
   const handleSummonReview = (personality: PersonalityId, focus: string | null) => {
     const pid = currentProjectId
     if (!pid) return
+    const visit = reviewVisitRef.current
     // The websocket echo will also land; setting from the fetch keeps the panel
     // truthful even if the socket is down.
     summonReview(pid, personality, focus)
-      .then(() => fetchReviews(pid))
-      .then((list) => {
-        if (projectIdRef.current === pid) setReviews(list)
-      })
+      .then(() => refreshReviewsForVisit(pid, visit))
       .catch((err) => console.error('Elves: failed to summon review', err))
   }
 
   const handleDismissReview = (reviewId: string) => {
     const pid = currentProjectId
     if (!pid) return
+    const visit = reviewVisitRef.current
     dismissReview(pid, reviewId)
-      .then(() => fetchReviews(pid))
-      .then((list) => {
-        if (projectIdRef.current === pid) setReviews(list)
-      })
+      .then(() => refreshReviewsForVisit(pid, visit))
       .catch((err) => console.error('Elves: failed to dismiss review', err))
   }
 
