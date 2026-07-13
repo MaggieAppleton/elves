@@ -4,7 +4,7 @@ import {
   stopEventPropagation,
   type Editor, type Geometry2d, type TLResizeInfo, type TLShapePartial,
 } from 'tldraw'
-import { useLayoutEffect, useState, type CSSProperties, type ReactNode } from 'react'
+import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { CardKind, NoteKind, Origin, Comment, Reference, FigureStatus, Attribution } from '../model/types'
 import { makeProseCardProps, canConvertNoteToProse, noteToProseProps, canConvertProseToNote, proseToNoteProps } from '../model/cards'
 import { reattribute, USER_AUTHOR } from '../model/attribution'
@@ -19,6 +19,7 @@ import { shouldShowGist, gistFontSize } from './summaryView'
 import { mergedMembers, isExpanded, toggleExpanded } from './mergeView'
 import { ReferenceCardFace } from './ReferenceCardFace'
 import { presenceMode } from '../client/presence'
+import { reflowCardLane } from '../client/canvasLayout'
 import './card.css'
 
 export type CardShape = TLBaseShape<'card', {
@@ -31,6 +32,7 @@ export type CardShape = TLBaseShape<'card', {
   authoredBy: string | null
   attribution: Attribution | null
   comments: Comment[]
+  commentH: number
   mergedInto: string | null
   draftExcluded: boolean
   assetId: string | null
@@ -113,6 +115,10 @@ export function addCommentReviewIdUp(props: Record<string, unknown>): void {
   }
 }
 
+export function addCommentHeightUp(props: Record<string, unknown>): void {
+  props.commentH = 0
+}
+
 // Every comment predating this field gets a comment-level summary, mirroring
 // addSummaryUp for the card itself: default to "no summary generated yet" so
 // reconciliation treats it exactly like a freshly-added comment.
@@ -162,6 +168,7 @@ const cardVersions = createShapePropsMigrationIds('card', {
   AddComments: 1, AddAssetId: 2, AddReference: 3, AddSummary: 4, RenameSourceToNote: 5,
   AddAuthoredBy: 6, AddDraftExcluded: 7, AddFigure: 8, AddAttribution: 9, AddCommentSummary: 10,
   AddCommentReviewId: 11,
+  AddCommentHeight: 12,
 })
 
 export const cardMigrations = createShapePropsMigrationSequence({
@@ -263,6 +270,13 @@ export const cardMigrations = createShapePropsMigrationSequence({
         }
       },
     },
+    {
+      id: cardVersions.AddCommentHeight,
+      up: (props) => addCommentHeightUp(props as Record<string, unknown>),
+      down: (props) => {
+        delete (props as Record<string, unknown>).commentH
+      },
+    },
   ],
 })
 
@@ -355,6 +369,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
         summaryAt: T.nullable(T.string),
       }),
     ),
+    commentH: T.number,
     mergedInto: T.nullable(T.string),
     draftExcluded: T.boolean,
     assetId: T.nullable(T.string),
@@ -401,6 +416,44 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     const zoom = this.editor.getZoomLevel()
     const showGist = !isEditing && shouldShowGist(zoom, shape.props)
     const comments = visibleComments(shape.props.comments)
+    const commentsRef = useRef<HTMLDivElement>(null)
+    const commentLayoutKey = comments
+      .map((comment) => `${comment.id}:${comment.type ?? ''}:${comment.text}`)
+      .join('|')
+    useLayoutEffect(() => {
+      let cancelled = false
+      const measure = () => {
+        if (cancelled) return
+        const current = this.editor.getShape<CardShape>(shape.id)
+        if (!current) return
+        const element = commentsRef.current
+        const nextCommentH = element && comments.length > 0
+          ? 7 + element.getBoundingClientRect().height / this.editor.getZoomLevel()
+          : 0
+        if (Math.abs(nextCommentH - (current.props.commentH ?? 0)) <= 1) return
+
+        const previousHeight = current.props.h + (current.props.commentH ?? 0)
+        this.editor.run(() => {
+          this.editor.updateShape<CardShape>({
+            id: current.id,
+            type: 'card',
+            props: { commentH: nextCommentH },
+          })
+          reflowCardLane(this.editor, current.id, previousHeight)
+        }, { history: 'ignore' })
+      }
+      const frame = requestAnimationFrame(measure)
+      const observer = typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(measure)
+      if (commentsRef.current) observer?.observe(commentsRef.current)
+      document.fonts?.ready?.then(measure)
+      return () => {
+        cancelled = true
+        cancelAnimationFrame(frame)
+        observer?.disconnect()
+      }
+    }, [this.editor, shape.id, shape.props.w, commentLayoutKey, comments.length])
     const pageCards = this.editor.getCurrentPageShapes()
       .filter((candidate) => candidate.type === 'card')
       .sort((a, b) => a.id.localeCompare(b.id))
@@ -725,7 +778,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
               treatment the card's own text gets just above), sized up with
               gistFontSize so it stays legible. */}
           {comments.length > 0 && (
-            <div className="elves-comments" onPointerDown={(e) => e.stopPropagation()}>
+            <div ref={commentsRef} className="elves-comments" onPointerDown={(e) => e.stopPropagation()}>
               {comments.map((c, index) => (
                 <div
                   key={c.id}

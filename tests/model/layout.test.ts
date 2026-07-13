@@ -4,6 +4,7 @@ import {
   CASCADE_STEP,
   CASCADE_WRAP,
   placeBelowObstacles,
+  reflowVerticalLane,
 } from '../../src/model/layout'
 
 describe('cascadeOffset', () => {
@@ -47,5 +48,52 @@ describe('placeBelowObstacles', () => {
       { x: 124, y: 0, w: 100, h: 50 },
       [{ x: 0, y: 0, w: 100, h: 50 }],
     )).toEqual({ x: 124, y: 0, w: 100, h: 50 })
+  })
+})
+
+describe('reflowVerticalLane', () => {
+  test('pushes only downstream items in the same horizontal lane', () => {
+    expect(reflowVerticalLane('a', [
+      { id: 'a', rect: { x: 0, y: 0, w: 100, h: 140 } },
+      { id: 'b', rect: { x: 0, y: 100, w: 100, h: 50 } },
+      { id: 'side', rect: { x: 200, y: 100, w: 100, h: 50 } },
+    ])).toEqual([{ id: 'b', x: 0, y: 164 }])
+  })
+
+  test('pushes a contiguous stack without collapsing intentional whitespace', () => {
+    expect(reflowVerticalLane('a', [
+      { id: 'a', rect: { x: 0, y: 0, w: 100, h: 140 } },
+      { id: 'b', rect: { x: 0, y: 100, w: 100, h: 50 } },
+      { id: 'c', rect: { x: 0, y: 170, w: 100, h: 50 } },
+      { id: 'far', rect: { x: 0, y: 400, w: 100, h: 50 } },
+    ])).toEqual([
+      { id: 'b', x: 0, y: 164 },
+      { id: 'c', x: 0, y: 238 },
+    ])
+  })
+
+  test('compacts a previously contiguous stack when the anchor shrinks', () => {
+    expect(reflowVerticalLane('a', [
+      { id: 'a', rect: { x: 0, y: 0, w: 100, h: 60 } },
+      { id: 'b', rect: { x: 0, y: 164, w: 100, h: 50 } },
+      { id: 'c', rect: { x: 0, y: 238, w: 100, h: 50 } },
+    ], 140)).toEqual([
+      { id: 'b', x: 0, y: 84 },
+      { id: 'c', x: 0, y: 158 },
+    ])
+  })
+
+  test('does not compact across intentional whitespace', () => {
+    expect(reflowVerticalLane('a', [
+      { id: 'a', rect: { x: 0, y: 0, w: 100, h: 60 } },
+      { id: 'far', rect: { x: 0, y: 200, w: 100, h: 50 } },
+    ], 140)).toEqual([])
+  })
+
+  test('compacts small server measurement slack with the changed stack', () => {
+    expect(reflowVerticalLane('a', [
+      { id: 'a', rect: { x: 0, y: 0, w: 100, h: 60 } },
+      { id: 'b', rect: { x: 0, y: 170, w: 100, h: 50 } },
+    ], 140)).toEqual([{ id: 'b', x: 0, y: 84 }])
   })
 })

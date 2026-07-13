@@ -24,6 +24,50 @@ test.beforeEach(async ({ request }) => {
   projectId = await resetProject(request)
 })
 
+test('comments reserve a 24px gap before the next card', async ({ page, request }) => {
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  for (let i = 0; i < 2; i++) {
+    await page.getByTestId('new-prose').click()
+    await page.keyboard.press('Escape')
+  }
+  await expect.poll(async () => (await serverCardIds(request, projectId)).length).toBe(2)
+  const [firstCardId, secondCardId] = await serverCardIds(request, projectId)
+
+  await request.post(`${BASE}/projects/${projectId}/changeset`, {
+    data: {
+      id: `layout-comments-${Date.now()}`,
+      author: 'claude',
+      ops: [
+        {
+          kind: 'add_comment', cardId: firstCardId,
+          comment: {
+            type: 'structure',
+            text: 'This comment deliberately adds enough detail to occupy multiple lines beneath the first card and expose its real layout footprint.',
+          },
+        },
+        {
+          kind: 'add_comment', cardId: firstCardId,
+          comment: {
+            type: 'needs-evidence',
+            text: 'A second annotation makes the hidden overflow footprint taller than the nominal card body.',
+          },
+        },
+      ],
+    },
+  })
+
+  const comments = page.locator(`[data-shape-id="${firstCardId}"] .elves-comments`)
+  const nextCard = page.locator(`[data-shape-id="${secondCardId}"] .elves-card`)
+  await expect(comments).toBeVisible()
+  await expect.poll(async () => {
+    const commentsBox = await comments.boundingBox()
+    const nextCardBox = await nextCard.boundingBox()
+    if (!commentsBox || !nextCardBox) return null
+    return Math.round(nextCardBox.y - (commentsBox.y + commentsBox.height))
+  }).toBe(24)
+})
+
 test("Claude's injected comment renders on the card and is one Ctrl-Z away from gone", async ({ page, request }) => {
   await addCardAndComment(page, request, { type: 'needs-evidence', text: 'no source yet' })
 

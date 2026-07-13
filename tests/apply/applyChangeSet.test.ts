@@ -73,6 +73,20 @@ describe('applyChangeSet affected-id contract', () => {
     ]))).toEqual([])
   })
 
+  test('add_comment reserves its footprint and reflows the downstream card', () => {
+    const ed = fakeEditor([
+      noteCard('card:a', { commentH: 0 }),
+      { ...noteCard('card:b', { commentH: 0 }), y: 84 },
+    ])
+
+    expect(applyChangeSet(ed as unknown as Editor, cs([
+      { kind: 'add_comment', cardId: 'card:a', comment: { type: null, text: 'short' } },
+    ]))).toEqual(['card:a', 'card:b'])
+
+    expect((ed._shapes.get('card:a') as any).props.commentH).toBe(42)
+    expect(ed._shapes.get('card:b')).toMatchObject({ y: 126 })
+  })
+
   test('merge_notes → the visible representative only', () => {
     const ed = fakeEditor([noteCard('card:a'), noteCard('card:b'), noteCard('card:c')])
     expect(applyChangeSet(ed as unknown as Editor, cs([

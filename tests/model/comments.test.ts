@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'vitest'
-import { makeComment, addComment, resolveComment, visibleComments } from '../../src/model/comments'
+import {
+  makeComment,
+  addComment,
+  resolveComment,
+  visibleComments,
+  estimateCommentHeight,
+} from '../../src/model/comments'
 
 describe('comment helpers', () => {
   test('makeComment defaults to freeform, unresolved, claude-authored, no review, and unsummarized', () => {
@@ -40,5 +46,18 @@ describe('comment helpers', () => {
     const a = { ...makeComment('c1', 'a'), resolved: true }
     const b = makeComment('c2', 'b')
     expect(visibleComments([a, b])).toEqual([b])
+  })
+
+  test('estimateCommentHeight ignores resolved comments', () => {
+    expect(estimateCommentHeight([
+      { ...makeComment('c1', 'gone'), resolved: true },
+    ], 370)).toBe(0)
+  })
+
+  test('estimateCommentHeight reserves text, type-label, stack gap, and top gutter', () => {
+    expect(estimateCommentHeight([
+      makeComment('c1', 'short'),
+      makeComment('c2', 'typed', 'structure'),
+    ], 370)).toBe(107)
   })
 })
