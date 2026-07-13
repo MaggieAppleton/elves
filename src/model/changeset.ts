@@ -60,9 +60,30 @@ function isStringOrNull(v: unknown): boolean {
   return v === null || typeof v === 'string'
 }
 
+function isFiniteNumber(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v)
+}
+
+const PROTOTYPE_LIKE_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
+
+function hasPrototypeLikeKey(value: unknown): boolean {
+  const pending: unknown[] = [value]
+  const seen = new WeakSet<object>()
+  while (pending.length > 0) {
+    const current = pending.pop()
+    if (typeof current !== 'object' || current === null || seen.has(current)) continue
+    seen.add(current)
+    for (const key of Object.keys(current)) {
+      if (PROTOTYPE_LIKE_KEYS.has(key)) return true
+      pending.push((current as Record<string, unknown>)[key])
+    }
+  }
+  return false
+}
+
 /** Structural validation for a Reference carried by a create_reference op. */
 export function isReference(v: unknown): v is Reference {
-  if (typeof v !== 'object' || v === null) return false
+  if (typeof v !== 'object' || v === null || hasPrototypeLikeKey(v)) return false
   const r = v as Record<string, unknown>
   return (
     typeof r.url === 'string' &&
@@ -70,7 +91,7 @@ export function isReference(v: unknown): v is Reference {
     isStringOrNull(r.title) &&
     Array.isArray(r.authors) && r.authors.every((a) => typeof a === 'string') &&
     isStringOrNull(r.siteName) &&
-    (r.year === null || typeof r.year === 'number') &&
+    (r.year === null || isFiniteNumber(r.year)) &&
     isStringOrNull(r.venue) &&
     isStringOrNull(r.description) &&
     isStringOrNull(r.faviconAssetId) &&
@@ -114,17 +135,17 @@ function isOp(v: unknown): v is Op {
     case 'move_cards':
       return Array.isArray(op.moves) && op.moves.every((m) => {
         const mm = m as Record<string, unknown>
-        return typeof mm.cardId === 'string' && typeof mm.x === 'number' && typeof mm.y === 'number'
+        return typeof mm.cardId === 'string' && isFiniteNumber(mm.x) && isFiniteNumber(mm.y)
       })
     case 'create_note_card':
-      return typeof op.text === 'string' && typeof op.x === 'number' && typeof op.y === 'number'
+      return typeof op.text === 'string' && isFiniteNumber(op.x) && isFiniteNumber(op.y)
     case 'create_reference':
-      return isReference(op.reference) && typeof op.x === 'number' && typeof op.y === 'number'
+      return isReference(op.reference) && isFiniteNumber(op.x) && isFiniteNumber(op.y)
     case 'create_section':
-      return typeof op.text === 'string' && typeof op.x === 'number' && typeof op.y === 'number'
+      return typeof op.text === 'string' && isFiniteNumber(op.x) && isFiniteNumber(op.y)
     case 'create_figure_card':
       return typeof op.title === 'string' && typeof op.description === 'string' &&
-        typeof op.x === 'number' && typeof op.y === 'number'
+        isFiniteNumber(op.x) && isFiniteNumber(op.y)
     case 'edit_card':
       return typeof op.cardId === 'string' &&
         (op.text === undefined || typeof op.text === 'string') &&
@@ -134,12 +155,12 @@ function isOp(v: unknown): v is Op {
     case 'move_sections':
       return Array.isArray(op.moves) && op.moves.every((m) => {
         const mm = m as Record<string, unknown>
-        return typeof mm.sectionId === 'string' && typeof mm.x === 'number' && typeof mm.y === 'number'
+        return typeof mm.sectionId === 'string' && isFiniteNumber(mm.x) && isFiniteNumber(mm.y)
       })
     case 'edit_section_text':
       return typeof op.sectionId === 'string' && typeof op.text === 'string'
     case 'create_question':
-      return typeof op.text === 'string' && typeof op.x === 'number' && typeof op.y === 'number'
+      return typeof op.text === 'string' && isFiniteNumber(op.x) && isFiniteNumber(op.y)
     case 'group_cards':
       return Array.isArray(op.cardIds) && op.cardIds.length >= 2 &&
         op.cardIds.every((id) => typeof id === 'string')
@@ -163,7 +184,7 @@ function isOp(v: unknown): v is Op {
 }
 
 export function isChangeSet(value: unknown): value is ChangeSet {
-  if (typeof value !== 'object' || value === null) return false
+  if (typeof value !== 'object' || value === null || hasPrototypeLikeKey(value)) return false
   const cs = value as Record<string, unknown>
   return typeof cs.id === 'string' && typeof cs.author === 'string' && cs.author.length > 0 &&
     Array.isArray(cs.ops) && cs.ops.every(isOp)
