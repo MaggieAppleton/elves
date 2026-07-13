@@ -43,10 +43,10 @@ test('dismissing a question hides it (recoverable in-file, but gone from the can
 
   // The dismiss control opts into pointer events even though the shape body
   // doesn't, so it's directly clickable (revealed on hover/selection in the app).
-  await question.getByRole('button', { name: 'Dismiss question' }).click()
+  await question.getByRole('button', { name: 'Dismiss question: Why should a novice care?' }).click()
 
   // Dismissed = hidden from render and hit-testing.
-  await expect(page.locator('.elves-question')).toHaveCount(0)
+  await expect(question).toHaveCount(0)
 
   // Recoverable, not deleted: the dismissed question persists on disk (via the
   // debounced save), so read_map still returns it — dismissed. Poll to let the
@@ -54,7 +54,23 @@ test('dismissing a question hides it (recoverable in-file, but gone from the can
   await expect
     .poll(async () => {
       const map = await (await request.get(`${BASE}/projects/${projectId}/map`)).json()
-      return map.questions
+      return map.questions.find((entry: { text: string }) => entry.text === 'Why should a novice care?')
     })
-    .toEqual([expect.objectContaining({ text: 'Why should a novice care?', dismissed: true })])
+    .toEqual(expect.objectContaining({ text: 'Why should a novice care?', dismissed: true }))
+})
+
+test('duplicate questions have contextual dismiss controls', async ({ page, request }) => {
+  await canvasReady(page, request)
+
+  await createQuestionTool(BASE, projectId, { text: 'Question alpha?', x: 400, y: 200 })
+  await createQuestionTool(BASE, projectId, { text: 'Question beta?', x: 400, y: 360 })
+
+  const dismissAlpha = page.getByRole('button', { name: 'Dismiss question: Question alpha?' })
+  const dismissBeta = page.getByRole('button', { name: 'Dismiss question: Question beta?' })
+  await expect(dismissAlpha).toHaveCount(1)
+  await expect(dismissBeta).toHaveCount(1)
+
+  await dismissAlpha.click()
+  await expect(dismissAlpha).toHaveCount(0)
+  await expect(dismissBeta).toHaveCount(1)
 })

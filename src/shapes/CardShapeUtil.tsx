@@ -741,7 +741,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                     className="elves-comment__resolve"
                     data-testid="comment-resolve"
                     title="Resolve"
-                    aria-label="Resolve comment"
+                    aria-label={`Resolve comment: ${c.text}`}
                     onClick={() =>
                       this.editor.updateShape<CardShape>({
                         id: shape.id, type: 'card',

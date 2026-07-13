@@ -191,6 +191,9 @@ export function ReviewPanel({ projectId, editor, reviews, onSummon, onDismiss, o
                 const p = PERSONALITIES[r.personality]
                 const agent = agentInfo(r.agent)
                 const tally = r.status === 'done' ? (tallies.get(r.id) ?? null) : null
+                const actionContext = r.focus
+                  ? r.focus
+                  : `requested ${r.requestedAt.replace('T', ' ').replace('Z', ' UTC')}`
                 return (
                   <div
                     key={r.id}
@@ -246,8 +249,8 @@ export function ReviewPanel({ projectId, editor, reviews, onSummon, onDismiss, o
                         title={r.status === 'done' ? 'Clear from panel' : 'Cancel this pass'}
                         aria-label={
                           r.status === 'done'
-                            ? `Clear ${p.name} review from panel`
-                            : `Cancel ${p.name} review`
+                            ? `Clear ${p.name} review from panel: ${actionContext}`
+                            : `Cancel ${p.name} review: ${actionContext}`
                         }
                         onClick={() => onDismiss(r.id)}
                       >

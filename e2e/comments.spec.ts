@@ -38,9 +38,23 @@ test("Claude's injected comment renders on the card and is one Ctrl-Z away from 
 
 test('a freeform comment can be resolved away', async ({ page, request }) => {
   await addCardAndComment(page, request, { type: null, text: 'freeform note' })
+  const [cardId] = await serverCardIds(request, projectId)
+  await request.post(`${BASE}/projects/${projectId}/changeset`, {
+    data: {
+      id: `cs-${Date.now()}-second`,
+      author: 'claude',
+      ops: [{ kind: 'add_comment', cardId, comment: { type: null, text: 'second note' } }],
+    },
+  })
 
   const comment = page.locator('.elves-comment')
+  await expect(comment).toHaveCount(2)
+  const resolveFirst = page.getByRole('button', { name: 'Resolve comment: freeform note' })
+  const resolveSecond = page.getByRole('button', { name: 'Resolve comment: second note' })
+  await expect(resolveFirst).toHaveCount(1)
+  await expect(resolveSecond).toHaveCount(1)
+  await resolveFirst.click()
   await expect(comment).toHaveCount(1)
-  await comment.getByRole('button', { name: 'Resolve comment' }).click()
+  await resolveSecond.click()
   await expect(page.locator('.elves-comment')).toHaveCount(0)
 })

@@ -34,6 +34,72 @@ test.beforeEach(async ({ request }) => {
 // stand-in that plays the review over the same HTTP surface the elves MCP uses.
 // These tests exercise the real spawn → claim → comment → verdict pipeline, so
 // they use generous polls rather than instant assertions.
+test('duplicate reviewer passes have contextual clear controls', async ({ page, request }) => {
+  await openCanvas(page)
+
+  await page.getByTestId('review-button').click()
+  await page.getByTestId('review-focus').fill('just the opening')
+  await page.getByTestId('review-summon-devils-advocate').click()
+  const passes = page.getByTestId('review-pass-devils-advocate')
+  await expect.poll(async () => passes.first().getAttribute('data-status'), {
+    timeout: 20000,
+  }).toBe('done')
+
+  await page.getByTestId('review-focus').fill('just the ending')
+  await page.getByTestId('review-summon-devils-advocate').click()
+
+  // Both passes show up as done, each with a distinct action in the page-wide
+  // control list a screen reader exposes.
+  await expect(passes).toHaveCount(2)
+  await expect.poll(async () => passes.evaluateAll(
+    (rows) => rows.map((row) => row.getAttribute('data-status')),
+  ), { timeout: 20000 }).toEqual(['done', 'done'])
+  const clearOpening = page.getByRole('button', {
+    name: "Clear Devil's Advocate review from panel: just the opening",
+  })
+  const clearEnding = page.getByRole('button', {
+    name: "Clear Devil's Advocate review from panel: just the ending",
+  })
+  await expect(clearOpening).toHaveCount(1)
+  await expect(clearEnding).toHaveCount(1)
+
+  // And on the server, where the pass history remains distinct.
+  const { reviews } = await (await request.get(`${BASE}/projects/${projectId}/reviews`)).json()
+  const done = reviews.filter((r: any) => r.status === 'done')
+  expect(done).toHaveLength(2)
+  expect(done.every((r: any) => r.personality === 'devils-advocate')).toBe(true)
+  expect(done.map((r: any) => r.focus).sort()).toEqual(['just the ending', 'just the opening'])
+
+  await clearOpening.click()
+  await expect(clearOpening).toHaveCount(0)
+  await expect(clearEnding).toHaveCount(1)
+})
+
+test('same-personality passes without focus use distinct requested times', async ({ page }) => {
+  await openCanvas(page)
+  await page.getByTestId('review-button').click()
+  await page.getByTestId('review-summon-trimmer').click()
+  const passes = page.getByTestId('review-pass-trimmer')
+  await expect.poll(async () => passes.first().getAttribute('data-status'), {
+    timeout: 20000,
+  }).toBe('done')
+  await page.waitForTimeout(5)
+  await page.getByTestId('review-summon-trimmer').click()
+  await expect(passes).toHaveCount(2)
+  await expect.poll(async () => passes.evaluateAll(
+    (rows) => rows.map((row) => row.getAttribute('data-status')),
+  ), { timeout: 20000 }).toEqual(['done', 'done'])
+
+  const clearButtons = page.getByRole('button', {
+    name: /^Clear The Trimmer review from panel: requested /,
+  })
+  await expect(clearButtons).toHaveCount(2)
+  const labels = await clearButtons.evaluateAll((buttons) =>
+    buttons.map((button) => button.getAttribute('aria-label')),
+  )
+  expect(new Set(labels).size).toBe(2)
+})
+
 test('summoning runs a full pass in-app', async ({ page, request }) => {
   await openCanvas(page)
   await page.getByTestId('new-prose').click()
@@ -72,6 +138,12 @@ test('summoning runs a full pass in-app', async ({ page, request }) => {
   const pin = page.locator('.elves-comment[data-type="tighten"]')
   await expect(pin).toBeVisible()
   await expect(pin).toContainText('stub note')
+
+  await expect(
+    page.getByRole('button', {
+      name: /^Clear The Trimmer review from panel: requested /,
+    }),
+  ).toBeVisible()
 
   // The old "wait for an external agent" hint is gone entirely — the app runs
   // the pass itself now.

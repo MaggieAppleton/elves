@@ -154,7 +154,7 @@ export class QuestionShapeUtil extends ShapeUtil<QuestionShape> {
                 className="elves-question__dismiss"
                 data-testid="question-dismiss"
                 title="Dismiss — I've answered this (or it's not useful)"
-                aria-label="Dismiss question"
+                aria-label={`Dismiss question: ${shape.props.text}`}
                 onPointerDown={stopEventPropagation}
                 onClick={(e) => {
                   stopEventPropagation(e)
