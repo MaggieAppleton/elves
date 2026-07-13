@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { Project } from '../client/persistence'
 
 interface Props {
@@ -28,15 +28,56 @@ function CheckIcon() {
 export function ProjectSwitcher({ projects, currentId, onSwitch, onCreate, onRename }: Props) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const itemRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const initialFocusIndexRef = useRef(0)
   const current = projects.find((p) => p.id === currentId)
+  const itemCount = projects.length + 1 + (current ? 1 : 0)
+
+  const openAt = (index: number) => {
+    initialFocusIndexRef.current = index
+    setOpen(true)
+  }
+
+  const closeAndFocusTrigger = () => {
+    setOpen(false)
+    triggerRef.current?.focus()
+  }
+
+  const activate = (action: () => void) => {
+    closeAndFocusTrigger()
+    action()
+  }
+
+  const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Tab') {
+      setOpen(false)
+      return
+    }
+
+    const currentIndex = itemRefs.current.findIndex((item) => item === document.activeElement)
+    let nextIndex: number | null = null
+    if (event.key === 'ArrowDown') nextIndex = (currentIndex + 1) % itemCount
+    if (event.key === 'ArrowUp') nextIndex = (currentIndex - 1 + itemCount) % itemCount
+    if (event.key === 'Home') nextIndex = 0
+    if (event.key === 'End') nextIndex = itemCount - 1
+    if (nextIndex === null) return
+
+    event.preventDefault()
+    itemRefs.current[nextIndex]?.focus()
+  }
 
   useEffect(() => {
     if (!open) return
+    itemRefs.current[initialFocusIndexRef.current]?.focus()
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
+      if (e.key === 'Escape') {
+        setOpen(false)
+        triggerRef.current?.focus()
+      }
     }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
@@ -49,28 +90,38 @@ export function ProjectSwitcher({ projects, currentId, onSwitch, onCreate, onRen
   return (
     <div className="elves-switcher" ref={ref}>
       <button
+        ref={triggerRef}
         className="elves-switcher__button"
         data-testid="project-switcher"
         aria-haspopup="menu"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          if (open) setOpen(false)
+          else openAt(0)
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+          event.preventDefault()
+          openAt(event.key === 'ArrowDown' ? 0 : itemCount - 1)
+        }}
       >
         <span className="elves-switcher__name">{current?.name ?? 'Select project'}</span>
         <CaretIcon />
       </button>
       {open && (
-        <div className="elves-switcher__menu" role="menu">
-          {projects.map((p) => (
+        <div className="elves-switcher__menu" role="menu" onKeyDown={handleMenuKeyDown}>
+          {projects.map((p, index) => (
             <button
               key={p.id}
+              ref={(node) => {
+                itemRefs.current[index] = node
+              }}
               role="menuitemradio"
               aria-checked={p.id === currentId}
+              tabIndex={-1}
               className="elves-switcher__item"
               data-testid={`project-option-${p.id}`}
-              onClick={() => {
-                setOpen(false)
-                onSwitch(p.id)
-              }}
+              onClick={() => activate(() => onSwitch(p.id))}
             >
               <span className="elves-switcher__check">{p.id === currentId ? <CheckIcon /> : null}</span>
               <span className="elves-switcher__item-label">{p.name}</span>
@@ -78,26 +129,28 @@ export function ProjectSwitcher({ projects, currentId, onSwitch, onCreate, onRen
           ))}
           <div className="elves-switcher__divider" role="separator" />
           <button
+            ref={(node) => {
+              itemRefs.current[projects.length] = node
+            }}
             role="menuitem"
+            tabIndex={-1}
             className="elves-switcher__item elves-switcher__item--action"
             data-testid="project-new"
-            onClick={() => {
-              setOpen(false)
-              onCreate()
-            }}
+            onClick={() => activate(onCreate)}
           >
             <span className="elves-switcher__check" />
             <span className="elves-switcher__item-label">New project…</span>
           </button>
           {current && (
             <button
+              ref={(node) => {
+                itemRefs.current[projects.length + 1] = node
+              }}
               role="menuitem"
+              tabIndex={-1}
               className="elves-switcher__item elves-switcher__item--action"
               data-testid="project-rename"
-              onClick={() => {
-                setOpen(false)
-                onRename()
-              }}
+              onClick={() => activate(onRename)}
             >
               <span className="elves-switcher__check" />
               <span className="elves-switcher__item-label">Rename “{current.name}”…</span>
