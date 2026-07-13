@@ -89,4 +89,11 @@ describe('reflowVerticalLane', () => {
       { id: 'far', rect: { x: 0, y: 200, w: 100, h: 50 } },
     ], 140)).toEqual([])
   })
+
+  test('compacts small server measurement slack with the changed stack', () => {
+    expect(reflowVerticalLane('a', [
+      { id: 'a', rect: { x: 0, y: 0, w: 100, h: 60 } },
+      { id: 'b', rect: { x: 0, y: 170, w: 100, h: 50 } },
+    ], 140)).toEqual([{ id: 'b', x: 0, y: 84 }])
+  })
 })

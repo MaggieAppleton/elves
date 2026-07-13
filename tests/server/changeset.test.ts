@@ -286,6 +286,32 @@ test('applyChangeSetToSnapshot stamps the change-set author onto an added commen
   expect(card.props.comments[0].author).toBe('codex')
 })
 
+test('add_comment reserves its footprint and reflows the downstream card', () => {
+  const snap = {
+    document: {
+      store: {
+        'page:page': { id: 'page:page', typeName: 'page' },
+        'shape:a': {
+          id: 'shape:a', typeName: 'shape', type: 'card', x: 0, y: 0, parentId: 'page:page',
+          props: { w: 370, h: 120, kind: 'prose', comments: [], commentH: 0, mergedInto: null },
+        },
+        'shape:b': {
+          id: 'shape:b', typeName: 'shape', type: 'card', x: 0, y: 144, parentId: 'page:page',
+          props: { w: 370, h: 120, kind: 'prose', comments: [], commentH: 0, mergedInto: null },
+        },
+      },
+    },
+    session: null,
+  } as any
+  const next = applyChangeSetToSnapshot(snap, {
+    id: 'comment', author: 'claude',
+    ops: [{ kind: 'add_comment', cardId: 'shape:a', comment: { type: null, text: 'short' } }],
+  }) as any
+
+  expect(next.document.store['shape:a'].props.commentH).toBe(42)
+  expect(next.document.store['shape:b']).toMatchObject({ x: 0, y: 186 })
+})
+
 test('applyChangeSetToSnapshot writes a set_comment_summary onto the matching comment only', () => {
   const snap = cardSnapshot('shape:a') as any
   snap.document.store['shape:a'].props.comments = [
