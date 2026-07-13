@@ -1,5 +1,6 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
+import { createServer as createHttpServer, type Server } from 'node:http'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import request from 'supertest'
@@ -69,10 +70,14 @@ vi.mock('../../server/projectLock', async (importOriginal) => {
 })
 
 let dirs: string[] = []
+const servers: Server[] = []
 async function appWithTmp() {
   const d = await fs.mkdtemp(join(tmpdir(), 'elves-api-'))
   dirs.push(d)
-  return createServer(d)
+  const server = createHttpServer(createServer(d))
+  servers.push(server)
+  await new Promise<void>((resolve) => { server.listen(0, '127.0.0.1', resolve) })
+  return server
 }
 
 async function holdProject(dataRoot: string, id: string): Promise<{
@@ -191,6 +196,9 @@ afterEach(async () => {
   await Promise.allSettled([...activeRaceHelpers])
   vi.useRealTimers()
   vi.unstubAllGlobals()
+  await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve, reject) => {
+    server.close((error) => { if (error) reject(error); else resolve() })
+  })))
   await Promise.all(dirs.map((d) => fs.rm(d, { recursive: true, force: true })))
   dirs = []
 })
