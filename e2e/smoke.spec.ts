@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test'
-import { resetProject } from './helpers'
+import { BASE, resetProject } from './helpers'
 
 async function expectInsideViewport(page: Page, locator: Locator): Promise<void> {
   const viewport = page.viewportSize()
@@ -111,4 +111,41 @@ test('topbar keeps its labelled desktop layout above 640px', async ({ page }) =>
   await page.keyboard.press('Escape')
   await page.getByTestId('project-switcher').click()
   await expectInsideViewport(page, page.locator('.elves-switcher__menu'))
+})
+
+test('desktop menus stay contained and scrollable in a short viewport', async ({ page, request }) => {
+  const stamp = Date.now()
+  for (let index = 1; index <= 8; index++) {
+    const response = await request.post(`${BASE}/projects`, {
+      data: { name: `Short viewport ${stamp} project ${index}` },
+    })
+    expect(response.ok()).toBe(true)
+  }
+
+  await page.setViewportSize({ width: 1024, height: 240 })
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  await page.getByTestId('review-button').click()
+  const reviewMenu = page.getByTestId('review-menu')
+  await expectInsideViewport(page, reviewMenu)
+  expect(
+    await reviewMenu.evaluate((menu) => menu.scrollHeight > menu.clientHeight),
+  ).toBe(true)
+  const lastReviewer = page.getByTestId('review-summon-architect')
+  await lastReviewer.scrollIntoViewIfNeeded()
+  await expectInsideViewport(page, lastReviewer)
+  expect(await reviewMenu.evaluate((menu) => menu.scrollTop)).toBeGreaterThan(0)
+  await page.keyboard.press('Escape')
+
+  await page.getByTestId('project-switcher').click()
+  const projectMenu = page.locator('.elves-switcher__menu')
+  await expectInsideViewport(page, projectMenu)
+  expect(
+    await projectMenu.evaluate((menu) => menu.scrollHeight > menu.clientHeight),
+  ).toBe(true)
+  const lastProjectAction = page.getByTestId('project-rename')
+  await lastProjectAction.scrollIntoViewIfNeeded()
+  await expectInsideViewport(page, lastProjectAction)
+  expect(await projectMenu.evaluate((menu) => menu.scrollTop)).toBeGreaterThan(0)
 })

@@ -556,6 +556,9 @@ body {
   right: 0;
   min-width: 220px;
   max-width: 300px;
+  max-height: calc(100dvh - 56px);
+  overflow-y: auto;
+  box-sizing: border-box;
   padding: 4px;
   border-radius: 11px;
   background: var(--elves-surface);
@@ -633,8 +636,6 @@ body {
     width: min(300px, calc(100vw - 16px));
     min-width: 0;
     max-height: calc(100dvh - 130px);
-    overflow-y: auto;
-    box-sizing: border-box;
   }
 }
 

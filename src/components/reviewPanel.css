@@ -63,6 +63,9 @@
   top: calc(100% + 6px);
   right: 0;
   width: 300px;
+  max-height: calc(100dvh - 56px);
+  overflow-y: auto;
+  box-sizing: border-box;
   padding: 6px;
   border-radius: 11px;
   background: var(--elves-surface);
@@ -293,7 +296,5 @@
     left: 8px;
     width: auto;
     max-height: calc(100dvh - 130px);
-    overflow-y: auto;
-    box-sizing: border-box;
   }
 }
