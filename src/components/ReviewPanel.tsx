@@ -252,6 +252,8 @@ export function ReviewPanel({ projectId, editor, reviews, onSummon, onDismiss, o
                         aria-label={
                           r.status === 'done'
                             ? `Clear ${p.name} review from panel: ${actionContext}`
+                            : r.status === 'failed'
+                              ? `Clear failed ${p.name} review from panel: ${actionContext}`
                             : `Cancel ${p.name} review: ${actionContext}`
                         }
                         onClick={() => onDismiss(r.id)}
