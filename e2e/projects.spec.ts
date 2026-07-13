@@ -66,6 +66,60 @@ test('create, switch between, and rename projects from the toolbar', async ({ pa
   await expect(page.locator('.elves-card--prose').first()).toBeVisible({ timeout: 15000 })
 })
 
+test('project switcher follows the menu keyboard and focus model', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  const trigger = page.getByTestId('project-switcher')
+  const menu = page.getByRole('menu')
+  const triggerName = await trigger.locator('.elves-switcher__name').innerText()
+  const firstItem = menu.getByRole('menuitemradio').first()
+  const lastItem = page.getByTestId('project-rename')
+
+  await trigger.focus()
+  await page.keyboard.press('Enter')
+  const namedMenu = page.getByRole('menu', { name: triggerName, exact: true })
+  await expect(namedMenu).toHaveAttribute('id', 'project-switcher-menu')
+  await expect(trigger).toHaveAttribute('aria-controls', 'project-switcher-menu')
+  await expect(firstItem).toBeFocused()
+
+  await page.keyboard.press('End')
+  await expect(lastItem).toBeFocused()
+  await page.keyboard.press('ArrowDown')
+  await expect(firstItem).toBeFocused()
+  await page.keyboard.press('ArrowUp')
+  await expect(lastItem).toBeFocused()
+  await page.keyboard.press('Home')
+  await expect(firstItem).toBeFocused()
+
+  await page.keyboard.press('Escape')
+  await expect(menu).toHaveCount(0)
+  await expect(trigger).toBeFocused()
+
+  await page.keyboard.press('ArrowUp')
+  await expect(lastItem).toBeFocused()
+  await page.keyboard.press('Escape')
+
+  await page.keyboard.press('ArrowDown')
+  await expect(firstItem).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(menu).toHaveCount(0)
+  await expect(trigger).not.toBeFocused()
+
+  await trigger.focus()
+  await page.keyboard.press('ArrowDown')
+  await expect(firstItem).toBeFocused()
+  await page.keyboard.press('Shift+Tab')
+  await expect(menu).toHaveCount(0)
+  await expect(trigger).toBeFocused()
+
+  await page.keyboard.press('ArrowUp')
+  await expect(lastItem).toBeFocused()
+  page.once('dialog', (dialog) => dialog.dismiss())
+  await page.keyboard.press('Enter')
+  await expect(trigger).toBeFocused()
+})
+
 test('a stale project load cannot reclaim the active project lifecycle', async ({ page, request }) => {
   const stamp = Date.now()
   const alpha = `Slow Alpha ${stamp}`
