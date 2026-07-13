@@ -129,11 +129,18 @@ test('legacy migration waits for the project namespace lock', async () => {
     await gate
   })
   await started
-  namespaceEntries.reset()
-  const migration = migrateLegacyCanvas(d, '2026-07-02T10:00:00.000Z')
-  await namespaceEntries.waitFor(d)
-  const projectsExistWhileLocked = await fs.access(join(d, 'projects')).then(() => true, () => false)
-  release()
+  let migration!: ReturnType<typeof migrateLegacyCanvas>
+  let projectsExistWhileLocked = false
+  try {
+    namespaceEntries.reset()
+    migration = migrateLegacyCanvas(d, '2026-07-02T10:00:00.000Z')
+    void migration.catch(() => undefined)
+    await namespaceEntries.waitFor(d)
+    projectsExistWhileLocked = await fs.access(join(d, 'projects')).then(() => true, () => false)
+  } finally {
+    release()
+    await Promise.allSettled([hold, migration])
+  }
   await Promise.all([hold, migration])
   expect(projectsExistWhileLocked).toBe(false)
   await expect(fs.readFile(

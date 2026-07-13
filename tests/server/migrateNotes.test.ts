@@ -139,16 +139,24 @@ test('note migration queued before rename transforms the canvas that is moved', 
   const d = await root()
   await seedSourceCanvas(d)
   const hold = await holdProject(d, 'essay')
-  lockProbe.reset()
-  const migration = migrateSourceCardsToNotes(d)
-  await lockProbe.waitFor((entries) => entries.some(
-    (entry) => entry.kind === 'project' && entry.dataRoot === d && entry.ids[0] === 'essay',
-  ))
-  const rename = renameProject(d, 'essay', 'Final')
-  await lockProbe.waitFor((entries) => entries.some(
-    (entry) => entry.kind === 'multi' && entry.dataRoot === d && entry.ids.includes('essay'),
-  ))
-  hold.release()
+  let migration!: ReturnType<typeof migrateSourceCardsToNotes>
+  let rename!: ReturnType<typeof renameProject>
+  try {
+    lockProbe.reset()
+    migration = migrateSourceCardsToNotes(d)
+    void migration.catch(() => undefined)
+    await lockProbe.waitFor((entries) => entries.some(
+      (entry) => entry.kind === 'project' && entry.dataRoot === d && entry.ids[0] === 'essay',
+    ))
+    rename = renameProject(d, 'essay', 'Final')
+    void rename.catch(() => undefined)
+    await lockProbe.waitFor((entries) => entries.some(
+      (entry) => entry.kind === 'multi' && entry.dataRoot === d && entry.ids.includes('essay'),
+    ))
+  } finally {
+    hold.release()
+    await Promise.allSettled([hold.done, migration, rename])
+  }
   await Promise.all([hold.done, migration, rename])
   const migrated = JSON.parse(await fs.readFile(canvasPathFor(d, 'final')!, 'utf8'))
   expect(migrated.document.store['shape:a'].props).toMatchObject({
@@ -162,16 +170,24 @@ test('note migration queued after rename skips the stale id without recreating i
   const d = await root()
   await seedSourceCanvas(d)
   const hold = await holdProject(d, 'essay')
-  lockProbe.reset()
-  const rename = renameProject(d, 'essay', 'Final')
-  await lockProbe.waitFor((entries) => entries.some(
-    (entry) => entry.kind === 'multi' && entry.dataRoot === d && entry.ids.includes('essay'),
-  ))
-  const staleMigration = migrateSourceCardsToNotes(d)
-  await lockProbe.waitFor((entries) => entries.some(
-    (entry) => entry.kind === 'project' && entry.dataRoot === d && entry.ids[0] === 'essay',
-  ))
-  hold.release()
+  let rename!: ReturnType<typeof renameProject>
+  let staleMigration!: ReturnType<typeof migrateSourceCardsToNotes>
+  try {
+    lockProbe.reset()
+    rename = renameProject(d, 'essay', 'Final')
+    void rename.catch(() => undefined)
+    await lockProbe.waitFor((entries) => entries.some(
+      (entry) => entry.kind === 'multi' && entry.dataRoot === d && entry.ids.includes('essay'),
+    ))
+    staleMigration = migrateSourceCardsToNotes(d)
+    void staleMigration.catch(() => undefined)
+    await lockProbe.waitFor((entries) => entries.some(
+      (entry) => entry.kind === 'project' && entry.dataRoot === d && entry.ids[0] === 'essay',
+    ))
+  } finally {
+    hold.release()
+    await Promise.allSettled([hold.done, rename, staleMigration])
+  }
   await Promise.all([hold.done, rename, staleMigration])
   await expect(fs.access(join(d, 'projects', 'essay'))).rejects.toMatchObject({ code: 'ENOENT' })
   const finalPath = canvasPathFor(d, 'final')!
