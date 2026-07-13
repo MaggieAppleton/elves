@@ -148,3 +148,23 @@ test('dispose suppresses callbacks but keeps observing the stream until it ends'
 
   expect(events).toEqual([])
 })
+
+test('dispose before the run response still observes the eventual stream until it ends', async () => {
+  const response = deferred<Response>()
+  const stream = openSseResponse()
+  vi.stubGlobal('fetch', vi.fn(async () => response.promise))
+  const events: AgentEvent[] = []
+  const handle = runAgent({ prompt: 'x', projectId: 'p', hasSelection: false }, (e) => events.push(e))
+  let settled = false
+  void handle.done.then(() => { settled = true })
+
+  handle.dispose()
+  response.resolve(stream.response)
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+  expect(settled).toBe(false)
+  expect(events).toEqual([])
+
+  stream.close()
+  await handle.done
+})

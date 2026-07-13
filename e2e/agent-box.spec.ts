@@ -14,6 +14,8 @@ async function installAgentStream(page: import('@playwright/test').Page) {
     const encoder = new TextEncoder()
     let controller: ReadableStreamDefaultController<Uint8Array> | undefined
     let cancelStatus = 200
+    let releaseRunResponse: (() => void) | undefined
+    let runResponseGate: Promise<void> | undefined
     const cancelBodies: Array<{ runId: string }> = []
     ;(window as any).__agentTest = {
       push: (event: unknown) => controller?.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`)),
@@ -22,11 +24,16 @@ async function installAgentStream(page: import('@playwright/test').Page) {
         controller?.close()
       },
       setCancelStatus: (status: number) => { cancelStatus = status },
+      holdRunResponse: () => {
+        runResponseGate = new Promise<void>((resolve) => { releaseRunResponse = resolve })
+      },
+      releaseRunResponse: () => releaseRunResponse?.(),
       cancelBodies,
     }
     globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.endsWith('/agent/run')) {
+        await runResponseGate
         return new Response(new ReadableStream<Uint8Array>({ start(c) { controller = c } }), {
           headers: { 'content-type': 'text/event-stream' },
         })
@@ -292,6 +299,27 @@ test('clear and reopen stays locked to the live run until its stream ends', asyn
     { runId: expect.stringMatching(/^[0-9a-f-]{36}$/) },
   ])
 
+  await page.evaluate(() => (window as any).__agentTest.end())
+  await expect(page.getByTestId('agent-send')).toBeVisible()
+})
+
+test('clear before the run response still stays locked until the eventual stream ends', async ({ page }) => {
+  await installAgentStream(page)
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await page.evaluate(() => (window as any).__agentTest.holdRunResponse())
+  await page.keyboard.press('/')
+  await page.getByTestId('agent-input').fill('start slowly')
+  await page.getByTestId('agent-send').click()
+
+  await page.getByTestId('agent-clear').click()
+  await page.keyboard.press('/')
+  await expect(page.getByTestId('agent-cancel')).toHaveText('Cancelling…')
+  await expect(page.getByTestId('agent-input')).toBeDisabled()
+
+  await page.evaluate(() => (window as any).__agentTest.releaseRunResponse())
+  await page.evaluate(() => (window as any).__agentTest.push({ type: 'started' }))
+  await expect(page.getByTestId('agent-cancel')).toHaveText('Cancelling…')
   await page.evaluate(() => (window as any).__agentTest.end())
   await expect(page.getByTestId('agent-send')).toBeVisible()
 })

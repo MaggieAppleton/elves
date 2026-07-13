@@ -48,8 +48,6 @@ export function runAgent(input: AgentRunInput, onEvent: (e: AgentEvent) => void)
       if (!disposed) emit({ type: 'error', message: 'could not reach the server — is it running?' })
       return
     }
-    if (disposed) return
-
     if (!res.ok || !res.body) {
       // The server refused before streaming (400/409/501) — it answers JSON here.
       let message = `the run could not start (${res.status})`
