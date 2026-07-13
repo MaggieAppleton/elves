@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'vitest'
+import { afterEach, expect, test, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -6,16 +6,25 @@ import { migrateSourceCardsToNotes } from '../../server/migrateNotes'
 import { createProject, canvasPathFor } from '../../server/projects'
 import { withProjectLock } from '../../server/projectLock'
 
+const projectLockCalls = vi.hoisted(() => [] as Array<{ dataRoot: string; id: string }>)
+
+vi.mock('../../server/projectLock', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../server/projectLock')>()
+  return {
+    ...actual,
+    withProjectLock: <T>(dataRoot: string, id: string, task: () => Promise<T>): Promise<T> => {
+      projectLockCalls.push({ dataRoot, id })
+      return actual.withProjectLock(dataRoot, id, task)
+    },
+  }
+})
+
 const dirs: string[] = []
 
 async function root(): Promise<string> {
   const d = await fs.mkdtemp(join(tmpdir(), 'elves-notes-'))
   dirs.push(d)
   return d
-}
-
-async function nextEventLoopTurn(): Promise<void> {
-  await new Promise<void>((resolve) => setImmediate(resolve))
 }
 
 async function holdProject(dataRoot: string, id: string): Promise<{
@@ -57,12 +66,18 @@ test('note migration waits for the project lock and transforms the current canva
   const d = await root()
   const path = await seedSourceCanvas(d)
   const hold = await holdProject(d, 'essay')
+  projectLockCalls.length = 0
   let settled = false
   const migration = migrateSourceCardsToNotes(d).finally(() => { settled = true })
-  for (let turn = 0; turn < 8; turn++) await nextEventLoopTurn()
-  expect(settled).toBe(false)
-  hold.release()
-  await Promise.all([hold.done, migration])
+  try {
+    await vi.waitFor(() => {
+      expect(projectLockCalls).toContainEqual({ dataRoot: d, id: 'essay' })
+    })
+    expect(settled).toBe(false)
+  } finally {
+    hold.release()
+    await Promise.all([hold.done, migration])
+  }
   const migrated = JSON.parse(await fs.readFile(path, 'utf8'))
   expect(migrated.document.store['shape:a'].props).toMatchObject({
     kind: 'note',
