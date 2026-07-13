@@ -130,6 +130,30 @@ test('the input grows to fit a multi-line message', async ({ page }) => {
   expect(tall).toBeGreaterThan(short)
 })
 
+test('a long prompt keeps the full agent box usable in a short viewport', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.setViewportSize({ width: 800, height: 220 })
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  await page.keyboard.press('/')
+  const box = page.locator('.elves-agentbox')
+  const header = page.locator('.elves-agentbox__header')
+  const input = page.getByTestId('agent-input')
+  const actions = page.locator('.elves-agentbox__actions')
+  await input.fill(Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join('\n'))
+
+  for (const surface of [box, header, input, actions]) {
+    const bounds = await surface.boundingBox()
+    expect(bounds).not.toBeNull()
+    expect(bounds!.y).toBeGreaterThanOrEqual(0)
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(220)
+  }
+
+  await page.getByTestId('agent-collapse').click()
+  await expect(box).toBeHidden()
+})
+
 test('/ is a literal slash while typing in the box, not a re-trigger', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
