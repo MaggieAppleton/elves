@@ -130,6 +130,60 @@ test('the input grows to fit a multi-line message', async ({ page }) => {
   expect(tall).toBeGreaterThan(short)
 })
 
+test('a transcript and long prompt stay usable inside the agent box in a short viewport', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.setViewportSize({ width: 800, height: 220 })
+  await page.route('**/agent/run', (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body: sse([
+        dataFrame({ type: 'started' }),
+        dataFrame({ type: 'text', text: 'Reading the canvas and checking the argument.' }),
+        dataFrame({ type: 'tool', name: 'read_map', summary: 'Reviewed 4 cards' }),
+        dataFrame({ type: 'done', reply: 'The conclusion needs stronger evidence.' }),
+      ]),
+    }),
+  )
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  await page.keyboard.press('/')
+  const box = page.locator('.elves-agentbox')
+  const header = page.locator('.elves-agentbox__header')
+  const headerActions = page.locator('.elves-agentbox__actions')
+  const transcript = page.getByTestId('agent-transcript')
+  const inputRow = page.locator('.elves-agentbox__inputrow')
+  const input = page.getByTestId('agent-input')
+  const send = page.getByTestId('agent-send')
+  await input.fill('review this canvas')
+  await send.click()
+  await expect(transcript).toContainText('Reading the canvas and checking the argument.')
+
+  await input.fill(Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join('\n'))
+
+  const boxBounds = await box.boundingBox()
+  expect(boxBounds).not.toBeNull()
+  for (const surface of [header, headerActions, transcript, inputRow, input, send]) {
+    const bounds = await surface.boundingBox()
+    expect(bounds, `expected ${await surface.getAttribute('class')} to be laid out`).not.toBeNull()
+    expect(bounds!.x).toBeGreaterThanOrEqual(boxBounds!.x)
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(boxBounds!.x + boxBounds!.width)
+    expect(bounds!.y).toBeGreaterThanOrEqual(boxBounds!.y)
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(boxBounds!.y + boxBounds!.height)
+  }
+  expect((await transcript.boundingBox())!.height).toBeGreaterThanOrEqual(48)
+
+  await input.focus()
+  await page.keyboard.press('End')
+  await page.keyboard.type('!')
+  await expect(input).toHaveValue(/!$/)
+  await expect(send).toBeEnabled()
+
+  await page.getByTestId('agent-collapse').click()
+  await expect(box).toBeHidden()
+})
+
 test('/ is a literal slash while typing in the box, not a re-trigger', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
