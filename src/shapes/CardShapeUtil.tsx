@@ -19,7 +19,8 @@ import { shouldShowGist, gistFontSize } from './summaryView'
 import { mergedMembers, isExpanded, toggleExpanded } from './mergeView'
 import { ReferenceCardFace } from './ReferenceCardFace'
 import { presenceMode } from '../client/presence'
-import { reflowCardLane } from '../client/canvasLayout'
+import { canvasObstacles, reflowCardLane } from '../client/canvasLayout'
+import { CANVAS_GAP, findOverlaySlot } from '../model/layout'
 import './card.css'
 
 export type CardShape = TLBaseShape<'card', {
@@ -396,9 +397,48 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     // App's getShapeVisibility (rendering AND hit-testing), so this component
     // never runs for them — no invisible "ghost" shape. The representative shows
     // them instead: a stack underneath, and a fan-out on demand.
-    const members = mergedMembers(this.editor.getCurrentPageShapes(), shape.id)
+    const pageShapes = this.editor.getCurrentPageShapes()
+    const members = mergedMembers(pageShapes, shape.id)
     const mergedCount = members.length
     const expanded = mergedCount > 0 && isExpanded(shape.id)
+    const fanRef = useRef<HTMLDivElement>(null)
+    const [fanOffset, setFanOffset] = useState({ x: shape.props.w + CANVAS_GAP, y: 0 })
+    const fanLayoutKey = pageShapes
+      .map((candidate) => `${candidate.id}:${candidate.x}:${candidate.y}:${candidate.parentId}`)
+      .join('|')
+    const fanContentKey = members.map((member) => `${member.id}:${member.props.text}`).join('|')
+    useLayoutEffect(() => {
+      if (!expanded) return
+      let cancelled = false
+      const position = () => {
+        if (cancelled || !fanRef.current) return
+        const anchor = this.editor.getShapePageBounds(shape.id)
+        if (!anchor) return
+        const zoom = this.editor.getZoomLevel()
+        const fanBounds = fanRef.current.getBoundingClientRect()
+        const slot = findOverlaySlot(
+          { x: anchor.x, y: anchor.y, w: anchor.w, h: anchor.h },
+          { w: fanBounds.width / zoom, h: fanBounds.height / zoom },
+          canvasObstacles(this.editor, new Set([shape.id])),
+        )
+        const next = { x: slot.x - anchor.x, y: slot.y - anchor.y }
+        setFanOffset((current) =>
+          Math.abs(current.x - next.x) <= 1 && Math.abs(current.y - next.y) <= 1
+            ? current
+            : next,
+        )
+      }
+      position()
+      const observer = typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(position)
+      if (fanRef.current) observer?.observe(fanRef.current)
+      document.fonts?.ready?.then(position)
+      return () => {
+        cancelled = true
+        observer?.disconnect()
+      }
+    }, [this.editor, shape.id, expanded, fanLayoutKey, fanContentKey])
     const { kind, text, noteKind, assetId, reference, figureTitle, figureStatus, draftExcluded } = shape.props
     const isImage = noteKind === 'image' && !!assetId
     const isReference = noteKind === 'reference' && !!reference
@@ -818,8 +858,10 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
               treating it as a drag. */}
           {expanded && (
             <div
+              ref={fanRef}
               className="elves-merge-fan"
               data-testid="merge-fan"
+              style={{ left: fanOffset.x, top: fanOffset.y }}
               onPointerDown={(e) => e.stopPropagation()}
             >
               {members.map((m) => (

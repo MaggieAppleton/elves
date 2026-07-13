@@ -84,3 +84,28 @@ test('duplicate questions have contextual dismiss controls', async ({ page, requ
   await dismissButtons.first().click()
   await expect(dismissButtons).toHaveCount(1)
 })
+
+test('duplicate-position questions keep a 24px visual gap after autosizing', async ({ page, request }) => {
+  await canvasReady(page, request)
+
+  await request.post(`${BASE}/projects/${projectId}/changeset`, {
+    data: {
+      id: `question-layout-${Date.now()}`,
+      author: 'claude',
+      ops: [
+        { kind: 'create_question', text: 'What evidence belongs here?', x: 760, y: 200 },
+        { kind: 'create_question', text: 'Which example makes this concrete?', x: 760, y: 200 },
+      ],
+    },
+  })
+
+  const questions = page.locator('.elves-question')
+  await expect(questions).toHaveCount(2)
+  await expect.poll(async () => {
+    const boxes = (await questions.evaluateAll((elements) => elements.map((element) => {
+      const bounds = element.getBoundingClientRect()
+      return { top: bounds.top, bottom: bounds.bottom }
+    }))).sort((a, b) => a.top - b.top)
+    return Math.round(boxes[1].top - boxes[0].bottom)
+  }).toBe(24)
+})
