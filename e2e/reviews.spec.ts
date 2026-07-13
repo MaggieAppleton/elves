@@ -169,9 +169,11 @@ test('a failing run marks the pass failed, with Retry', async ({ page }) => {
   ).toBe('failed')
 
   await expect(page.getByTestId('review-error')).toBeVisible()
-  await expect(page.getByRole('button', {
+  const clearFailed = page.getByRole('button', {
     name: /^Clear failed Devil's Advocate review from panel: __fail__; requested .+; pass 1 of 1$/,
-  })).toBeVisible()
+  })
+  await expect(clearFailed).toBeVisible()
+  await expect(clearFailed).toHaveAttribute('title', 'Clear from panel')
   const retry = page.getByTestId('review-retry-devils-advocate')
   await expect(retry).toBeVisible()
 

@@ -248,7 +248,11 @@ export function ReviewPanel({ projectId, editor, reviews, onSummon, onDismiss, o
                       <button
                         className="elves-review__dismiss"
                         data-testid={`review-dismiss-${r.personality}`}
-                        title={r.status === 'done' ? 'Clear from panel' : 'Cancel this pass'}
+                        title={
+                          r.status === 'done' || r.status === 'failed'
+                            ? 'Clear from panel'
+                            : 'Cancel this pass'
+                        }
                         aria-label={
                           r.status === 'done'
                             ? `Clear ${p.name} review from panel: ${actionContext}`
