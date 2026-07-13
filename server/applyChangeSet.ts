@@ -8,7 +8,7 @@ import {
   CARD_DEFAULT_W, CARD_DEFAULT_H,
 } from '../src/model/cards'
 import { makeSectionProps } from '../src/model/sections'
-import { makeQuestionProps } from '../src/model/questions'
+import { makeQuestionProps, QUESTION_DEFAULT_H, QUESTION_DEFAULT_W } from '../src/model/questions'
 import { reattribute } from '../src/model/attribution'
 import { resolvePageXY } from './digest'
 import {
@@ -63,11 +63,48 @@ function existingCardItems(
   return items
 }
 
-function existingCardRects(
+function existingQuestionItems(
+  store: StoreRecords,
+  excludedIds: ReadonlySet<string> = new Set(),
+): LayoutItem[] {
+  const items: LayoutItem[] = []
+  for (const shape of Object.values(store) as any[]) {
+    if (
+      shape?.typeName !== 'shape' ||
+      shape.type !== 'question' ||
+      !shape.props ||
+      shape.props.dismissed ||
+      excludedIds.has(shape.id)
+    ) continue
+    const { x, y } = resolvePageXY(store, shape)
+    items.push({
+      id: shape.id,
+      rect: {
+        x,
+        y,
+        w: shape.props.w ?? QUESTION_DEFAULT_W,
+        h: shape.props.h ?? QUESTION_DEFAULT_H,
+      },
+    })
+  }
+  return items
+}
+
+function existingCanvasRects(
   store: StoreRecords,
   excludedIds: ReadonlySet<string> = new Set(),
 ): LayoutRect[] {
-  return existingCardItems(store, excludedIds).map((item) => item.rect)
+  return existingCanvasItems(store, excludedIds).map((item) => item.rect)
+}
+
+function existingCanvasItems(
+  store: StoreRecords,
+  excludedIds: ReadonlySet<string> = new Set(),
+): LayoutItem[] {
+  return [
+    ...existingCardItems(store, excludedIds),
+    ...existingQuestionItems(store, excludedIds),
+  ]
 }
 
 /**
@@ -78,7 +115,7 @@ function existingCardRects(
  * slot is clear. Only y moves, never x, so the card keeps its narrative order.
  */
 function placeClearOf(store: StoreRecords, x: number, y: number, w: number, h: number): { x: number; y: number } {
-  const placed = placeBelowObstacles({ x, y, w, h }, existingCardRects(store), CANVAS_GAP)
+  const placed = placeBelowObstacles({ x, y, w, h }, existingCanvasRects(store), CANVAS_GAP)
   return { x: placed.x, y: placed.y }
 }
 
@@ -100,11 +137,11 @@ function reflowCardLaneInStore(
 ): void {
   for (const move of reflowVerticalLane(
     anchorId,
-    existingCardItems(store),
+    existingCanvasItems(store),
     previousAnchorHeight,
   )) {
-    const shape = findCardShape(store, move.id)
-    if (!shape) continue
+    const shape = store[move.id]
+    if (!shape || shape.typeName !== 'shape' || (shape.type !== 'card' && shape.type !== 'question')) continue
     const origin = parentOrigin(store, shape)
     shape.x = move.x - origin.x
     shape.y = move.y - origin.y
@@ -185,7 +222,7 @@ export function applyChangeSetToSnapshot(
             .map((move) => findCardShape(store, move.cardId)?.id)
             .filter((id): id is string => !!id),
         )
-        const obstacles = existingCardRects(store, movingIds)
+        const obstacles = existingCanvasRects(store, movingIds)
         for (const m of op.moves) {
           const shape = findCardShape(store, m.cardId)
           if (shape) {
@@ -332,19 +369,24 @@ export function applyChangeSetToSnapshot(
       case 'create_question': {
         // Stamp the change-set's author so the persisted question keeps its mark.
         const id = createShapeId()
+        const props = makeQuestionProps(op.text, cs.author)
+        const at = placeBelowObstacles(
+          { x: op.x, y: op.y, w: props.w, h: props.h },
+          existingCanvasRects(store),
+        )
         store[id] = {
           id,
           typeName: 'shape',
           type: 'question',
-          x: op.x,
-          y: op.y,
+          x: at.x,
+          y: at.y,
           rotation: 0,
           isLocked: false,
           opacity: 1,
           meta: {},
           parentId: defaultPageId(store),
           index: getIndexAbove(topIndex(store)),
-          props: makeQuestionProps(op.text, cs.author),
+          props,
         }
         break
       }

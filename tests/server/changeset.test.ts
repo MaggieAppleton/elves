@@ -275,6 +275,26 @@ test('applyChangeSetToSnapshot stamps the change-set author onto a created secti
   expect(created.props.authoredBy).toBe('codex')
 })
 
+test('duplicate-position questions stack with a 24px gap in the persisted snapshot', () => {
+  const snap = {
+    document: { store: { 'page:page': { id: 'page:page', typeName: 'page' } } },
+    session: null,
+  } as any
+  const next = applyChangeSetToSnapshot(snap, {
+    id: 'questions', author: 'claude',
+    ops: [
+      { kind: 'create_question', text: 'One?', x: 0, y: 0 },
+      { kind: 'create_question', text: 'Two?', x: 0, y: 0 },
+    ],
+  }) as any
+  const questions = Object.values(next.document.store)
+    .filter((record: any) => record.type === 'question')
+    .sort((a: any, b: any) => a.y - b.y) as any[]
+
+  expect(questions[0]).toMatchObject({ x: 0, y: 0 })
+  expect(questions[1]).toMatchObject({ x: 0, y: 120 })
+})
+
 test('applyChangeSetToSnapshot stamps the change-set author onto an added comment', () => {
   const cs = {
     id: 'x', author: 'codex',
@@ -310,6 +330,31 @@ test('add_comment reserves its footprint and reflows the downstream card', () =>
 
   expect(next.document.store['shape:a'].props.commentH).toBe(42)
   expect(next.document.store['shape:b']).toMatchObject({ x: 0, y: 186 })
+})
+
+test('add_comment reflows a downstream question out of the comment footprint', () => {
+  const snap = {
+    document: {
+      store: {
+        'page:page': { id: 'page:page', typeName: 'page' },
+        'shape:a': {
+          id: 'shape:a', typeName: 'shape', type: 'card', x: 0, y: 0, parentId: 'page:page',
+          props: { w: 370, h: 120, kind: 'prose', comments: [], commentH: 0, mergedInto: null },
+        },
+        'shape:q': {
+          id: 'shape:q', typeName: 'shape', type: 'question', x: 0, y: 144, parentId: 'page:page',
+          props: { w: 370, h: 96, text: 'Why?', authoredBy: 'claude', dismissed: false },
+        },
+      },
+    },
+    session: null,
+  } as any
+  const next = applyChangeSetToSnapshot(snap, {
+    id: 'comment-question', author: 'claude',
+    ops: [{ kind: 'add_comment', cardId: 'shape:a', comment: { type: null, text: 'short' } }],
+  }) as any
+
+  expect(next.document.store['shape:q']).toMatchObject({ x: 0, y: 186 })
 })
 
 test('applyChangeSetToSnapshot writes a set_comment_summary onto the matching comment only', () => {
