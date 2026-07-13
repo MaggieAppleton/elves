@@ -96,6 +96,24 @@ export function reflowVerticalLane(
   return moves
 }
 
+export function findOverlaySlot(
+  anchor: LayoutRect,
+  overlay: Pick<LayoutRect, 'w' | 'h'>,
+  obstacles: LayoutRect[],
+  gap = CANVAS_GAP,
+): LayoutRect {
+  const candidates: LayoutRect[] = [
+    { x: anchor.x + anchor.w + gap, y: anchor.y, ...overlay },
+    { x: anchor.x - overlay.w - gap, y: anchor.y, ...overlay },
+    { x: anchor.x, y: anchor.y + anchor.h + gap, ...overlay },
+    { x: anchor.x, y: anchor.y - overlay.h - gap, ...overlay },
+  ]
+  const clear = candidates.find((candidate) =>
+    obstacles.every((obstacle) => !conflictsWithGap(candidate, obstacle, gap)),
+  )
+  return clear ?? placeBelowObstacles(candidates[0], obstacles, gap)
+}
+
 export function cascadeOffset(spawnIndex: number): { dx: number; dy: number } {
   const step = spawnIndex % CASCADE_WRAP
   return { dx: step * CASCADE_STEP, dy: step * CASCADE_STEP }

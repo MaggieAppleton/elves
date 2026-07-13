@@ -5,6 +5,7 @@ import {
   CASCADE_WRAP,
   placeBelowObstacles,
   reflowVerticalLane,
+  findOverlaySlot,
 } from '../../src/model/layout'
 
 describe('cascadeOffset', () => {
@@ -95,5 +96,36 @@ describe('reflowVerticalLane', () => {
       { id: 'a', rect: { x: 0, y: 0, w: 100, h: 60 } },
       { id: 'b', rect: { x: 0, y: 170, w: 100, h: 50 } },
     ], 140)).toEqual([{ id: 'b', x: 0, y: 84 }])
+  })
+})
+
+describe('findOverlaySlot', () => {
+  const anchor = { x: 100, y: 100, w: 100, h: 80 }
+  const overlay = { w: 100, h: 60 }
+
+  test('prefers the clear slot to the right', () => {
+    expect(findOverlaySlot(anchor, overlay, [])).toEqual({ x: 224, y: 100, w: 100, h: 60 })
+  })
+
+  test('uses the left slot when the right slot is occupied', () => {
+    expect(findOverlaySlot(anchor, overlay, [
+      { x: 224, y: 100, w: 100, h: 80 },
+    ])).toEqual({ x: -24, y: 100, w: 100, h: 60 })
+  })
+
+  test('uses the slot below when both sides are occupied', () => {
+    expect(findOverlaySlot(anchor, overlay, [
+      { x: 224, y: 100, w: 100, h: 80 },
+      { x: -24, y: 100, w: 100, h: 80 },
+    ])).toEqual({ x: 100, y: 204, w: 100, h: 60 })
+  })
+
+  test('falls down the right lane when all immediate slots are occupied', () => {
+    expect(findOverlaySlot(anchor, overlay, [
+      { x: 224, y: 100, w: 100, h: 80 },
+      { x: -24, y: 100, w: 100, h: 80 },
+      { x: 100, y: 204, w: 100, h: 60 },
+      { x: 100, y: 16, w: 100, h: 60 },
+    ])).toEqual({ x: 224, y: 204, w: 100, h: 60 })
   })
 })
