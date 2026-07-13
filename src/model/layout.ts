@@ -77,7 +77,7 @@ export function reflowVerticalLane(
 
   for (const item of lane) {
     if (shrinking) {
-      if (item.rect.y > previousCursor + 1) break
+      if (item.rect.y > previousCursor + gap) break
       if (Math.abs(item.rect.y - cursor) > 1) {
         moves.push({ id: item.id, x: item.rect.x, y: cursor })
       }

@@ -3,12 +3,12 @@ import { ChangeSet, Op, planMerge } from '../model/changeset'
 import { CardShape } from '../shapes/CardShapeUtil'
 import { SectionShape } from '../shapes/SectionShapeUtil'
 import { QuestionShape } from '../shapes/QuestionShapeUtil'
-import { makeComment, addComment } from '../model/comments'
+import { makeComment, addComment, estimateCommentHeight } from '../model/comments'
 import { makeNoteCardProps, makeReferenceCardProps, makeFigureCardProps, claudeMayEditCardText } from '../model/cards'
 import { reattribute } from '../model/attribution'
 import { makeSectionProps } from '../model/sections'
 import { makeQuestionProps } from '../model/questions'
-import { cardObstacles, clearCardPosition } from '../client/canvasLayout'
+import { cardObstacles, clearCardPosition, reflowCardLane } from '../client/canvasLayout'
 import { placeBelowObstacles } from '../model/layout'
 
 function newId(prefix: string): string {
@@ -30,11 +30,16 @@ function applyAddComment(
   const comment = makeComment(
     newId('cmt'), op.comment.text, op.comment.type, author, op.comment.reviewId ?? null,
   )
+  const previousHeight = shape.props.h + (shape.props.commentH ?? 0)
+  const comments = addComment(shape.props.comments, comment)
   editor.updateShape<CardShape>({
     id: shape.id, type: 'card',
-    props: { comments: addComment(shape.props.comments, comment) },
+    props: {
+      comments,
+      commentH: estimateCommentHeight(comments, shape.props.w),
+    },
   })
-  return [shape.id]
+  return [shape.id, ...reflowCardLane(editor, shape.id, previousHeight)]
 }
 
 function applyMerge(editor: Editor, op: Extract<Op, { kind: 'merge_notes' }>): TLShapeId[] {

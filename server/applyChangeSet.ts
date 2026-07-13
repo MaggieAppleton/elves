@@ -2,7 +2,7 @@ import { createShapeId } from '@tldraw/tlschema'
 import { getIndexAbove, IndexKey } from '@tldraw/utils'
 import type { CanvasSnapshot } from './store'
 import { ChangeSet, planMerge } from '../src/model/changeset'
-import { makeComment, addComment } from '../src/model/comments'
+import { makeComment, addComment, estimateCommentHeight } from '../src/model/comments'
 import {
   makeNoteCardProps, makeReferenceCardProps, makeFigureCardProps, claudeMayEditCardText,
   CARD_DEFAULT_W, CARD_DEFAULT_H,
@@ -11,7 +11,13 @@ import { makeSectionProps } from '../src/model/sections'
 import { makeQuestionProps } from '../src/model/questions'
 import { reattribute } from '../src/model/attribution'
 import { resolvePageXY } from './digest'
-import { CANVAS_GAP, placeBelowObstacles, type LayoutRect } from '../src/model/layout'
+import {
+  CANVAS_GAP,
+  placeBelowObstacles,
+  reflowVerticalLane,
+  type LayoutItem,
+  type LayoutRect,
+} from '../src/model/layout'
 
 type StoreRecords = Record<string, any>
 
@@ -30,11 +36,15 @@ function findQuestionShape(store: StoreRecords, id: string): any | undefined {
  * overlap — otherwise a freshly-created, never-rendered neighbour reads as tiny. */
 const MIN_CARD_H = CARD_DEFAULT_H
 
-function existingCardRects(
+function cardOccupiedHeight(shape: any): number {
+  return Math.max(shape.props.h ?? 0, MIN_CARD_H) + Math.max(0, shape.props.commentH ?? 0)
+}
+
+function existingCardItems(
   store: StoreRecords,
   excludedIds: ReadonlySet<string> = new Set(),
-): LayoutRect[] {
-  const rects: LayoutRect[] = []
+): LayoutItem[] {
+  const items: LayoutItem[] = []
   for (const r of Object.values(store) as any[]) {
     if (
       r?.typeName === 'shape' &&
@@ -44,10 +54,20 @@ function existingCardRects(
       !excludedIds.has(r.id)
     ) {
       const { x, y } = resolvePageXY(store, r)
-      rects.push({ x, y, w: r.props.w ?? CARD_DEFAULT_W, h: Math.max(r.props.h ?? 0, MIN_CARD_H) })
+      items.push({
+        id: r.id,
+        rect: { x, y, w: r.props.w ?? CARD_DEFAULT_W, h: cardOccupiedHeight(r) },
+      })
     }
   }
-  return rects
+  return items
+}
+
+function existingCardRects(
+  store: StoreRecords,
+  excludedIds: ReadonlySet<string> = new Set(),
+): LayoutRect[] {
+  return existingCardItems(store, excludedIds).map((item) => item.rect)
 }
 
 /**
@@ -71,6 +91,24 @@ function findGroupShape(store: StoreRecords, id: string): any | undefined {
 function parentOrigin(store: StoreRecords, shape: any): { x: number; y: number } {
   const parent = shape.parentId ? store[shape.parentId] : undefined
   return parent && parent.typeName === 'shape' ? resolvePageXY(store, parent) : { x: 0, y: 0 }
+}
+
+function reflowCardLaneInStore(
+  store: StoreRecords,
+  anchorId: string,
+  previousAnchorHeight: number,
+): void {
+  for (const move of reflowVerticalLane(
+    anchorId,
+    existingCardItems(store),
+    previousAnchorHeight,
+  )) {
+    const shape = findCardShape(store, move.id)
+    if (!shape) continue
+    const origin = parentOrigin(store, shape)
+    shape.x = move.x - origin.x
+    shape.y = move.y - origin.y
+  }
 }
 
 function findSectionShape(store: StoreRecords, id: string): any | undefined {
@@ -117,11 +155,14 @@ export function applyChangeSetToSnapshot(
       case 'add_comment': {
         const shape = findCardShape(store, op.cardId)
         if (!shape) break
+        const previousHeight = cardOccupiedHeight(shape)
         const comment = makeComment(
           `cmt-${crypto.randomUUID()}`, op.comment.text, op.comment.type, cs.author,
           op.comment.reviewId ?? null,
         )
         shape.props.comments = addComment(shape.props.comments ?? [], comment)
+        shape.props.commentH = estimateCommentHeight(shape.props.comments, shape.props.w ?? CARD_DEFAULT_W)
+        reflowCardLaneInStore(store, shape.id, previousHeight)
         break
       }
       case 'merge_notes': {
