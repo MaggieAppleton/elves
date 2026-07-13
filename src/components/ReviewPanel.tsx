@@ -137,6 +137,7 @@ export function ReviewPanel({ projectId, editor, reviews, onSummon, onDismiss, o
       <button
         className="elves-review__button"
         data-testid="review-button"
+        aria-label="Review"
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}

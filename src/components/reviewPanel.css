@@ -63,6 +63,9 @@
   top: calc(100% + 6px);
   right: 0;
   width: 300px;
+  max-height: calc(100dvh - 56px);
+  overflow-y: auto;
+  box-sizing: border-box;
   padding: 6px;
   border-radius: 11px;
   background: var(--elves-surface);
@@ -271,5 +274,27 @@
   .elves-review__badge[data-state='in-progress'],
   .elves-review__dot[data-status='in-progress'] {
     animation: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .elves-review__button {
+    width: 44px;
+    height: 44px;
+    justify-content: center;
+    padding: 0;
+  }
+  .elves-review__button > span:not(.elves-review__badge) { display: none; }
+  .elves-review__icon {
+    width: 18px;
+    height: 18px;
+  }
+  .elves-review__menu {
+    position: fixed;
+    top: 122px;
+    right: 8px;
+    left: 8px;
+    width: auto;
+    max-height: calc(100dvh - 130px);
   }
 }

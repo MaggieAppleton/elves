@@ -954,12 +954,30 @@ export default function App() {
               can never spill in front of the prose. */}
           {view !== 'draft' && (
             <div className="elves-toolbar">
-              <button data-testid="new-prose" onClick={() => addCard('prose')}><TextAUnderline className="elves-btn-icon" aria-hidden="true" />Prose</button>
-              <button data-testid="new-note" onClick={() => addCard('note')}><Notepad className="elves-btn-icon" aria-hidden="true" />Notes</button>
-              <button data-testid="new-image" onClick={() => fileInputRef.current?.click()}><ImagesSquare className="elves-btn-icon" aria-hidden="true" />Image</button>
-              <button data-testid="new-reference" onClick={addReferenceFlow}><Link className="elves-btn-icon" aria-hidden="true" />Link</button>
-              <button data-testid="new-figure" onClick={() => addCard('figure')}><Slideshow className="elves-btn-icon" aria-hidden="true" />Figure</button>
-              <button data-testid="new-section" onClick={addSection}><SelectionPlus className="elves-btn-icon" aria-hidden="true" />Section</button>
+              <button aria-label="New prose card" data-testid="new-prose" onClick={() => addCard('prose')}>
+                <TextAUnderline className="elves-btn-icon" aria-hidden="true" />
+                <span className="elves-toolbar__label">Prose</span>
+              </button>
+              <button aria-label="New note card" data-testid="new-note" onClick={() => addCard('note')}>
+                <Notepad className="elves-btn-icon" aria-hidden="true" />
+                <span className="elves-toolbar__label">Notes</span>
+              </button>
+              <button aria-label="Add image" data-testid="new-image" onClick={() => fileInputRef.current?.click()}>
+                <ImagesSquare className="elves-btn-icon" aria-hidden="true" />
+                <span className="elves-toolbar__label">Image</span>
+              </button>
+              <button aria-label="Add link" data-testid="new-reference" onClick={addReferenceFlow}>
+                <Link className="elves-btn-icon" aria-hidden="true" />
+                <span className="elves-toolbar__label">Link</span>
+              </button>
+              <button aria-label="New figure card" data-testid="new-figure" onClick={() => addCard('figure')}>
+                <Slideshow className="elves-btn-icon" aria-hidden="true" />
+                <span className="elves-toolbar__label">Figure</span>
+              </button>
+              <button aria-label="New section" data-testid="new-section" onClick={addSection}>
+                <SelectionPlus className="elves-btn-icon" aria-hidden="true" />
+                <span className="elves-toolbar__label">Section</span>
+              </button>
               <input
                 ref={fileInputRef}
                 type="file"
