@@ -18,6 +18,7 @@ async function canvasReady(page: import('@playwright/test').Page, request: impor
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
   await page.getByTestId('new-prose').click()
   await expect.poll(async () => (await serverCardIds(request, projectId)).length).toBe(1)
+  await page.keyboard.press('Escape')
 }
 
 test('an MCP create_question tool call renders an orange, Claude-marked question', async ({ page, request }) => {
@@ -40,12 +41,12 @@ test('dismissing a question hides it (recoverable in-file, but gone from the can
   const question = page.locator('.elves-question', { hasText: 'Why should a novice care?' })
   await expect(question).toBeVisible()
 
-  // The dismiss control (✓) opts into pointer events even though the shape body
+  // The dismiss control opts into pointer events even though the shape body
   // doesn't, so it's directly clickable (revealed on hover/selection in the app).
-  await question.getByTestId('question-dismiss').click()
+  await question.getByRole('button', { name: /^Dismiss question \d+ of \d+: Why should a novice care\?$/ }).click()
 
   // Dismissed = hidden from render and hit-testing.
-  await expect(page.locator('.elves-question')).toHaveCount(0)
+  await expect(question).toHaveCount(0)
 
   // Recoverable, not deleted: the dismissed question persists on disk (via the
   // debounced save), so read_map still returns it — dismissed. Poll to let the
@@ -53,7 +54,33 @@ test('dismissing a question hides it (recoverable in-file, but gone from the can
   await expect
     .poll(async () => {
       const map = await (await request.get(`${BASE}/projects/${projectId}/map`)).json()
-      return map.questions
+      return map.questions.find((entry: { text: string }) => entry.text === 'Why should a novice care?')
     })
-    .toEqual([expect.objectContaining({ text: 'Why should a novice care?', dismissed: true })])
+    .toEqual(expect.objectContaining({ text: 'Why should a novice care?', dismissed: true }))
+})
+
+test('duplicate questions have contextual dismiss controls', async ({ page, request }) => {
+  await canvasReady(page, request)
+
+  await request.post(`${BASE}/projects/${projectId}/changeset`, {
+    data: {
+      id: `duplicate-questions-${Date.now()}`,
+      author: 'claude',
+      ops: [
+        { kind: 'create_question', text: 'Same question?', x: 400, y: 200 },
+        { kind: 'create_question', text: 'Same question?', x: 400, y: 360 },
+      ],
+    },
+  })
+  await expect(page.locator('.elves-question', { hasText: 'Same question?' })).toHaveCount(2)
+
+  const dismissButtons = page.getByRole('button', { name: /^Dismiss question \d+ of \d+: Same question\?$/ })
+  await expect(dismissButtons).toHaveCount(2)
+  const labels = await dismissButtons.evaluateAll((buttons) =>
+    buttons.map((button) => button.getAttribute('aria-label')),
+  )
+  expect(new Set(labels).size).toBe(2)
+
+  await dismissButtons.first().click()
+  await expect(dismissButtons).toHaveCount(1)
 })
