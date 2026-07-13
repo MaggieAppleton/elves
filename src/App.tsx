@@ -126,6 +126,10 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const editorRef = useRef<Editor | null>(null)
   const projectIdRef = useRef<string | null>(null)
+  // Project ids can repeat across an A → B → A switch, so id equality alone
+  // cannot identify the review lifecycle that launched an async fetch. Bump a
+  // visit token on every switch and require completions to match it.
+  const reviewVisitRef = useRef(0)
   // False until the open project's canvas has loaded from disk. Every save path
   // checks this so a failed (or not-yet-finished) load can't serialize an empty
   // store over real on-disk data.
@@ -269,24 +273,31 @@ export default function App() {
   // Load the open project's review passes; a summon/claim/completion from any
   // surface (panel, MCP, another tab) arrives through onReviews above.
   useEffect(() => {
+    const visit = ++reviewVisitRef.current
     setReviews([])
     if (!currentProjectId) return
     fetchReviews(currentProjectId)
       .then((list) => {
-        if (projectIdRef.current === currentProjectId) setReviews(list)
+        if (reviewVisitRef.current === visit && projectIdRef.current === currentProjectId) {
+          setReviews(list)
+        }
       })
       .catch((err) => console.error('Elves: failed to load reviews', err))
+    return () => {
+      if (reviewVisitRef.current === visit) reviewVisitRef.current++
+    }
   }, [currentProjectId])
 
   const handleSummonReview = (personality: PersonalityId, focus: string | null) => {
     const pid = currentProjectId
     if (!pid) return
+    const visit = reviewVisitRef.current
     // The websocket echo will also land; setting from the fetch keeps the panel
     // truthful even if the socket is down.
     summonReview(pid, personality, focus)
       .then(() => fetchReviews(pid))
       .then((list) => {
-        if (projectIdRef.current === pid) setReviews(list)
+        if (reviewVisitRef.current === visit && projectIdRef.current === pid) setReviews(list)
       })
       .catch((err) => console.error('Elves: failed to summon review', err))
   }
@@ -294,10 +305,11 @@ export default function App() {
   const handleDismissReview = (reviewId: string) => {
     const pid = currentProjectId
     if (!pid) return
+    const visit = reviewVisitRef.current
     dismissReview(pid, reviewId)
       .then(() => fetchReviews(pid))
       .then((list) => {
-        if (projectIdRef.current === pid) setReviews(list)
+        if (reviewVisitRef.current === visit && projectIdRef.current === pid) setReviews(list)
       })
       .catch((err) => console.error('Elves: failed to dismiss review', err))
   }

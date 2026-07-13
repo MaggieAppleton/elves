@@ -220,3 +220,82 @@ test('a stale rejected load cannot clear the current mount pending changes', asy
   await expect(page.locator('.elves-card--note', { hasText: agentText })).toBeVisible({ timeout: 15000 })
   expect(loadErrors.filter((message) => message.includes('canvas load failed'))).toEqual([])
 })
+
+test('a stale review load cannot overwrite a newer visit to the same project', async ({ page, request }) => {
+  const stamp = Date.now()
+  const alpha = `Review Alpha ${stamp}`
+  const beta = `Review Beta ${stamp}`
+
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  const alphaId = await createPersistedProseProject(page, alpha, 'alpha seed')
+  await createPersistedProseProject(page, beta, 'beta seed')
+
+  // Reload into Alpha and capture its initial, empty reviews response, but hold
+  // it back so it can arrive after a complete Alpha → Beta → Alpha round trip.
+  await page.evaluate((id) => localStorage.setItem('elves:lastProject', id), alphaId)
+  let releaseOldAlpha!: () => void
+  const oldAlphaGate = new Promise<void>((resolve) => {
+    releaseOldAlpha = resolve
+  })
+  let captureOldAlpha!: () => void
+  const oldAlphaCaptured = new Promise<void>((resolve) => {
+    captureOldAlpha = resolve
+  })
+  let alphaReviewLoads = 0
+  await page.route(
+    (url) => url.pathname === `/projects/${alphaId}/reviews`,
+    async (route) => {
+      if (route.request().method() !== 'GET') return route.continue()
+      alphaReviewLoads += 1
+      if (alphaReviewLoads === 1) {
+        const response = await route.fetch()
+        captureOldAlpha()
+        await oldAlphaGate
+        await route.fulfill({
+          response,
+          headers: { ...response.headers(), 'x-elves-stale-review-load': 'true' },
+        })
+        return
+      }
+      await route.continue()
+    },
+  )
+
+  await page.reload()
+  await expect(page.getByTestId('project-switcher')).toContainText(alpha)
+  await oldAlphaCaptured
+
+  await page.getByTestId('project-switcher').click()
+  await page.getByRole('menuitemradio', { name: beta }).click()
+  await expect(page.getByTestId('project-switcher')).toContainText(beta)
+
+  // This review is newer than the response held above. Supplying an agent makes
+  // it an already-claimed pass, so the in-app runner does not introduce timing.
+  await request.post(`${BASE}/projects/${alphaId}/reviews`, {
+    data: { personality: 'trimmer', agent: 'claude' },
+  })
+
+  await page.getByTestId('project-switcher').click()
+  const currentAlphaLoaded = page.waitForResponse(
+    (response) => response.request().method() === 'GET' &&
+      new URL(response.url()).pathname === `/projects/${alphaId}/reviews`,
+  )
+  await page.getByRole('menuitemradio', { name: alpha }).click()
+  await currentAlphaLoaded
+  await page.getByTestId('review-button').click()
+  const currentPass = page.getByTestId('review-pass-trimmer')
+  await expect(currentPass).toHaveAttribute('data-status', 'in-progress')
+
+  // The first visit's response must not be accepted merely because Alpha is
+  // current again. Before the fix it replaces the current pass with [].
+  const staleAlphaLoaded = page.waitForResponse(
+    (response) => response.headers()['x-elves-stale-review-load'] === 'true',
+  )
+  releaseOldAlpha()
+  await (await staleAlphaLoaded).finished()
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  }))
+  await expect(currentPass).toHaveAttribute('data-status', 'in-progress')
+})
