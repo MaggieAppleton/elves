@@ -299,3 +299,63 @@ test('a stale review load cannot overwrite a newer visit to the same project', a
   }))
   await expect(currentPass).toHaveAttribute('data-status', 'in-progress')
 })
+
+test('a stale review load cannot overwrite a newer realtime snapshot in the same visit', async ({ page, request }) => {
+  const stamp = Date.now()
+  const alpha = `Realtime Review Alpha ${stamp}`
+
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  const alphaId = await createPersistedProseProject(page, alpha, 'alpha seed')
+
+  // Reload into Alpha and hold its initial, empty reviews response. The project
+  // does not change after this point: only a newer websocket snapshot may make
+  // the captured GET stale.
+  await page.evaluate((id) => localStorage.setItem('elves:lastProject', id), alphaId)
+  let releaseOldAlpha!: () => void
+  const oldAlphaGate = new Promise<void>((resolve) => {
+    releaseOldAlpha = resolve
+  })
+  let captureOldAlpha!: () => void
+  const oldAlphaCaptured = new Promise<void>((resolve) => {
+    captureOldAlpha = resolve
+  })
+  await page.route(
+    (url) => url.pathname === `/projects/${alphaId}/reviews`,
+    async (route) => {
+      if (route.request().method() !== 'GET') return route.continue()
+      const response = await route.fetch()
+      captureOldAlpha()
+      await oldAlphaGate
+      await route.fulfill({
+        response,
+        headers: { ...response.headers(), 'x-elves-stale-review-load': 'true' },
+      })
+    },
+  )
+
+  await page.reload()
+  await expect(page.getByTestId('project-switcher')).toContainText(alpha)
+  await oldAlphaCaptured
+
+  // Creating an already-claimed pass broadcasts its complete review list over
+  // the live websocket without starting the in-app review runner.
+  await request.post(`${BASE}/projects/${alphaId}/reviews`, {
+    data: { personality: 'trimmer', agent: 'claude' },
+  })
+  await page.getByTestId('review-button').click()
+  const currentPass = page.getByTestId('review-pass-trimmer')
+  await expect(currentPass).toHaveAttribute('data-status', 'in-progress')
+
+  // Releasing the same visit's older GET used to replace the realtime state
+  // with its captured empty list.
+  const staleAlphaLoaded = page.waitForResponse(
+    (response) => response.headers()['x-elves-stale-review-load'] === 'true',
+  )
+  releaseOldAlpha()
+  await (await staleAlphaLoaded).finished()
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  }))
+  await expect(currentPass).toHaveAttribute('data-status', 'in-progress')
+})
