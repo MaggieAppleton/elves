@@ -3,12 +3,12 @@ import { ChangeSet, Op, planMerge } from '../model/changeset'
 import { CardShape } from '../shapes/CardShapeUtil'
 import { SectionShape } from '../shapes/SectionShapeUtil'
 import { QuestionShape } from '../shapes/QuestionShapeUtil'
-import { makeComment, addComment } from '../model/comments'
+import { makeComment, addComment, estimateCommentHeight } from '../model/comments'
 import { makeNoteCardProps, makeReferenceCardProps, makeFigureCardProps, claudeMayEditCardText } from '../model/cards'
 import { reattribute } from '../model/attribution'
 import { makeSectionProps } from '../model/sections'
 import { makeQuestionProps } from '../model/questions'
-import { cardObstacles, clearCardPosition } from '../client/canvasLayout'
+import { canvasObstacles, clearCardPosition, reflowCardLane } from '../client/canvasLayout'
 import { placeBelowObstacles } from '../model/layout'
 
 function newId(prefix: string): string {
@@ -30,11 +30,16 @@ function applyAddComment(
   const comment = makeComment(
     newId('cmt'), op.comment.text, op.comment.type, author, op.comment.reviewId ?? null,
   )
+  const previousHeight = shape.props.h + (shape.props.commentH ?? 0)
+  const comments = addComment(shape.props.comments, comment)
   editor.updateShape<CardShape>({
     id: shape.id, type: 'card',
-    props: { comments: addComment(shape.props.comments, comment) },
+    props: {
+      comments,
+      commentH: estimateCommentHeight(comments, shape.props.w),
+    },
   })
-  return [shape.id]
+  return [shape.id, ...reflowCardLane(editor, shape.id, previousHeight)]
 }
 
 function applyMerge(editor: Editor, op: Extract<Op, { kind: 'merge_notes' }>): TLShapeId[] {
@@ -63,7 +68,7 @@ function applyMove(editor: Editor, op: Extract<Op, { kind: 'move_cards' }>): TLS
       .filter((shape): shape is CardShape => shape?.type === 'card')
       .map((shape) => shape.id),
   )
-  const obstacles = cardObstacles(editor, movingIds)
+  const obstacles = canvasObstacles(editor, movingIds)
   for (const m of op.moves) {
     const shape = editor.getShape(m.cardId as CardShape['id']) as CardShape | undefined
     if (!shape) continue
@@ -193,15 +198,18 @@ function applyCreateQuestion(
   op: Extract<Op, { kind: 'create_question' }>,
   author: string,
 ): TLShapeId[] {
-  // Questions drop exactly where the agent asks (like sections) — no overlap slide;
-  // an editor's sticky note is meant to sit against the cluster it's about.
+  const props = makeQuestionProps(op.text, author)
+  const at = placeBelowObstacles(
+    { x: op.x, y: op.y, w: props.w, h: props.h },
+    canvasObstacles(editor),
+  )
   const id = createShapeId()
   editor.createShape<QuestionShape>({
     id,
     type: 'question',
-    x: op.x,
-    y: op.y,
-    props: makeQuestionProps(op.text, author),
+    x: at.x,
+    y: at.y,
+    props,
   })
   return [id]
 }

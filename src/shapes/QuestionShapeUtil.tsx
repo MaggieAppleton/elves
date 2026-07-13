@@ -9,6 +9,7 @@ import { measuredQuestionHeight, fittedQuestionGistFontSize } from './autosize'
 import { agentInfo } from './agents'
 import { commentGist, mechanicalGist } from '../model/summary'
 import { shouldShowQuestionGist, gistFontSize } from './summaryView'
+import { reflowCanvasLane } from '../client/canvasLayout'
 import './question.css'
 
 export type QuestionShape = TLBaseShape<'question', {
@@ -70,7 +71,11 @@ function AutosizeQuestion({
       if (!cur) return
       const wantH = measuredQuestionHeight(editor, cur.props.text, cur.props.w)
       if (Math.abs(wantH - cur.props.h) > 1) {
-        editor.updateShape<QuestionShape>({ id: cur.id, type: 'question', props: { h: wantH } })
+        const previousHeight = cur.props.h
+        editor.run(() => {
+          editor.updateShape<QuestionShape>({ id: cur.id, type: 'question', props: { h: wantH } })
+          reflowCanvasLane(editor, cur.id, previousHeight)
+        }, { history: 'ignore' })
       }
     }
     fit()

@@ -243,14 +243,13 @@
   transform: translate(calc(var(--edge) * 4px), calc(var(--edge) * 5px));
 }
 
-/* The fan-out: merged cards shown to the right of the representative, read-only.
-   A quiet column of muted note cards; pointer-events:all so the text is
-   selectable and the click doesn't fall through to the canvas. */
+/* The fan-out: merged cards shown in a measured clear slot around the
+   representative. A quiet column of muted note cards; pointer-events:all so
+   the text is selectable and the click doesn't fall through to the canvas. */
 .elves-merge-fan {
   position: absolute;
   top: 0;
-  left: 100%;
-  margin-left: 16px;
+  left: 0;
   width: 100%;
   display: flex;
   flex-direction: column;

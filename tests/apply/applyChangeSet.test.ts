@@ -73,6 +73,35 @@ describe('applyChangeSet affected-id contract', () => {
     ]))).toEqual([])
   })
 
+  test('add_comment reserves its footprint and reflows the downstream card', () => {
+    const ed = fakeEditor([
+      noteCard('card:a', { commentH: 0 }),
+      { ...noteCard('card:b', { commentH: 0 }), y: 84 },
+    ])
+
+    expect(applyChangeSet(ed as unknown as Editor, cs([
+      { kind: 'add_comment', cardId: 'card:a', comment: { type: null, text: 'short' } },
+    ]))).toEqual(['card:a', 'card:b'])
+
+    expect((ed._shapes.get('card:a') as any).props.commentH).toBe(42)
+    expect(ed._shapes.get('card:b')).toMatchObject({ y: 126 })
+  })
+
+  test('add_comment reflows a downstream question out of the comment footprint', () => {
+    const ed = fakeEditor([
+      noteCard('card:a', { commentH: 0 }),
+      {
+        id: 'question:b', type: 'question', x: 0, y: 84,
+        props: { w: 200, h: 60, dismissed: false },
+      },
+    ])
+
+    expect(applyChangeSet(ed as unknown as Editor, cs([
+      { kind: 'add_comment', cardId: 'card:a', comment: { type: null, text: 'short' } },
+    ]))).toEqual(['card:a', 'question:b'])
+    expect(ed._shapes.get('question:b')).toMatchObject({ y: 126 })
+  })
+
   test('merge_notes → the visible representative only', () => {
     const ed = fakeEditor([noteCard('card:a'), noteCard('card:b'), noteCard('card:c')])
     expect(applyChangeSet(ed as unknown as Editor, cs([
@@ -196,6 +225,20 @@ describe('applyChangeSet affected-id contract', () => {
     expect(shape.props.text).toBe('What did it cost her?')
     expect(shape.props.authoredBy).toBe('claude') // the change-set author
     expect(shape.props.dismissed).toBe(false)
+  })
+
+  test('duplicate-position questions stack with a 24px gap', () => {
+    const ed = fakeEditor([])
+    const ids = applyChangeSet(ed as unknown as Editor, cs([
+      { kind: 'create_question', text: 'One?', x: 0, y: 0 },
+      { kind: 'create_question', text: 'Two?', x: 0, y: 0 },
+    ]))
+
+    const questions = ids
+      .map((id) => ed._shapes.get(id) as any)
+      .sort((a, b) => a.y - b.y)
+    expect(questions[0]).toMatchObject({ x: 0, y: 0 })
+    expect(questions[1]).toMatchObject({ x: 0, y: 120 })
   })
 
   test('group_cards → the member ids', () => {
