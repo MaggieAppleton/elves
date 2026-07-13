@@ -894,7 +894,17 @@ export function createServer(
       // and re-mark it failed right after the user dismissed it. Idempotent
       // no-op if nothing is running under this key.
       if (status === 'dismissed') {
-        agent?.cancel(`review:${req.params.reviewId}`, req.params.reviewId)
+        const result = agent?.cancel(`review:${req.params.reviewId}`, req.params.reviewId)
+        if (result?.status === 'signal-failed' || result?.status === 'run-mismatch') {
+          const message = result.status === 'run-mismatch'
+            ? 'the requested review run is no longer active'
+            : 'could not signal the active review run'
+          res.status(result.status === 'signal-failed' ? 503 : 409).json({
+            code: result.status,
+            error: message,
+          })
+          return
+        }
       }
       try {
         // Completion stamps the pass's comment footprint, so it needs the

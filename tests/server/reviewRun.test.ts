@@ -4,7 +4,9 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import request from 'supertest'
 import { createServer } from '../../server/app'
-import type { AgentRunner, AgentEvent, AgentRunInput } from '../../server/agentRun'
+import type {
+  AgentRunner, AgentCancelResult, AgentEvent, AgentRunInput,
+} from '../../server/agentRun'
 
 /**
  * These tests exercise `launchReviewRun` (server/app.ts) — the fire-and-forget
@@ -25,7 +27,7 @@ afterEach(async () => {
 // drives it via `emit` (mid-run events, e.g. a captured error) and `finish`
 // (the child "exits", resolving the run's promise). `cancel` resolves the run
 // immediately, mirroring a killed child's eventual 'close'.
-function makeFakeRunner() {
+function makeFakeRunner(cancelResult: AgentCancelResult = { status: 'accepted' }) {
   const active = new Set<string>()
   const controls = new Map<string, { onEvent: (e: AgentEvent) => void; resolve: () => void }>()
   const calls: { key: string; input: AgentRunInput }[] = []
@@ -37,6 +39,7 @@ function makeFakeRunner() {
       const c = controls.get(key)
       if (!c) return { status: 'not-running' }
       if (runId !== key.slice('review:'.length)) return { status: 'run-mismatch' }
+      if (cancelResult.status !== 'accepted') return cancelResult
       controls.delete(key)
       active.delete(key)
       c.resolve()
@@ -182,6 +185,26 @@ test('dismissing mid-run cancels the child and the review stays dismissed', asyn
   await new Promise((r) => setTimeout(r, 50))
   const res = await request(app).get('/projects/essay/reviews')
   expect(res.body.reviews[0].status).toBe('dismissed')
+})
+
+test('a failed cancel leaves the live review visible and reports the failure', async () => {
+  const fake = makeFakeRunner({ status: 'signal-failed' })
+  const app = await appWithRunner(fake.runner)
+  const created = await request(app).post('/projects/essay/reviews').send({ personality: 'trimmer' })
+  const reviewId = created.body.review.id
+  const key = `review:${reviewId}`
+
+  const dismissed = await request(app)
+    .post(`/projects/essay/reviews/${reviewId}/status`)
+    .send({ status: 'dismissed' })
+
+  expect(dismissed.status).toBe(503)
+  expect(dismissed.body).toMatchObject({ code: 'signal-failed' })
+  const current = await request(app).get('/projects/essay/reviews')
+  expect(current.body.reviews[0].status).toBe('pending')
+
+  fake.finish(key)
+  await waitForReview(app, (r) => r.status === 'failed')
 })
 
 test('POST /reviews/:id/run retries a failed review', async () => {
