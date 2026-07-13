@@ -15,7 +15,7 @@ describe('card factories', () => {
       w: CARD_DEFAULT_W, h: CARD_DEFAULT_H, kind: 'prose',
       noteKind: null, origin: null, text: 'a point I wrote', authoredBy: null,
       attribution: [{ author: 'user', length: 'a point I wrote'.length }],
-      comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference: null,
+      comments: [], commentH: 0, mergedInto: null, draftExcluded: false, assetId: null, reference: null,
       figureTitle: '', figureStatus: null,
       summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
     })
@@ -30,6 +30,7 @@ describe('card factories', () => {
     expect(s.noteKind).toBe('text')
     expect(s.origin).toBe('typed')
     expect(s.comments).toEqual([])
+    expect(s.commentH).toBe(0)
     expect(s.mergedInto).toBeNull()
     expect(s.assetId).toBeNull()
     expect(isNoteCard(s)).toBe(true)
@@ -62,7 +63,7 @@ describe('card factories', () => {
     const p = makeImageNoteCardProps('abc.png')
     expect(p).toEqual({
       w: 280, h: 200, kind: 'note', noteKind: 'image', origin: 'image',
-      text: '', authoredBy: null, attribution: [], comments: [], mergedInto: null, draftExcluded: false, assetId: 'abc.png', reference: null,
+      text: '', authoredBy: null, attribution: [], comments: [], commentH: 0, mergedInto: null, draftExcluded: false, assetId: 'abc.png', reference: null,
       figureTitle: '', figureStatus: null,
       summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
     })
@@ -78,7 +79,7 @@ describe('card factories', () => {
       figureTitle: 'Malleable software spectrum', figureStatus: 'idea',
       authoredBy: null,
       attribution: [{ author: 'user', length: 'A horizontal axis from rigid to malleable, with tools placed along it'.length }],
-      comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference: null,
+      comments: [], commentH: 0, mergedInto: null, draftExcluded: false, assetId: null, reference: null,
       summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
     })
     expect(isFigureCard(p)).toBe(true)
@@ -140,12 +141,13 @@ describe('convert note → prose', () => {
         summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
       },
     ]
-    const note = { ...makeNoteCardProps('written by an agent', 'transcribed', 'claude'), comments, w: 512, h: 240 }
+    const note = { ...makeNoteCardProps('written by an agent', 'transcribed', 'claude'), comments, commentH: 80, w: 512, h: 240 }
     const prose = noteToProseProps(note)
     expect(prose.text).toBe('written by an agent')
     expect(prose.comments).toBe(comments)
     expect(prose.w).toBe(512)
     expect(prose.h).toBe(240)
+    expect(prose.commentH).toBe(80)
   })
 
   test('conversion claims the card as the user’s own: prose is always human-authored', () => {

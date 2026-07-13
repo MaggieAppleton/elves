@@ -122,6 +122,8 @@ export interface CardProps {
   attribution: Attribution | null
   /** Agent-authored comments attached to this card. */
   comments: Comment[]
+  /** Visible comment-stack height below the card body, including its top gutter. */
+  commentH: number
   /** If set, this note card was merged into the referenced representative card (hidden, recoverable). */
   mergedInto: string | null
   /**

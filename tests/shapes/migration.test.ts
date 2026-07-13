@@ -3,6 +3,7 @@ import {
   addCommentsUp, addAssetIdUp, addReferenceUp, addSummaryUp,
   renameSourceToNoteUp, renameSourceToNoteDown, addAuthoredByUp, addDraftExcludedUp, addFigureUp,
   addAttributionUp, addCommentSummaryUp, addCommentReviewIdUp,
+  addCommentHeightUp,
 } from '../../src/shapes/CardShapeUtil'
 import { addQuestionSummaryUp, removeQuestionSummaryDown } from '../../src/shapes/QuestionShapeUtil'
 
@@ -146,6 +147,12 @@ test('AddCommentReviewId migration is a no-op when comments is missing or not an
   const props: Record<string, unknown> = { kind: 'prose' }
   addCommentReviewIdUp(props)
   expect(props.comments).toBeUndefined()
+})
+
+test('AddCommentHeight migration defaults a legacy card to no comment extension', () => {
+  const props: Record<string, unknown> = { comments: [] }
+  addCommentHeightUp(props)
+  expect(props.commentH).toBe(0)
 })
 
 test('AddAttribution seeds one authorship run over an agent-authored card body', () => {

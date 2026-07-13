@@ -31,6 +31,7 @@ export type CardShape = TLBaseShape<'card', {
   authoredBy: string | null
   attribution: Attribution | null
   comments: Comment[]
+  commentH: number
   mergedInto: string | null
   draftExcluded: boolean
   assetId: string | null
@@ -113,6 +114,10 @@ export function addCommentReviewIdUp(props: Record<string, unknown>): void {
   }
 }
 
+export function addCommentHeightUp(props: Record<string, unknown>): void {
+  props.commentH = 0
+}
+
 // Every comment predating this field gets a comment-level summary, mirroring
 // addSummaryUp for the card itself: default to "no summary generated yet" so
 // reconciliation treats it exactly like a freshly-added comment.
@@ -162,6 +167,7 @@ const cardVersions = createShapePropsMigrationIds('card', {
   AddComments: 1, AddAssetId: 2, AddReference: 3, AddSummary: 4, RenameSourceToNote: 5,
   AddAuthoredBy: 6, AddDraftExcluded: 7, AddFigure: 8, AddAttribution: 9, AddCommentSummary: 10,
   AddCommentReviewId: 11,
+  AddCommentHeight: 12,
 })
 
 export const cardMigrations = createShapePropsMigrationSequence({
@@ -263,6 +269,13 @@ export const cardMigrations = createShapePropsMigrationSequence({
         }
       },
     },
+    {
+      id: cardVersions.AddCommentHeight,
+      up: (props) => addCommentHeightUp(props as Record<string, unknown>),
+      down: (props) => {
+        delete (props as Record<string, unknown>).commentH
+      },
+    },
   ],
 })
 
@@ -355,6 +368,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
         summaryAt: T.nullable(T.string),
       }),
     ),
+    commentH: T.number,
     mergedInto: T.nullable(T.string),
     draftExcluded: T.boolean,
     assetId: T.nullable(T.string),

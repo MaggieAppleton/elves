@@ -28,7 +28,7 @@ export function makeProseCardProps(text = ''): CardProps {
     w: CARD_DEFAULT_W, h: CARD_DEFAULT_H,
     kind: 'prose', noteKind: null, origin: null, text, authoredBy: null,
     attribution: seedAttribution(text, null),
-    comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference: null, ...NO_FIGURE, ...NO_SUMMARY,
+    comments: [], commentH: 0, mergedInto: null, draftExcluded: false, assetId: null, reference: null, ...NO_FIGURE, ...NO_SUMMARY,
   }
 }
 
@@ -40,7 +40,7 @@ export function makeNoteCardProps(text = '', origin: Origin = 'typed', authoredB
     w: authoredBy ? AGENT_CARD_DEFAULT_W : CARD_DEFAULT_W, h: CARD_DEFAULT_H,
     kind: 'note', noteKind: 'text', origin, text, authoredBy,
     attribution: seedAttribution(text, authoredBy),
-    comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference: null, ...NO_FIGURE, ...NO_SUMMARY,
+    comments: [], commentH: 0, mergedInto: null, draftExcluded: false, assetId: null, reference: null, ...NO_FIGURE, ...NO_SUMMARY,
   }
 }
 
@@ -49,7 +49,7 @@ export function makeImageNoteCardProps(assetId: string): CardProps {
     w: 280, h: 200,
     kind: 'note', noteKind: 'image', origin: 'image', text: '', authoredBy: null,
     attribution: [],
-    comments: [], mergedInto: null, draftExcluded: false, assetId, reference: null, ...NO_FIGURE, ...NO_SUMMARY,
+    comments: [], commentH: 0, mergedInto: null, draftExcluded: false, assetId, reference: null, ...NO_FIGURE, ...NO_SUMMARY,
   }
 }
 
@@ -63,7 +63,7 @@ export function makeReferenceCardProps(reference: Reference): CardProps {
     w: REFERENCE_DEFAULT_W, h: REFERENCE_DEFAULT_H,
     kind: 'note', noteKind: 'reference', origin: 'reference', text: '', authoredBy: null,
     attribution: [],
-    comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference, ...NO_FIGURE, ...NO_SUMMARY,
+    comments: [], commentH: 0, mergedInto: null, draftExcluded: false, assetId: null, reference, ...NO_FIGURE, ...NO_SUMMARY,
   }
 }
 
@@ -85,7 +85,7 @@ export function makeFigureCardProps(
     w: authoredBy ? AGENT_CARD_DEFAULT_W : FIGURE_DEFAULT_W, h: FIGURE_DEFAULT_H,
     kind: 'figure', noteKind: null, origin: null, text: description, authoredBy,
     attribution: seedAttribution(description, authoredBy),
-    comments: [], mergedInto: null, draftExcluded: false, assetId: null, reference: null,
+    comments: [], commentH: 0, mergedInto: null, draftExcluded: false, assetId: null, reference: null,
     figureTitle: title, figureStatus: 'idea', ...NO_SUMMARY,
   }
 }
