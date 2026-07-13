@@ -1,10 +1,40 @@
-import { afterEach, expect, test } from 'vitest'
+import { afterEach, expect, test, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { migrateLegacyCanvas } from '../../server/migrate'
 import { listProjects } from '../../server/projects'
 import { withProjectNamespaceLock } from '../../server/projectLock'
+
+const namespaceEntries = vi.hoisted(() => {
+  const entries: string[] = []
+  const waiters: Array<{ dataRoot: string; resolve: () => void }> = []
+  return {
+    record(dataRoot: string) {
+      entries.push(dataRoot)
+      for (let i = waiters.length - 1; i >= 0; i--) {
+        if (waiters[i].dataRoot === dataRoot) waiters.splice(i, 1)[0].resolve()
+      }
+    },
+    waitFor(dataRoot: string): Promise<void> {
+      if (entries.includes(dataRoot)) return Promise.resolve()
+      return new Promise((resolve) => { waiters.push({ dataRoot, resolve }) })
+    },
+    reset() { entries.length = 0 },
+  }
+})
+
+vi.mock('../../server/projectLock', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../server/projectLock')>()
+  return {
+    ...actual,
+    withProjectNamespaceLock: <T>(dataRoot: string, task: () => Promise<T>): Promise<T> => {
+      const result = actual.withProjectNamespaceLock(dataRoot, task)
+      namespaceEntries.record(dataRoot)
+      return result
+    },
+  }
+})
 
 let dirs: string[] = []
 async function root() {
@@ -72,14 +102,13 @@ test('legacy migration waits for the project namespace lock', async () => {
     await gate
   })
   await started
-  let settled = false
+  namespaceEntries.reset()
   const migration = migrateLegacyCanvas(d, '2026-07-02T10:00:00.000Z')
-    .finally(() => { settled = true })
-  await new Promise<void>((resolve) => setTimeout(resolve, 100))
-  const settledWhileLocked = settled
+  await namespaceEntries.waitFor(d)
+  const projectsExistWhileLocked = await fs.access(join(d, 'projects')).then(() => true, () => false)
   release()
   await Promise.all([hold, migration])
-  expect(settledWhileLocked).toBe(false)
+  expect(projectsExistWhileLocked).toBe(false)
   await expect(fs.readFile(
     join(d, 'projects', 'my-first-essay', 'canvas.json'),
     'utf8',

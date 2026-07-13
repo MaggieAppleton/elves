@@ -105,9 +105,10 @@ function enqueue<T>(path: string, task: () => Promise<T>): Promise<T> {
  *   window between a caller resolving `path` and the write actually touching
  *   disk. If it resolves `false`, the write is refused with `ProjectGoneError`
  *   instead of proceeding to (re)create `path`'s directory. store.ts itself has
- *   no notion of "project" — callers that write into a project's directory (see
- *   server/app.ts) pass a guard that re-checks the project still exists;
- *   generic/standalone callers (and this module's own tests) may omit it.
+ *   no notion of "project". HTTP mutations resolve paths while holding the
+ *   project lock; direct callers that resolve paths outside that boundary may
+ *   pass a guard that re-checks the project still exists. Generic/standalone
+ *   callers (and this module's own tests) may omit it.
  */
 export function withCanvasLock<T extends CanvasSnapshot | null>(
   path: string,

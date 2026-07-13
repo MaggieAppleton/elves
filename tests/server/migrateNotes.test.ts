@@ -3,18 +3,41 @@ import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { migrateSourceCardsToNotes } from '../../server/migrateNotes'
-import { createProject, canvasPathFor } from '../../server/projects'
+import { createProject, canvasPathFor, renameProject } from '../../server/projects'
 import { withProjectLock } from '../../server/projectLock'
 
-const projectLockCalls = vi.hoisted(() => [] as Array<{ dataRoot: string; id: string }>)
+const lockProbe = vi.hoisted(() => {
+  type Entry = { kind: 'project' | 'multi'; dataRoot: string; ids: string[] }
+  const entries: Entry[] = []
+  const waiters: Array<{ predicate: (current: Entry[]) => boolean; resolve: () => void }> = []
+  return {
+    record(entry: Entry) {
+      entries.push(entry)
+      for (let i = waiters.length - 1; i >= 0; i--) {
+        if (waiters[i].predicate(entries)) waiters.splice(i, 1)[0].resolve()
+      }
+    },
+    waitFor(predicate: (current: Entry[]) => boolean): Promise<void> {
+      if (predicate(entries)) return Promise.resolve()
+      return new Promise((resolve) => { waiters.push({ predicate, resolve }) })
+    },
+    reset() { entries.length = 0 },
+  }
+})
 
 vi.mock('../../server/projectLock', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../server/projectLock')>()
   return {
     ...actual,
     withProjectLock: <T>(dataRoot: string, id: string, task: () => Promise<T>): Promise<T> => {
-      projectLockCalls.push({ dataRoot, id })
-      return actual.withProjectLock(dataRoot, id, task)
+      const result = actual.withProjectLock(dataRoot, id, task)
+      lockProbe.record({ kind: 'project', dataRoot, ids: [id] })
+      return result
+    },
+    withProjectLocks: <T>(dataRoot: string, ids: readonly string[], task: () => Promise<T>): Promise<T> => {
+      const result = actual.withProjectLocks(dataRoot, ids, task)
+      lockProbe.record({ kind: 'multi', dataRoot, ids: [...ids] })
+      return result
     },
   }
 })
@@ -45,6 +68,7 @@ async function holdProject(dataRoot: string, id: string): Promise<{
 
 afterEach(async () => {
   await Promise.all(dirs.splice(0).map((d) => fs.rm(d, { recursive: true, force: true })))
+  lockProbe.reset()
 })
 
 async function seedSourceCanvas(d: string): Promise<string> {
@@ -66,14 +90,13 @@ test('note migration waits for the project lock and transforms the current canva
   const d = await root()
   const path = await seedSourceCanvas(d)
   const hold = await holdProject(d, 'essay')
-  projectLockCalls.length = 0
-  let settled = false
-  const migration = migrateSourceCardsToNotes(d).finally(() => { settled = true })
+  lockProbe.reset()
+  const migration = migrateSourceCardsToNotes(d)
   try {
-    await vi.waitFor(() => {
-      expect(projectLockCalls).toContainEqual({ dataRoot: d, id: 'essay' })
-    })
-    expect(settled).toBe(false)
+    await lockProbe.waitFor((entries) => entries.some(
+      (entry) => entry.kind === 'project' && entry.dataRoot === d && entry.ids[0] === 'essay',
+    ))
+    expect(await fs.readFile(path, 'utf8')).toContain('"kind":"source"')
   } finally {
     hold.release()
     await Promise.all([hold.done, migration])
@@ -84,6 +107,56 @@ test('note migration waits for the project lock and transforms the current canva
     noteKind: 'quote',
   })
   expect(migrated.document.store['shape:a'].props).not.toHaveProperty('sourceKind')
+})
+
+test('note migration queued before rename transforms the canvas that is moved', async () => {
+  const d = await root()
+  await seedSourceCanvas(d)
+  const hold = await holdProject(d, 'essay')
+  lockProbe.reset()
+  const migration = migrateSourceCardsToNotes(d)
+  await lockProbe.waitFor((entries) => entries.some(
+    (entry) => entry.kind === 'project' && entry.dataRoot === d && entry.ids[0] === 'essay',
+  ))
+  const rename = renameProject(d, 'essay', 'Final')
+  await lockProbe.waitFor((entries) => entries.some(
+    (entry) => entry.kind === 'multi' && entry.dataRoot === d && entry.ids.includes('essay'),
+  ))
+  hold.release()
+  await Promise.all([hold.done, migration, rename])
+  const migrated = JSON.parse(await fs.readFile(canvasPathFor(d, 'final')!, 'utf8'))
+  expect(migrated.document.store['shape:a'].props).toMatchObject({
+    kind: 'note',
+    noteKind: 'quote',
+  })
+  await expect(fs.access(join(d, 'projects', 'essay'))).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+test('note migration queued after rename skips the stale id without recreating it', async () => {
+  const d = await root()
+  await seedSourceCanvas(d)
+  const hold = await holdProject(d, 'essay')
+  lockProbe.reset()
+  const rename = renameProject(d, 'essay', 'Final')
+  await lockProbe.waitFor((entries) => entries.some(
+    (entry) => entry.kind === 'multi' && entry.dataRoot === d && entry.ids.includes('essay'),
+  ))
+  const staleMigration = migrateSourceCardsToNotes(d)
+  await lockProbe.waitFor((entries) => entries.some(
+    (entry) => entry.kind === 'project' && entry.dataRoot === d && entry.ids[0] === 'essay',
+  ))
+  hold.release()
+  await Promise.all([hold.done, rename, staleMigration])
+  await expect(fs.access(join(d, 'projects', 'essay'))).rejects.toMatchObject({ code: 'ENOENT' })
+  const finalPath = canvasPathFor(d, 'final')!
+  const beforeRerun = JSON.parse(await fs.readFile(finalPath, 'utf8'))
+  expect(beforeRerun.document.store['shape:a'].props.kind).toBe('source')
+  await migrateSourceCardsToNotes(d)
+  const afterRerun = JSON.parse(await fs.readFile(finalPath, 'utf8'))
+  expect(afterRerun.document.store['shape:a'].props).toMatchObject({
+    kind: 'note',
+    noteKind: 'quote',
+  })
 })
 
 test('a completed note migration is byte-stable on rerun', async () => {

@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'vitest'
+import { afterEach, expect, test, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -12,7 +12,49 @@ import {
   slugify,
   projectDir,
 } from '../../server/projects'
-import { withProjectLock } from '../../server/projectLock'
+import { withProjectLock, withProjectNamespaceLock } from '../../server/projectLock'
+
+const lockProbe = vi.hoisted(() => {
+  type Entry = { kind: 'project' | 'multi' | 'namespace'; dataRoot: string; ids: string[] }
+  const entries: Entry[] = []
+  const waiters: Array<{ predicate: (current: Entry[]) => boolean; resolve: () => void }> = []
+  return {
+    entries,
+    record(entry: Entry) {
+      entries.push(entry)
+      for (let i = waiters.length - 1; i >= 0; i--) {
+        if (waiters[i].predicate(entries)) waiters.splice(i, 1)[0].resolve()
+      }
+    },
+    waitFor(predicate: (current: Entry[]) => boolean): Promise<void> {
+      if (predicate(entries)) return Promise.resolve()
+      return new Promise((resolve) => { waiters.push({ predicate, resolve }) })
+    },
+    reset() { entries.length = 0 },
+  }
+})
+
+vi.mock('../../server/projectLock', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../server/projectLock')>()
+  return {
+    ...actual,
+    withProjectLock: <T>(dataRoot: string, id: string, task: () => Promise<T>): Promise<T> => {
+      const result = actual.withProjectLock(dataRoot, id, task)
+      lockProbe.record({ kind: 'project', dataRoot, ids: [id] })
+      return result
+    },
+    withProjectLocks: <T>(dataRoot: string, ids: readonly string[], task: () => Promise<T>): Promise<T> => {
+      const result = actual.withProjectLocks(dataRoot, ids, task)
+      lockProbe.record({ kind: 'multi', dataRoot, ids: [...ids] })
+      return result
+    },
+    withProjectNamespaceLock: <T>(dataRoot: string, task: () => Promise<T>): Promise<T> => {
+      const result = actual.withProjectNamespaceLock(dataRoot, task)
+      lockProbe.record({ kind: 'namespace', dataRoot, ids: [] })
+      return result
+    },
+  }
+})
 
 let dirs: string[] = []
 async function root() {
@@ -23,6 +65,7 @@ async function root() {
 afterEach(async () => {
   await Promise.all(dirs.map((d) => fs.rm(d, { recursive: true, force: true })))
   dirs = []
+  lockProbe.reset()
 })
 
 test('slugify makes a filesystem-safe id', () => {
@@ -120,14 +163,43 @@ test('rename waits for an active old-project mutation and moves its result', asy
     await gate
   })
   await started
+  lockProbe.reset()
   const rename = renameProject(d, 'draft', 'Final')
-  await new Promise<void>((resolve) => setTimeout(resolve, 100))
+  await lockProbe.waitFor((entries) => entries.some(
+    (entry) => entry.kind === 'multi' && entry.dataRoot === d && entry.ids.includes('draft'),
+  ))
   const oldDirectoryExists = await fs.access(join(d, 'projects', 'draft'))
     .then(() => true, () => false)
   release()
   await Promise.all([mutation, rename])
   expect(oldDirectoryExists).toBe(true)
   await expect(fs.readFile(join(d, 'projects', 'final', 'marker'), 'utf8')).resolves.toBe('kept')
+})
+
+test('concurrent renames allocate colliding slugs under the namespace lock', async () => {
+  const d = await root()
+  await createProject(d, 'Alpha', '2026-07-02T10:00:00.000Z')
+  await createProject(d, 'Beta', '2026-07-02T11:00:00.000Z')
+  let release!: () => void
+  let entered!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const started = new Promise<void>((resolve) => { entered = resolve })
+  const hold = withProjectNamespaceLock(d, async () => {
+    entered()
+    await gate
+  })
+  await started
+  lockProbe.reset()
+  const alpha = renameProject(d, 'alpha', 'Report')
+  const beta = renameProject(d, 'beta', 'Report')
+  await lockProbe.waitFor((entries) => entries.filter(
+    (entry) => entry.kind === 'namespace' && entry.dataRoot === d,
+  ).length === 2)
+  release()
+  const renamed = await Promise.all([alpha, beta])
+  await hold
+  expect(renamed.map((project) => project.id).sort()).toEqual(['report', 'report-2'])
+  expect((await listProjects(d)).map((project) => project.id).sort()).toEqual(['report', 'report-2'])
 })
 
 test('resyncProjectIds re-slugs a drifted project and is idempotent', async () => {

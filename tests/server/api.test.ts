@@ -4,19 +4,49 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import request from 'supertest'
 import { createServer } from '../../server/app'
-import { renameProject, canvasPathFor, projectAliveGuard } from '../../server/projects'
-import { writeCanvas, ProjectGoneError } from '../../server/store'
 import { withProjectLock } from '../../server/projectLock'
+
+const lockProbe = vi.hoisted(() => {
+  type Entry = { kind: 'project' | 'multi'; dataRoot: string; ids: string[] }
+  const entries: Entry[] = []
+  const waiters: Array<{ predicate: (current: Entry[]) => boolean; resolve: () => void }> = []
+  return {
+    record(entry: Entry) {
+      entries.push(entry)
+      for (let i = waiters.length - 1; i >= 0; i--) {
+        if (waiters[i].predicate(entries)) waiters.splice(i, 1)[0].resolve()
+      }
+    },
+    waitFor(predicate: (current: Entry[]) => boolean): Promise<void> {
+      if (predicate(entries)) return Promise.resolve()
+      return new Promise((resolve) => { waiters.push({ predicate, resolve }) })
+    },
+    reset() { entries.length = 0 },
+  }
+})
+
+vi.mock('../../server/projectLock', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../server/projectLock')>()
+  return {
+    ...actual,
+    withProjectLock: <T>(dataRoot: string, id: string, task: () => Promise<T>): Promise<T> => {
+      const result = actual.withProjectLock(dataRoot, id, task)
+      lockProbe.record({ kind: 'project', dataRoot, ids: [id] })
+      return result
+    },
+    withProjectLocks: <T>(dataRoot: string, ids: readonly string[], task: () => Promise<T>): Promise<T> => {
+      const result = actual.withProjectLocks(dataRoot, ids, task)
+      lockProbe.record({ kind: 'multi', dataRoot, ids: [...ids] })
+      return result
+    },
+  }
+})
 
 let dirs: string[] = []
 async function appWithTmp() {
   const d = await fs.mkdtemp(join(tmpdir(), 'elves-api-'))
   dirs.push(d)
   return createServer(d)
-}
-
-async function nextEventLoopTurn(): Promise<void> {
-  await new Promise<void>((resolve) => setImmediate(resolve))
 }
 
 async function holdProject(dataRoot: string, id: string): Promise<{
@@ -35,24 +65,56 @@ async function holdProject(dataRoot: string, id: string): Promise<{
   return { release, done }
 }
 
-async function observeSettlement<T>(promise: Promise<T>): Promise<{
-  done: Promise<T>
-  settled: () => boolean
-}> {
-  let value = false
-  const done = promise.finally(() => { value = true })
-  for (let turn = 0; turn < 8; turn++) await nextEventLoopTurn()
-  // Supertest's loopback socket can take longer than a handful of immediate
-  // turns to dispatch. Give an unlocked handler a brief real-I/O window to
-  // settle; a correctly locked mutation remains queued behind holdProject.
-  await new Promise<void>((resolve) => setTimeout(resolve, 50))
-  return { done, settled: () => value }
+async function waitForProjectQueue(dataRoot: string, id: string): Promise<void> {
+  await lockProbe.waitFor((entries) => entries.some(
+    (entry) => entry.kind === 'project' && entry.dataRoot === dataRoot && entry.ids[0] === id,
+  ))
+}
+
+async function waitForRenameQueue(dataRoot: string, oldId: string, newId: string): Promise<void> {
+  await lockProbe.waitFor((entries) => entries.some(
+    (entry) => entry.kind === 'multi' && entry.dataRoot === dataRoot
+      && entry.ids.includes(oldId) && entry.ids.includes(newId),
+  ))
+}
+
+async function mutationBeforeRename<T, U>(
+  dataRoot: string,
+  mutation: () => Promise<T>,
+  rename: () => Promise<U>,
+): Promise<[T, U]> {
+  const hold = await holdProject(dataRoot, 'essay')
+  lockProbe.reset()
+  const mutationResult = mutation()
+  await waitForProjectQueue(dataRoot, 'essay')
+  const renameResult = rename()
+  await waitForRenameQueue(dataRoot, 'essay', 'final')
+  hold.release()
+  await hold.done
+  return Promise.all([mutationResult, renameResult])
+}
+
+async function renameBeforeMutation<T, U>(
+  dataRoot: string,
+  rename: () => Promise<T>,
+  mutation: () => Promise<U>,
+): Promise<[T, U]> {
+  const hold = await holdProject(dataRoot, 'essay')
+  lockProbe.reset()
+  const renameResult = rename()
+  await waitForRenameQueue(dataRoot, 'essay', 'final')
+  const mutationResult = mutation()
+  await waitForProjectQueue(dataRoot, 'essay')
+  hold.release()
+  await hold.done
+  return Promise.all([renameResult, mutationResult])
 }
 afterEach(async () => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
   await Promise.all(dirs.map((d) => fs.rm(d, { recursive: true, force: true })))
   dirs = []
+  lockProbe.reset()
 })
 
 // A minimal card shape record for canvas fixtures; override props as needed.
@@ -226,106 +288,113 @@ test('DELETE canvas on an unknown project → 404', async () => {
   expect((await request(app).delete('/projects/ghost/canvas')).status).toBe(404)
 })
 
-test('a canvas save participates in the project lock and survives rename', async () => {
+test('a canvas save queued before rename completes and moves with the project', async () => {
   const app = await appWithTmp()
   const dataRoot = dirs[dirs.length - 1]
   await request(app).post('/projects').send({ name: 'Essay' })
-  const hold = await holdProject(dataRoot, 'essay')
   const snapshot = { document: { records: [{ id: 'queued-save' }] }, session: null }
-  const save = await observeSettlement(
-    Promise.resolve(request(app).post('/projects/essay/canvas').send(snapshot)),
+  const [save, rename] = await mutationBeforeRename(
+    dataRoot,
+    () => request(app).post('/projects/essay/canvas').send(snapshot).then((response) => response),
+    () => request(app).patch('/projects/essay').send({ name: 'Final' }).then((response) => response),
   )
-  expect(save.settled()).toBe(false)
-  hold.release()
-  await hold.done
-  expect((await save.done).status).toBe(200)
-  const renamed = await request(app).patch('/projects/essay').send({ name: 'Final' })
-  expect(renamed.status).toBe(200)
+  expect(save.status).toBe(200)
+  expect(rename.status).toBe(200)
   expect((await request(app).get('/projects/final/canvas')).body).toEqual(snapshot)
   await expect(fs.access(join(dataRoot, 'projects', 'essay'))).rejects.toMatchObject({ code: 'ENOENT' })
 })
 
-test('asset upload participates in the project lock', async () => {
+test('an asset upload queued before rename completes in the renamed project', async () => {
   const app = await appWithTmp()
   const dataRoot = dirs[dirs.length - 1]
   await request(app).post('/projects').send({ name: 'Essay' })
-  const hold = await holdProject(dataRoot, 'essay')
-  const upload = await observeSettlement(Promise.resolve(
-    request(app).post('/projects/essay/assets').set('content-type', 'image/png').send(Buffer.from([1])),
-  ))
-  expect(upload.settled()).toBe(false)
-  hold.release()
-  await hold.done
-  const response = await upload.done
-  expect(response.status).toBe(200)
-  expect(response.body.assetId).toMatch(/\.png$/)
+  const [upload, rename] = await mutationBeforeRename(
+    dataRoot,
+    () => request(app).post('/projects/essay/assets')
+      .set('content-type', 'image/png')
+      .send(Buffer.from([1]))
+      .then((response) => response),
+    () => request(app).patch('/projects/essay').send({ name: 'Final' }).then((response) => response),
+  )
+  expect(upload.status).toBe(200)
+  expect(rename.status).toBe(200)
+  expect(upload.body.assetId).toMatch(/\.png$/)
+  await expect(
+    fs.readFile(join(dataRoot, 'projects', 'final', 'assets', upload.body.assetId)),
+  ).resolves.toEqual(Buffer.from([1]))
+  await expect(fs.access(join(dataRoot, 'projects', 'essay'))).rejects.toMatchObject({ code: 'ENOENT' })
 })
 
-test('review creation participates in the project lock', async () => {
+test('a review creation queued before rename completes in the renamed project', async () => {
   const app = await appWithTmp()
   const dataRoot = dirs[dirs.length - 1]
   await request(app).post('/projects').send({ name: 'Essay' })
-  const hold = await holdProject(dataRoot, 'essay')
-  const create = await observeSettlement(Promise.resolve(
-    request(app).post('/projects/essay/reviews').send({
+  const [create, rename] = await mutationBeforeRename(
+    dataRoot,
+    () => request(app).post('/projects/essay/reviews').send({
       personality: 'trimmer',
       agent: 'reviewer',
-    }),
-  ))
-  expect(create.settled()).toBe(false)
-  hold.release()
-  await hold.done
-  const response = await create.done
-  expect(response.status).toBe(200)
-  expect(response.body.review).toMatchObject({ personality: 'trimmer', status: 'in-progress' })
+    }).then((response) => response),
+    () => request(app).patch('/projects/essay').send({ name: 'Final' }).then((response) => response),
+  )
+  expect(create.status).toBe(200)
+  expect(rename.status).toBe(200)
+  expect(create.body.review).toMatchObject({ personality: 'trimmer', status: 'in-progress' })
+  const reviews = await request(app).get('/projects/final/reviews')
+  expect(reviews.body.reviews).toContainEqual(create.body.review)
+  await expect(fs.access(join(dataRoot, 'projects', 'essay'))).rejects.toMatchObject({ code: 'ENOENT' })
 })
 
-// Regression for the orphan-directory bug (#36): requireProject bakes the
-// canvas path from the OLD id synchronously, then `await getProject` resolves
-// afterwards. If a rename lands in that gap, the write that follows — however
-// much later it actually runs, whether the chain is congested or not — must
-// not recreate the just-renamed-away directory. Before the fix, doWrite's
-// blind `mkdir(dirname(path), { recursive: true })` did exactly that,
-// producing an orphan folder with a canvas.json but no project.json, while
-// the save silently never reached the project's real, renamed home.
-//
-// This reproduces the same end state the HTTP handler would race into: paths
-// (and the projectAliveGuard app.ts attaches to the write) resolved for the
-// OLD id, a rename landing before the write actually executes, then the
-// write running against those now-stale paths. Calling renameProject +
-// writeCanvas directly (the same functions the handlers call) makes the
-// interleaving deterministic rather than dependent on real wall-clock timing,
-// per the issue's fallback guidance.
-test('a canvas save racing a rename does not resurrect the old project directory', async () => {
+test('rename queued before an HTTP canvas save makes the old-id writer 404 without an orphan', async () => {
   const app = await appWithTmp()
   const dataRoot = dirs[dirs.length - 1]
   await request(app).post('/projects').send({ name: 'Essay' })
-
-  // requireProject would have baked these paths (and app.ts would have built
-  // this guard) from the OLD id "essay" before the rename below landed.
-  const oldCanvasPath = canvasPathFor(dataRoot, 'essay')!
-  const staleGuard = projectAliveGuard(dataRoot, 'essay')
-
-  // The rename lands first (as it would while the raced save's write is still
-  // queued/in flight against the stale paths above).
-  const renamed = await renameProject(dataRoot, 'essay', 'Final Essay')
-  expect(renamed.id).toBe('final-essay')
-
-  // The raced save's write only runs now, against the stale "essay" paths.
-  const racedSave = writeCanvas(
-    oldCanvasPath,
-    { document: { schema: 1, records: [{ id: 'raced' }] }, session: null },
-    staleGuard,
+  const [renameResponse, saveResponse] = await renameBeforeMutation(
+    dataRoot,
+    () => request(app).patch('/projects/essay').send({ name: 'Final' }).then((response) => response),
+    () => request(app).post('/projects/essay/canvas')
+      .send({ document: { schema: 1, records: [{ id: 'raced' }] }, session: null })
+      .then((response) => response),
   )
-  await expect(racedSave).rejects.toBeInstanceOf(ProjectGoneError)
-
-  // No orphaned directory: the old id must not exist at all.
-  const oldDirExists = await fs.access(join(dataRoot, 'projects', 'essay')).then(() => true, () => false)
-  expect(oldDirExists).toBe(false)
-
-  // The renamed project is untouched — the raced save never landed anywhere.
-  const finalCanvas = await request(app).get('/projects/final-essay/canvas')
+  expect(renameResponse.status).toBe(200)
+  expect(saveResponse.status).toBe(404)
+  await expect(fs.access(join(dataRoot, 'projects', 'essay'))).rejects.toMatchObject({ code: 'ENOENT' })
+  const finalCanvas = await request(app).get('/projects/final/canvas')
   expect(finalCanvas.body).toEqual({ document: null, session: null })
+})
+
+test('rename queued before an asset upload makes the old-id writer 404 without an orphan', async () => {
+  const app = await appWithTmp()
+  const dataRoot = dirs[dirs.length - 1]
+  await request(app).post('/projects').send({ name: 'Essay' })
+  const [renameResponse, uploadResponse] = await renameBeforeMutation(
+    dataRoot,
+    () => request(app).patch('/projects/essay').send({ name: 'Final' }).then((response) => response),
+    () => request(app).post('/projects/essay/assets')
+      .set('content-type', 'image/png')
+      .send(Buffer.from([1]))
+      .then((response) => response),
+  )
+  expect(renameResponse.status).toBe(200)
+  expect(uploadResponse.status).toBe(404)
+  await expect(fs.access(join(dataRoot, 'projects', 'essay'))).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+test('rename queued before review creation makes the old-id writer 404 without an orphan', async () => {
+  const app = await appWithTmp()
+  const dataRoot = dirs[dirs.length - 1]
+  await request(app).post('/projects').send({ name: 'Essay' })
+  const [renameResponse, reviewResponse] = await renameBeforeMutation(
+    dataRoot,
+    () => request(app).patch('/projects/essay').send({ name: 'Final' }).then((response) => response),
+    () => request(app).post('/projects/essay/reviews')
+      .send({ personality: 'trimmer', agent: 'reviewer' })
+      .then((response) => response),
+  )
+  expect(renameResponse.status).toBe(200)
+  expect(reviewResponse.status).toBe(404)
+  expect((await request(app).get('/projects/final/reviews')).body).toEqual({ reviews: [] })
+  await expect(fs.access(join(dataRoot, 'projects', 'essay'))).rejects.toMatchObject({ code: 'ENOENT' })
 })
 
 test('unfurl requires a valid http(s) url', async () => {
