@@ -127,4 +127,77 @@ describe('safeFetch', () => {
     expect(res.status).toBe(200)
     expect(await res.text()).toBe('final')
   })
+
+  test('cancels one redirect body but leaves the final response readable', async () => {
+    const resolver = { lookup: async () => [{ address: '93.184.216.34', family: 4 }] as any }
+    let redirectCancelled = false
+    let finalCancelled = false
+    const fetchImpl = async (url: string | URL) => {
+      if (String(url) === 'http://public.example/') {
+        return new Response(new ReadableStream({
+          start(controller) { controller.enqueue(new TextEncoder().encode('redirect body')) },
+          cancel() { redirectCancelled = true },
+        }), { status: 302, headers: { location: '/final' } })
+      }
+      return new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('final'))
+          controller.close()
+        },
+        cancel() { finalCancelled = true },
+      }), { status: 200 })
+    }
+
+    const res = await safeFetch(
+      'http://public.example/', {}, { resolver, fetchImpl: fetchImpl as any },
+    )
+
+    expect(redirectCancelled).toBe(true)
+    expect(finalCancelled).toBe(false)
+    expect(await res.text()).toBe('final')
+    expect(finalCancelled).toBe(false)
+  })
+
+  test('cancels every intermediate body in a multi-hop redirect chain', async () => {
+    const resolver = { lookup: async () => [{ address: '93.184.216.34', family: 4 }] as any }
+    const cancelled = [false, false]
+    let call = 0
+    const fetchImpl = async () => {
+      const hop = call++
+      if (hop < 2) {
+        return new Response(new ReadableStream({
+          start(controller) { controller.enqueue(new Uint8Array([hop])) },
+          cancel() { cancelled[hop] = true },
+        }), { status: 302, headers: { location: `/hop-${hop + 1}` } })
+      }
+      return new Response('final', { status: 200 })
+    }
+
+    const res = await safeFetch(
+      'http://public.example/', {}, { resolver, fetchImpl: fetchImpl as any },
+    )
+
+    expect(cancelled).toEqual([true, true])
+    expect(await res.text()).toBe('final')
+  })
+
+  test('does not fetch the next hop when redirect body cancellation fails', async () => {
+    const resolver = { lookup: async () => [{ address: '93.184.216.34', family: 4 }] as any }
+    const cancelError = new Error('cancel failed')
+    let fetches = 0
+    const fetchImpl = async () => {
+      fetches++
+      return fetches === 1
+        ? new Response(new ReadableStream({
+            start(controller) { controller.enqueue(new Uint8Array([1])) },
+            cancel() { return Promise.reject(cancelError) },
+          }), { status: 302, headers: { location: '/next' } })
+        : new Response('should not fetch', { status: 200 })
+    }
+
+    await expect(safeFetch(
+      'http://public.example/', {}, { resolver, fetchImpl: fetchImpl as any },
+    )).rejects.toBe(cancelError)
+    expect(fetches).toBe(1)
+  })
 })

@@ -176,6 +176,7 @@ export async function safeFetch(
     const res = await doFetch(currentUrl, { ...init, redirect: 'manual' })
     const location = res.headers.get('location')
     if (res.status >= 300 && res.status < 400 && location) {
+      await res.body?.cancel()
       currentUrl = new URL(location, currentUrl).toString()
       continue
     }
