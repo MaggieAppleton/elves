@@ -131,10 +131,29 @@ export function writeCanvas(
   return withCanvasLock(path, () => data, stillValid).then(() => undefined)
 }
 
+/**
+ * Replace a canvas with an explicit server-computed tombstone. The computation,
+ * backup, and atomic write share the normal per-path canvas queue, but this path
+ * intentionally bypasses the empty-document overwrite refusal used by saves.
+ */
+export function replaceCanvasWithTombstone(
+  path: string,
+  compute: (current: CanvasSnapshot) => CanvasSnapshot | Promise<CanvasSnapshot>,
+  stillValid?: () => Promise<boolean>,
+): Promise<CanvasSnapshot> {
+  return enqueue(path, async () => {
+    const current = await readCanvas(path)
+    const tombstone = await compute(current)
+    await doWrite(path, tombstone, stillValid, true)
+    return tombstone
+  })
+}
+
 async function doWrite(
   path: string,
   data: CanvasSnapshot,
   stillValid?: () => Promise<boolean>,
+  allowEmptyOverwrite = false,
 ): Promise<void> {
   // Refuse to write — and never recreate a directory the caller's guard says
   // is gone (e.g. a project renamed/deleted between path resolution and this
@@ -148,7 +167,7 @@ async function doWrite(
   // canvas that is itself empty or missing — overwriting a real document with
   // nothing is the data-loss case, so we refuse it. Deliberately clearing a
   // canvas is a separate, explicit operation (clearCanvas).
-  if (!hasDocument(data)) {
+  if (!allowEmptyOverwrite && !hasDocument(data)) {
     let existing: string | null = null
     try {
       existing = await fs.readFile(path, 'utf8')
