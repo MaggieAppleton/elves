@@ -11,9 +11,12 @@ export interface AgentRunInput {
 }
 
 export interface AgentRunHandle {
-  /** Abort our read of the stream AND tell the server to kill the child. */
-  cancel: () => void
-  /** Resolves when the stream ends (naturally, on error, or on cancel). */
+  readonly runId: string
+  /** Tell the server to terminate the child while continuing to observe its stream. */
+  requestCancel: () => Promise<void>
+  /** Suppress callbacks while continuing to observe this stream's termination. */
+  dispose: () => void
+  /** Resolves when the server closes the stream. */
   done: Promise<void>
 }
 
@@ -27,7 +30,11 @@ export interface AgentRunHandle {
  * carries only the transcript (its text + tool calls + final reply).
  */
 export function runAgent(input: AgentRunInput, onEvent: (e: AgentEvent) => void): AgentRunHandle {
-  const ctrl = new AbortController()
+  const runId = crypto.randomUUID()
+  let disposed = false
+  const emit = (event: AgentEvent) => {
+    if (!disposed) onEvent(event)
+  }
 
   const done = (async () => {
     let res: Response
@@ -35,15 +42,12 @@ export function runAgent(input: AgentRunInput, onEvent: (e: AgentEvent) => void)
       res = await fetch(`${BASE}/agent/run`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(input),
-        signal: ctrl.signal,
+        body: JSON.stringify({ ...input, runId }),
       })
     } catch {
-      // A pre-response abort is a user cancel, not an error worth surfacing.
-      if (!ctrl.signal.aborted) onEvent({ type: 'error', message: 'could not reach the server — is it running?' })
+      if (!disposed) emit({ type: 'error', message: 'could not reach the server — is it running?' })
       return
     }
-
     if (!res.ok || !res.body) {
       // The server refused before streaming (400/409/501) — it answers JSON here.
       let message = `the run could not start (${res.status})`
@@ -53,7 +57,7 @@ export function runAgent(input: AgentRunInput, onEvent: (e: AgentEvent) => void)
       } catch {
         /* keep the status-code message */
       }
-      onEvent({ type: 'error', message })
+      emit({ type: 'error', message })
       return
     }
 
@@ -70,20 +74,39 @@ export function runAgent(input: AgentRunInput, onEvent: (e: AgentEvent) => void)
         while ((sep = buf.indexOf('\n\n')) >= 0) {
           const frame = buf.slice(0, sep)
           buf = buf.slice(sep + 2)
-          handleFrame(frame, onEvent)
+          handleFrame(frame, emit)
         }
       }
     } catch {
-      if (!ctrl.signal.aborted) onEvent({ type: 'error', message: 'the agent stream was interrupted' })
+      if (!disposed) emit({ type: 'error', message: 'the agent stream was interrupted' })
     }
   })()
 
   return {
-    cancel: () => {
-      ctrl.abort()
-      // Aborting only drops our reader; the child keeps running until we ask the
-      // server to kill it. Fire-and-forget — nothing to do if it 404s.
-      fetch(`${BASE}/agent/cancel`, { method: 'POST' }).catch(() => {})
+    runId,
+    requestCancel: async () => {
+      let res: Response
+      try {
+        res = await fetch(`${BASE}/agent/cancel`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ runId }),
+        })
+      } catch {
+        throw new Error('could not reach the server to cancel the agent run')
+      }
+      if (res.ok) return
+      let message = `the run could not be cancelled (${res.status})`
+      try {
+        const body = await res.json()
+        if (body?.error) message = body.error
+      } catch {
+        /* keep the status-code message */
+      }
+      throw new Error(message)
+    },
+    dispose: () => {
+      disposed = true
     },
     done,
   }

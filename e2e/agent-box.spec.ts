@@ -8,6 +8,50 @@ import { resetProject } from './helpers'
 const sse = (frames: string[]) => frames.map((f) => `${f}\n\n`).join('') + 'event: end\ndata: {}\n\n'
 const dataFrame = (e: unknown) => `data: ${JSON.stringify(e)}`
 
+async function installAgentStream(page: import('@playwright/test').Page) {
+  await page.addInitScript(() => {
+    const originalFetch = fetch.bind(globalThis)
+    const encoder = new TextEncoder()
+    let controller: ReadableStreamDefaultController<Uint8Array> | undefined
+    let cancelStatus = 200
+    let releaseRunResponse: (() => void) | undefined
+    let runResponseGate: Promise<void> | undefined
+    const cancelBodies: Array<{ runId: string }> = []
+    ;(window as any).__agentTest = {
+      push: (event: unknown) => controller?.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`)),
+      end: () => {
+        controller?.enqueue(encoder.encode('event: end\ndata: {}\n\n'))
+        controller?.close()
+      },
+      setCancelStatus: (status: number) => { cancelStatus = status },
+      holdRunResponse: () => {
+        runResponseGate = new Promise<void>((resolve) => { releaseRunResponse = resolve })
+      },
+      releaseRunResponse: () => releaseRunResponse?.(),
+      cancelBodies,
+    }
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/agent/run')) {
+        await runResponseGate
+        return new Response(new ReadableStream<Uint8Array>({ start(c) { controller = c } }), {
+          headers: { 'content-type': 'text/event-stream' },
+        })
+      }
+      if (url.endsWith('/agent/cancel')) {
+        cancelBodies.push(JSON.parse(String(init?.body)))
+        return new Response(JSON.stringify(cancelStatus === 200
+          ? { ok: true }
+          : { code: 'signal-failed', error: 'could not signal the active agent run' }), {
+          status: cancelStatus,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return originalFetch(input, init)
+    }
+  })
+}
+
 test.beforeEach(async ({ request }) => {
   await resetProject(request)
 })
@@ -122,16 +166,20 @@ test('Esc closes the box', async ({ page }) => {
   await expect(page.locator('.elves-agentbox')).toBeHidden()
 })
 
-test('Cancel appears mid-run and hits the cancel endpoint', async ({ page }) => {
-  // Stream a `started` but no terminal event: the box stays in its running state
-  // (Cancel showing) until the user cancels.
-  await page.route('**/agent/run', (route) =>
-    route.fulfill({
+test('Cancel stays cancelling and blocks resubmission until the run stream ends', async ({ page }) => {
+  let endRun!: () => void
+  const runMayEnd = new Promise<void>((resolve) => { endRun = resolve })
+  await page.route('**/agent/run', async (route) => {
+    await runMayEnd
+    await route.fulfill({
       status: 200,
       headers: { 'content-type': 'text/event-stream' },
-      body: sse([dataFrame({ type: 'started' })]),
-    }),
-  )
+      body: sse([
+        dataFrame({ type: 'started' }),
+        dataFrame({ type: 'done', reply: 'Cancelled.' }),
+      ]),
+    })
+  })
   let cancelHit = false
   await page.route('**/agent/cancel', (route) => {
     cancelHit = true
@@ -148,24 +196,32 @@ test('Cancel appears mid-run and hits the cancel endpoint', async ({ page }) => 
   const cancel = page.getByTestId('agent-cancel')
   await expect(cancel).toBeVisible()
   await cancel.click()
+  await expect(cancel).toHaveText('Cancelling…')
+  await expect(cancel).toBeDisabled()
+  await expect(page.getByTestId('agent-input')).toBeDisabled()
+  await expect(page.getByTestId('agent-send')).toBeHidden()
+  await expect.poll(() => cancelHit).toBe(true)
+
+  endRun()
   await expect(page.getByTestId('agent-send')).toBeVisible()
-  expect(cancelHit).toBe(true)
+  await expect(page.getByTestId('agent-input')).toBeEnabled()
 })
 
 test('collapse shrinks the box to a live status bar and clicking it expands again', async ({ page }) => {
-  // Stream up to a tool call but no terminal event, so the run stays "running"
-  // and the bar shows the live activity ("Reading · 3 cards").
-  await page.route('**/agent/run', (route) =>
-    route.fulfill({
+  // Keep the response pending so the run is genuinely live while collapsed.
+  let endRun!: () => void
+  const runMayEnd = new Promise<void>((resolve) => { endRun = resolve })
+  await page.route('**/agent/run', async (route) => {
+    await runMayEnd
+    await route.fulfill({
       status: 200,
       headers: { 'content-type': 'text/event-stream' },
       body: sse([
         dataFrame({ type: 'started' }),
-        dataFrame({ type: 'text', text: 'Looking at your cards.' }),
-        dataFrame({ type: 'tool', name: 'read_cards', summary: '3 cards' }),
+        dataFrame({ type: 'done', reply: 'Done.' }),
       ]),
-    }),
-  )
+    })
+  })
 
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
@@ -173,14 +229,12 @@ test('collapse shrinks the box to a live status bar and clicking it expands agai
   await page.keyboard.press('/')
   await page.getByTestId('agent-input').fill('read my cards')
   await page.getByTestId('agent-send').click()
-  await expect(page.getByTestId('agent-transcript')).toContainText('Looking at your cards.')
 
-  // Collapse to the bar — the full box hides, the bar shows the current activity.
+  // Collapse to the bar — the full box hides, the bar shows the pending activity.
   await page.getByTestId('agent-collapse').click()
   const bar = page.getByTestId('agent-collapsed')
   await expect(bar).toBeVisible()
-  await expect(bar).toContainText('Reading')
-  await expect(bar).toContainText('3 cards')
+  await expect(bar).toContainText('Thinking')
   await expect(page.getByTestId('agent-transcript')).toBeHidden()
 
   // Collapsing did not cancel: the run is still going (Cancel still offered once
@@ -189,6 +243,9 @@ test('collapse shrinks the box to a live status bar and clicking it expands agai
   await expect(page.getByTestId('agent-transcript')).toBeVisible()
   await expect(page.getByTestId('agent-cancel')).toBeVisible()
   await expect(bar).toBeHidden()
+
+  endRun()
+  await expect(page.getByTestId('agent-send')).toBeVisible()
 })
 
 test('the clear button empties the transcript and closes the box', async ({ page }) => {
@@ -221,4 +278,73 @@ test('the clear button empties the transcript and closes the box', async ({ page
   await page.keyboard.press('/')
   await expect(page.locator('.elves-agentbox')).toBeVisible()
   await expect(page.getByTestId('agent-transcript')).toBeHidden()
+})
+
+test('clear and reopen stays locked to the live run until its stream ends', async ({ page }) => {
+  await installAgentStream(page)
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await page.keyboard.press('/')
+  await page.getByTestId('agent-input').fill('keep working')
+  await page.getByTestId('agent-send').click()
+  await page.evaluate(() => (window as any).__agentTest.push({ type: 'started' }))
+
+  await page.getByTestId('agent-clear').click()
+  await page.keyboard.press('/')
+  await expect(page.getByTestId('agent-cancel')).toHaveText('Cancelling…')
+  await expect(page.getByTestId('agent-input')).toBeDisabled()
+  await page.evaluate(() => (window as any).__agentTest.push({ type: 'text', text: 'stale reply' }))
+  await expect(page.getByTestId('agent-transcript')).not.toContainText('stale reply')
+  expect(await page.evaluate(() => (window as any).__agentTest.cancelBodies)).toEqual([
+    { runId: expect.stringMatching(/^[0-9a-f-]{36}$/) },
+  ])
+
+  await page.evaluate(() => (window as any).__agentTest.end())
+  await expect(page.getByTestId('agent-send')).toBeVisible()
+})
+
+test('clear before the run response still stays locked until the eventual stream ends', async ({ page }) => {
+  await installAgentStream(page)
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await page.evaluate(() => (window as any).__agentTest.holdRunResponse())
+  await page.keyboard.press('/')
+  await page.getByTestId('agent-input').fill('start slowly')
+  await page.getByTestId('agent-send').click()
+
+  await page.getByTestId('agent-clear').click()
+  await page.keyboard.press('/')
+  await expect(page.getByTestId('agent-cancel')).toHaveText('Cancelling…')
+  await expect(page.getByTestId('agent-input')).toBeDisabled()
+
+  await page.evaluate(() => (window as any).__agentTest.releaseRunResponse())
+  await page.evaluate(() => (window as any).__agentTest.push({ type: 'started' }))
+  await expect(page.getByTestId('agent-cancel')).toHaveText('Cancelling…')
+  await page.evaluate(() => (window as any).__agentTest.end())
+  await expect(page.getByTestId('agent-send')).toBeVisible()
+})
+
+test('a failed cancel is shown and can be retried while the stream stays live', async ({ page }) => {
+  await installAgentStream(page)
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await page.evaluate(() => (window as any).__agentTest.setCancelStatus(503))
+  await page.keyboard.press('/')
+  await page.getByTestId('agent-input').fill('try to stop')
+  await page.getByTestId('agent-send').click()
+  await page.evaluate(() => (window as any).__agentTest.push({ type: 'started' }))
+
+  await page.getByTestId('agent-cancel').click()
+  await expect(page.getByTestId('agent-transcript')).toContainText('could not signal the active agent run')
+  await expect(page.getByTestId('agent-cancel')).toHaveText('Cancel')
+  await expect(page.getByTestId('agent-cancel')).toBeEnabled()
+
+  await page.evaluate(() => (window as any).__agentTest.setCancelStatus(200))
+  await page.getByTestId('agent-cancel').click()
+  await expect(page.getByTestId('agent-cancel')).toHaveText('Cancelling…')
+  await page.evaluate(() => {
+    ;(window as any).__agentTest.push({ type: 'done', reply: 'Cancelled.' })
+    ;(window as any).__agentTest.end()
+  })
+  await expect(page.getByTestId('agent-send')).toBeVisible()
 })

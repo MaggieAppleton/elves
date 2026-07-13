@@ -33,6 +33,7 @@ export type AgentEvent =
   | { type: 'error'; message: string }
 
 export interface AgentRunInput {
+  runId: string
   prompt: string
   projectId: string
   /** True when the user has cards selected — steers the preamble toward
@@ -199,7 +200,7 @@ export interface ChildLike {
   stderr: { on(ev: 'data', cb: (chunk: Buffer | string) => void): void } | null
   on(ev: 'error', cb: (err: Error) => void): void
   on(ev: 'close', cb: (code: number | null) => void): void
-  kill(signal?: NodeJS.Signals): void
+  kill(signal?: NodeJS.Signals): boolean
 }
 
 export type SpawnFn = (cmd: string, args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv }) => ChildLike
@@ -217,9 +218,15 @@ export interface AgentRunnerDeps {
 
 export interface AgentRunner {
   run(key: string, input: AgentRunInput, onEvent: (e: AgentEvent) => void): Promise<void>
-  cancel(key: string): void
+  cancel(key: string, runId: string): AgentCancelResult
   isRunning(key: string): boolean
 }
+
+export type AgentCancelResult =
+  | { status: 'accepted' }
+  | { status: 'not-running' }
+  | { status: 'run-mismatch' }
+  | { status: 'signal-failed' }
 
 /** ENOENT means the CLI isn't installed / not on PATH — the single most likely
  * failure, so name it plainly instead of leaking a raw errno. */
@@ -236,16 +243,22 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
   // Concurrent runs, keyed by caller: 'chat' for the chat box, 'review:<id>'
   // for an in-app review run. A key is single-flight (see run() below); across
   // keys there's no coordination at all — that's the whole point of the map.
-  const active = new Map<string, ChildLike>()
+  const active = new Map<string, { runId: string; child: ChildLike }>()
+  const cancelled = new WeakSet<ChildLike>()
 
   return {
     isRunning: (key) => active.has(key),
-    cancel(key) {
-      const child = active.get(key)
-      if (child) {
-        child.kill('SIGTERM')
-        active.delete(key)
+    cancel(key, runId) {
+      const current = active.get(key)
+      if (!current) return { status: 'not-running' }
+      if (current.runId !== runId) return { status: 'run-mismatch' }
+      try {
+        if (!current.child.kill('SIGTERM')) return { status: 'signal-failed' }
+      } catch {
+        return { status: 'signal-failed' }
       }
+      cancelled.add(current.child)
+      return { status: 'accepted' }
     },
     run(key, input, onEvent) {
       if (active.has(key)) {
@@ -274,7 +287,7 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
         return Promise.resolve()
       }
 
-      active.set(key, child)
+      active.set(key, { runId: input.runId, child })
       onEvent({ type: 'started' })
 
       // A terminal event (done/error) may come from the parsed stream OR be
@@ -308,19 +321,19 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
       return new Promise<void>((resolve) => {
         const finish = () => {
           // Only this run's own entry is ours to clear — a cancel() may have
-          // already deleted it (or, in principle, a new run under the same key
+          // been requested (or, in principle, a new run under the same key
           // could have replaced it), so check identity before deleting.
-          if (active.get(key) === child) active.delete(key)
+          if (active.get(key)?.child === child) active.delete(key)
           resolve()
         }
         child.on('error', (err) => {
           emit({ type: 'error', message: friendlySpawnError(cmd, err as NodeJS.ErrnoException) })
-          finish()
         })
         child.on('close', (code) => {
           // Flush a trailing line the stream left unterminated.
           if (buf.trim()) for (const e of adapter.parseLine(buf)) emit(e)
-          if (code === 0) emit({ type: 'done', reply: '' })
+          if (cancelled.has(child)) emit({ type: 'done', reply: 'Cancelled.' })
+          else if (code === 0) emit({ type: 'done', reply: '' })
           else emit({ type: 'error', message: stderr.trim() || `\`${cmd}\` exited with code ${code}.` })
           finish()
         })
