@@ -11,6 +11,7 @@ import { makeSectionProps } from '../src/model/sections'
 import { makeQuestionProps } from '../src/model/questions'
 import { reattribute } from '../src/model/attribution'
 import { resolvePageXY } from './digest'
+import { CANVAS_GAP, placeBelowObstacles, type LayoutRect } from '../src/model/layout'
 
 type StoreRecords = Record<string, any>
 
@@ -24,23 +25,24 @@ function findQuestionShape(store: StoreRecords, id: string): any | undefined {
   return r && r.typeName === 'shape' && r.type === 'question' ? r : undefined
 }
 
-/** Gap left below a card we had to slide a new one past. */
-const PLACEMENT_GAP = 24
 /** A card's stored height is understated until the browser measures it to fit
  * the text, so reserve at least this much when testing existing cards for
  * overlap — otherwise a freshly-created, never-rendered neighbour reads as tiny. */
 const MIN_CARD_H = CARD_DEFAULT_H
 
-interface Rect { x: number; y: number; w: number; h: number }
-
-function overlaps(a: Rect, b: Rect): boolean {
-  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
-}
-
-function existingCardRects(store: StoreRecords): Rect[] {
-  const rects: Rect[] = []
+function existingCardRects(
+  store: StoreRecords,
+  excludedIds: ReadonlySet<string> = new Set(),
+): LayoutRect[] {
+  const rects: LayoutRect[] = []
   for (const r of Object.values(store) as any[]) {
-    if (r?.typeName === 'shape' && r.type === 'card' && r.props) {
+    if (
+      r?.typeName === 'shape' &&
+      r.type === 'card' &&
+      r.props &&
+      !r.props.mergedInto &&
+      !excludedIds.has(r.id)
+    ) {
       const { x, y } = resolvePageXY(store, r)
       rects.push({ x, y, w: r.props.w ?? CARD_DEFAULT_W, h: Math.max(r.props.h ?? 0, MIN_CARD_H) })
     }
@@ -56,16 +58,8 @@ function existingCardRects(store: StoreRecords): Rect[] {
  * slot is clear. Only y moves, never x, so the card keeps its narrative order.
  */
 function placeClearOf(store: StoreRecords, x: number, y: number, w: number, h: number): { x: number; y: number } {
-  const rects = existingCardRects(store)
-  const cand: Rect = { x, y, w, h }
-  // Each pass clears the cards we currently hit; sliding down can reveal a lower
-  // card, so re-test. Bounded by the card count — worst case we pass them all.
-  for (let i = 0; i <= rects.length; i++) {
-    const hit = rects.filter((r) => overlaps(cand, r))
-    if (hit.length === 0) break
-    cand.y = Math.max(...hit.map((r) => r.y + r.h)) + PLACEMENT_GAP
-  }
-  return { x: cand.x, y: cand.y }
+  const placed = placeBelowObstacles({ x, y, w, h }, existingCardRects(store), CANVAS_GAP)
+  return { x: placed.x, y: placed.y }
 }
 
 function findGroupShape(store: StoreRecords, id: string): any | undefined {
@@ -145,14 +139,27 @@ export function applyChangeSetToSnapshot(
         break
       }
       case 'move_cards': {
+        const movingIds = new Set(
+          op.moves
+            .map((move) => findCardShape(store, move.cardId)?.id)
+            .filter((id): id is string => !!id),
+        )
+        const obstacles = existingCardRects(store, movingIds)
         for (const m of op.moves) {
           const shape = findCardShape(store, m.cardId)
           if (shape) {
+            const placed = placeBelowObstacles({
+              x: m.x,
+              y: m.y,
+              w: shape.props.w ?? CARD_DEFAULT_W,
+              h: Math.max(shape.props.h ?? 0, MIN_CARD_H),
+            }, obstacles)
             // The agent passes absolute page coords; a grouped card stores parent-local
             // coords, so subtract its parent's page origin (a no-op for top-level cards).
             const origin = parentOrigin(store, shape)
-            shape.x = m.x - origin.x
-            shape.y = m.y - origin.y
+            shape.x = placed.x - origin.x
+            shape.y = placed.y - origin.y
+            obstacles.push(placed)
           }
         }
         break

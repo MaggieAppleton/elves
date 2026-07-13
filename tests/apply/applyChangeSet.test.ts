@@ -101,6 +101,37 @@ describe('applyChangeSet affected-id contract', () => {
     ]))).toEqual(['card:a'])
   })
 
+  test('move_cards clears a stationary card by 24px', () => {
+    const ed = fakeEditor([
+      noteCard('card:a'),
+      { ...noteCard('card:b'), y: 200 },
+    ])
+
+    applyChangeSet(ed as unknown as Editor, cs([
+      { kind: 'move_cards', moves: [{ cardId: 'card:b', x: 0, y: 0 }] },
+    ]))
+
+    expect(ed._shapes.get('card:b')).toMatchObject({ x: 0, y: 84 })
+  })
+
+  test('move_cards stacks a moved batch without treating old positions as obstacles', () => {
+    const ed = fakeEditor([
+      noteCard('card:a'),
+      { ...noteCard('card:b'), y: 200 },
+      { ...noteCard('card:c'), y: 300 },
+    ])
+
+    applyChangeSet(ed as unknown as Editor, cs([
+      { kind: 'move_cards', moves: [
+        { cardId: 'card:b', x: 0, y: 0 },
+        { cardId: 'card:c', x: 0, y: 0 },
+      ] },
+    ]))
+
+    expect(ed._shapes.get('card:b')).toMatchObject({ x: 0, y: 84 })
+    expect(ed._shapes.get('card:c')).toMatchObject({ x: 0, y: 168 })
+  })
+
   test('create_note_card → the freshly-minted card id', () => {
     const ed = fakeEditor([])
     const ids = applyChangeSet(ed as unknown as Editor, cs([
