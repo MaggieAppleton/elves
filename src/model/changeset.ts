@@ -73,7 +73,7 @@ function hasPrototypeLikeKey(value: unknown): boolean {
     const current = pending.pop()
     if (typeof current !== 'object' || current === null || seen.has(current)) continue
     seen.add(current)
-    for (const key of Object.keys(current)) {
+    for (const key of Object.getOwnPropertyNames(current)) {
       if (PROTOTYPE_LIKE_KEYS.has(key)) return true
       pending.push((current as Record<string, unknown>)[key])
     }
@@ -134,6 +134,7 @@ function isOp(v: unknown): v is Op {
       return Array.isArray(op.cardIds) && op.cardIds.every((id) => typeof id === 'string')
     case 'move_cards':
       return Array.isArray(op.moves) && op.moves.every((m) => {
+        if (typeof m !== 'object' || m === null) return false
         const mm = m as Record<string, unknown>
         return typeof mm.cardId === 'string' && isFiniteNumber(mm.x) && isFiniteNumber(mm.y)
       })
@@ -154,6 +155,7 @@ function isOp(v: unknown): v is Op {
       return typeof op.cardId === 'string'
     case 'move_sections':
       return Array.isArray(op.moves) && op.moves.every((m) => {
+        if (typeof m !== 'object' || m === null) return false
         const mm = m as Record<string, unknown>
         return typeof mm.sectionId === 'string' && isFiniteNumber(mm.x) && isFiniteNumber(mm.y)
       })

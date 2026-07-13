@@ -165,9 +165,32 @@ function structuralBounds(value: unknown): BoundsFailure | null {
   return null
 }
 
+function hasOversizedSemanticArray(changeSet: ChangeSet): boolean {
+  for (const op of changeSet.ops) {
+    switch (op.kind) {
+      case 'merge_notes':
+      case 'group_cards':
+        if (Array.isArray(op.cardIds) && op.cardIds.length > MAX_CHANGE_SET_ARRAY_ITEMS) return true
+        break
+      case 'move_cards':
+      case 'move_sections':
+        if (Array.isArray(op.moves) && op.moves.length > MAX_CHANGE_SET_ARRAY_ITEMS) return true
+        break
+      case 'create_reference':
+        if (Array.isArray(op.reference?.authors) &&
+          op.reference.authors.length > MAX_CHANGE_SET_ARRAY_ITEMS) return true
+        break
+    }
+  }
+  return false
+}
+
 export function validateChangeSetBounds(changeSet: ChangeSet): { ok: true } | BoundsFailure {
   if (changeSet.ops.length > MAX_CHANGE_SET_OPS) {
     return { ok: false, code: 'too-many-ops' }
+  }
+  if (hasOversizedSemanticArray(changeSet)) {
+    return { ok: false, code: 'array-too-large' }
   }
   const semantic = semanticChangeSet(changeSet)
   const structuralFailure = structuralBounds(semantic)

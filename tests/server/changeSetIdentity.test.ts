@@ -210,6 +210,41 @@ describe('semantic change-set bounds', () => {
       .toEqual({ ok: false, code: 'array-too-large' })
   })
 
+  test('rejects every oversized semantic array before projection can copy it', () => {
+    const unreadableOversizedArray = <T>(): T[] => new Proxy(new Array<T>(2_049), {
+      get(target, property, receiver) {
+        if (property === 'map' || property === Symbol.iterator || /^\d+$/.test(String(property))) {
+          throw new Error('oversized array was traversed')
+        }
+        return Reflect.get(target, property, receiver)
+      },
+    })
+    const cases: ChangeSet[] = [
+      changeSet({ kind: 'merge_notes', cardIds: unreadableOversizedArray<string>() }),
+      changeSet({
+        kind: 'move_cards',
+        moves: unreadableOversizedArray<{ cardId: string; x: number; y: number }>(),
+      }),
+      changeSet({
+        kind: 'create_reference',
+        reference: { ...reference, authors: unreadableOversizedArray<string>() },
+        x: 1,
+        y: 2,
+      }),
+    ]
+    for (const input of cases) {
+      expect(() => validateChangeSetBounds(input)).not.toThrow()
+      expect(validateChangeSetBounds(input)).toEqual({ ok: false, code: 'array-too-large' })
+    }
+  })
+
+  test('oversized unknown extras do not affect semantic bounds', () => {
+    const input = changeSet(ALL_OPS.delete_card) as ChangeSet & Record<string, unknown>
+    input.unknown = new Array(2_049)
+    ;(input.ops[0] as Op & Record<string, unknown>).unknown = new Array(2_049)
+    expect(validateChangeSetBounds(input)).toEqual({ ok: true })
+  })
+
   test('allows semantic depth 16 and rejects depth 17', () => {
     const nested = (levels: number): unknown => {
       let value: unknown = 'leaf'
