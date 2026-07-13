@@ -6,6 +6,28 @@ test.beforeEach(async ({ request }) => {
   await resetProject(request)
 })
 
+test('toolbar-created cards stack vertically with a 24px gap', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  for (let i = 0; i < 3; i++) {
+    await page.getByTestId('new-prose').click()
+    await page.keyboard.press('Escape')
+  }
+
+  const boxes = await page.locator('.elves-card').evaluateAll((cards) =>
+    cards
+      .map((card) => {
+        const bounds = card.getBoundingClientRect()
+        return { top: bounds.top, bottom: bounds.bottom }
+      })
+      .sort((a, b) => a.top - b.top),
+  )
+  expect(boxes).toHaveLength(3)
+  expect(Math.round(boxes[1].top - boxes[0].bottom)).toBe(24)
+  expect(Math.round(boxes[2].top - boxes[1].bottom)).toBe(24)
+})
+
 test('create a prose card, type into it, and it survives reload', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })

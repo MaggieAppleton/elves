@@ -481,6 +481,40 @@ test('the placement guard leaves a clear position untouched and slides an overla
   expect(byText['on top']).toMatchObject({ x: 10, y: 144 })
 })
 
+test('the placement guard expands a too-small gap to 24px', async () => {
+  const d = await rootWithProject()
+  const app = createServer(d)
+  await request(app).post('/projects/essay/canvas').send(cardSnapshot('shape:a')) // bottom = 120
+
+  const tooClose = {
+    id: 'close', author: 'claude',
+    ops: [{ kind: 'create_note_card', text: 'too close', x: 0, y: 130 }],
+  }
+  expect((await request(app).post('/projects/essay/changeset').send(tooClose)).status).toBe(200)
+
+  const digest = await fullDigest(app, 'essay')
+  expect(digest.body.cards.find((card: any) => card.text === 'too close')).toMatchObject({ x: 0, y: 144 })
+})
+
+test('move_cards clears a stationary card by 24px in the persisted snapshot', () => {
+  const snap = {
+    document: {
+      store: {
+        'page:page': { id: 'page:page', typeName: 'page' },
+        'shape:a': { id: 'shape:a', typeName: 'shape', type: 'card', x: 0, y: 0, parentId: 'page:page', props: { w: 200, h: 120, kind: 'note', mergedInto: null } },
+        'shape:b': { id: 'shape:b', typeName: 'shape', type: 'card', x: 0, y: 300, parentId: 'page:page', props: { w: 200, h: 120, kind: 'note', mergedInto: null } },
+      },
+    },
+    session: null,
+  } as any
+  const next = applyChangeSetToSnapshot(snap, {
+    id: 'move', author: 'claude',
+    ops: [{ kind: 'move_cards', moves: [{ cardId: 'shape:b', x: 0, y: 0 }] }],
+  }) as any
+
+  expect(next.document.store['shape:b']).toMatchObject({ x: 0, y: 144 })
+})
+
 // A two-card canvas used to prove grouping survives the full HTTP → persist →
 // reload → map path with no browser connected.
 function twoCardCanvas() {

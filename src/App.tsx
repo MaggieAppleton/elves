@@ -14,6 +14,7 @@ import {
 } from './model/cards'
 import { makeSectionProps } from './model/sections'
 import { cascadeOffset } from './model/layout'
+import { clearCardPosition } from './client/canvasLayout'
 import { requestUnfurl } from './client/references'
 import {
   loadCanvas,
@@ -734,13 +735,18 @@ export default function App() {
       kind === 'prose' ? makeProseCardProps()
       : kind === 'figure' ? makeFigureCardProps()
       : makeNoteCardProps()
-    const { dx, dy } = cascadeOffset(spawnCountRef.current++)
+    const at = clearCardPosition(editor, {
+      x: center.x - props.w / 2,
+      y: center.y - props.h / 2,
+      w: props.w,
+      h: props.h,
+    })
     const id = createShapeId()
     editor.createShape<CardShape>({
       id,
       type: 'card',
-      x: center.x - props.w / 2 + dx,
-      y: center.y - props.h / 2 + dy,
+      x: at.x,
+      y: at.y,
       props,
     })
     editor.select(id)

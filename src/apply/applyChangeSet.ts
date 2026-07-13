@@ -8,6 +8,8 @@ import { makeNoteCardProps, makeReferenceCardProps, makeFigureCardProps, claudeM
 import { reattribute } from '../model/attribution'
 import { makeSectionProps } from '../model/sections'
 import { makeQuestionProps } from '../model/questions'
+import { cardObstacles, clearCardPosition } from '../client/canvasLayout'
+import { placeBelowObstacles } from '../model/layout'
 
 function newId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`
@@ -55,51 +57,28 @@ function applyMerge(editor: Editor, op: Extract<Op, { kind: 'merge_notes' }>): T
 
 function applyMove(editor: Editor, op: Extract<Op, { kind: 'move_cards' }>): TLShapeId[] {
   const moved: TLShapeId[] = []
+  const movingIds = new Set(
+    op.moves
+      .map((move) => editor.getShape(move.cardId as CardShape['id']))
+      .filter((shape): shape is CardShape => shape?.type === 'card')
+      .map((shape) => shape.id),
+  )
+  const obstacles = cardObstacles(editor, movingIds)
   for (const m of op.moves) {
-    const shape = editor.getShape(m.cardId as CardShape['id'])
+    const shape = editor.getShape(m.cardId as CardShape['id']) as CardShape | undefined
     if (!shape) continue
+    const placed = placeBelowObstacles(
+      { x: m.x, y: m.y, w: shape.props.w, h: shape.props.h },
+      obstacles,
+    )
     // The agent passes absolute page coords; updateShape expects parent-local coords.
     // getPointInParentSpace is identity for top-level cards, and converts for grouped ones.
-    const local = editor.getPointInParentSpace(shape.id, { x: m.x, y: m.y })
+    const local = editor.getPointInParentSpace(shape.id, { x: placed.x, y: placed.y })
     editor.updateShape({ id: shape.id, type: 'card', x: local.x, y: local.y })
     moved.push(shape.id)
+    obstacles.push(placed)
   }
   return moved
-}
-
-interface Rect { x: number; y: number; w: number; h: number }
-
-/** Gap left below a card we had to slide a new one past. Mirrors the server. */
-const PLACEMENT_GAP = 24
-
-function overlaps(a: Rect, b: Rect): boolean {
-  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
-}
-
-/**
- * The placement guard, mirroring server/applyChangeSet.ts: a new card never
- * lands on top of an existing one. The agent picks x (its narrative order) and a y;
- * if that rectangle covers any card we slide it straight DOWN — past the lowest
- * card it hits, plus a gap — keeping x so the card holds its place in the story.
- * In the tab the editor knows each card's REAL measured height, so clearance is
- * exact (the server only sees the understated stored height). Cards created
- * earlier in the same change-set already exist here, so a burst of references
- * stacks cleanly instead of piling on one spot.
- */
-function placeClearOf(editor: Editor, x: number, y: number, w: number, h: number): { x: number; y: number } {
-  const rects = editor
-    .getCurrentPageShapes()
-    .filter((s) => s.type === 'card')
-    .map((s) => editor.getShapePageBounds(s.id))
-    .filter((b): b is NonNullable<typeof b> => !!b)
-    .map((b): Rect => ({ x: b.x, y: b.y, w: b.w, h: b.h }))
-  const cand: Rect = { x, y, w, h }
-  for (let i = 0; i <= rects.length; i++) {
-    const hit = rects.filter((r) => overlaps(cand, r))
-    if (hit.length === 0) break
-    cand.y = Math.max(...hit.map((r) => r.y + r.h)) + PLACEMENT_GAP
-  }
-  return { x: cand.x, y: cand.y }
 }
 
 function applyCreateNoteCard(
@@ -109,7 +88,7 @@ function applyCreateNoteCard(
 ): TLShapeId[] {
   // Stamp the change-set's author onto the card so its authorship mark shows.
   const props = makeNoteCardProps(op.text, 'transcribed', author)
-  const at = placeClearOf(editor, op.x, op.y, props.w, props.h)
+  const at = clearCardPosition(editor, { x: op.x, y: op.y, w: props.w, h: props.h })
   const id = createShapeId()
   editor.createShape<CardShape>({ id, type: 'card', x: at.x, y: at.y, props })
   return [id]
@@ -117,7 +96,7 @@ function applyCreateNoteCard(
 
 function applyCreateReference(editor: Editor, op: Extract<Op, { kind: 'create_reference' }>): TLShapeId[] {
   const props = makeReferenceCardProps(op.reference)
-  const at = placeClearOf(editor, op.x, op.y, props.w, props.h)
+  const at = clearCardPosition(editor, { x: op.x, y: op.y, w: props.w, h: props.h })
   const id = createShapeId()
   editor.createShape<CardShape>({ id, type: 'card', x: at.x, y: at.y, props })
   return [id]
@@ -131,7 +110,7 @@ function applyCreateFigureCard(
   // Stamp the change-set's author onto the figure so an agent-suggested one
   // carries its authorship mark ("its suggestion, my call").
   const props = makeFigureCardProps(op.title, op.description, author)
-  const at = placeClearOf(editor, op.x, op.y, props.w, props.h)
+  const at = clearCardPosition(editor, { x: op.x, y: op.y, w: props.w, h: props.h })
   const id = createShapeId()
   editor.createShape<CardShape>({ id, type: 'card', x: at.x, y: at.y, props })
   return [id]
