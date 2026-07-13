@@ -11,7 +11,7 @@ import { reattribute, USER_AUTHOR } from '../model/attribution'
 import { AuthorMarks } from './AuthorMarks'
 import { BlameText, hasAgentRun } from './BlameText'
 import { nextFigureStatus } from '../model/figures'
-import { cardGist, commentGist } from '../model/summary'
+import { cardGist, commentGist, mechanicalGist } from '../model/summary'
 import { visibleComments, resolveComment } from '../model/comments'
 import { assetUrl } from '../client/assets'
 import { measuredCardHeight, measuredReferenceHeight, measuredFigureHeight, fittedGistFontSize, PROSE_TEXT_MIN } from './autosize'
@@ -722,7 +722,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
               gistFontSize so it stays legible. */}
           {comments.length > 0 && (
             <div className="elves-comments" onPointerDown={(e) => e.stopPropagation()}>
-              {comments.map((c) => (
+              {comments.map((c, index) => (
                 <div
                   key={c.id}
                   className="elves-comment"
@@ -741,7 +741,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                     className="elves-comment__resolve"
                     data-testid="comment-resolve"
                     title="Resolve"
-                    aria-label={`Resolve comment: ${c.text}`}
+                    aria-label={`Resolve comment ${index + 1} of ${comments.length}: ${mechanicalGist(c.text, 80) || 'empty text'}`}
                     onClick={() =>
                       this.editor.updateShape<CardShape>({
                         id: shape.id, type: 'card',

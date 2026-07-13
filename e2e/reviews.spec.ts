@@ -55,10 +55,10 @@ test('duplicate reviewer passes have contextual clear controls', async ({ page, 
     (rows) => rows.map((row) => row.getAttribute('data-status')),
   ), { timeout: 20000 }).toEqual(['done', 'done'])
   const clearOpening = page.getByRole('button', {
-    name: "Clear Devil's Advocate review from panel: just the opening",
+    name: /^Clear Devil's Advocate review from panel: just the opening; requested .+; pass \d of 2$/,
   })
   const clearEnding = page.getByRole('button', {
-    name: "Clear Devil's Advocate review from panel: just the ending",
+    name: /^Clear Devil's Advocate review from panel: just the ending; requested .+; pass \d of 2$/,
   })
   await expect(clearOpening).toHaveCount(1)
   await expect(clearEnding).toHaveCount(1)
@@ -72,7 +72,9 @@ test('duplicate reviewer passes have contextual clear controls', async ({ page, 
 
   await clearOpening.click()
   await expect(clearOpening).toHaveCount(0)
-  await expect(clearEnding).toHaveCount(1)
+  await expect(page.getByRole('button', {
+    name: /^Clear Devil's Advocate review from panel: just the ending; requested .+; pass 1 of 1$/,
+  })).toHaveCount(1)
 })
 
 test('same-personality passes without focus use distinct requested times', async ({ page }) => {

@@ -5,6 +5,7 @@ import { agentInfo } from '../shapes/agents'
 import {
   PERSONALITIES, PERSONALITY_IDS, type PersonalityId, type Review,
 } from '../model/reviews'
+import { mechanicalGist } from '../model/summary'
 import type { CommentType } from '../model/types'
 import './reviewPanel.css'
 
@@ -97,6 +98,7 @@ export function ReviewPanel({ projectId, editor, reviews, onSummon, onDismiss, o
     (r) => r.status === 'pending' || r.status === 'in-progress' || r.status === 'failed',
   )
   const recentDone = visible.filter((r) => r.status === 'done').slice(0, 5)
+  const visibleReviews = [...active, ...recentDone]
 
   // Live open/total per finished pass, tracked REACTIVELY against the tldraw
   // store (useValue): a comment landing or being resolved re-renders the tally
@@ -187,13 +189,13 @@ export function ReviewPanel({ projectId, editor, reviews, onSummon, onDismiss, o
             <>
               <div className="elves-review__divider" role="separator" />
               <div className="elves-review__heading">Passes</div>
-              {[...active, ...recentDone].map((r) => {
+              {visibleReviews.map((r, index) => {
                 const p = PERSONALITIES[r.personality]
                 const agent = agentInfo(r.agent)
                 const tally = r.status === 'done' ? (tallies.get(r.id) ?? null) : null
-                const actionContext = r.focus
-                  ? r.focus
-                  : `requested ${r.requestedAt.replace('T', ' ').replace('Z', ' UTC')}`
+                const requestedAt = r.requestedAt.replace('T', ' ').replace('Z', ' UTC')
+                const focusContext = mechanicalGist(r.focus ?? '', 80)
+                const actionContext = `${focusContext ? `${focusContext}; ` : ''}requested ${requestedAt}; pass ${index + 1} of ${visibleReviews.length}`
                 return (
                   <div
                     key={r.id}

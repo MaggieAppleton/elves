@@ -43,7 +43,7 @@ test('dismissing a question hides it (recoverable in-file, but gone from the can
 
   // The dismiss control opts into pointer events even though the shape body
   // doesn't, so it's directly clickable (revealed on hover/selection in the app).
-  await question.getByRole('button', { name: 'Dismiss question: Why should a novice care?' }).click()
+  await question.getByRole('button', { name: /^Dismiss question \d+ of \d+: Why should a novice care\?$/ }).click()
 
   // Dismissed = hidden from render and hit-testing.
   await expect(question).toHaveCount(0)
@@ -62,15 +62,25 @@ test('dismissing a question hides it (recoverable in-file, but gone from the can
 test('duplicate questions have contextual dismiss controls', async ({ page, request }) => {
   await canvasReady(page, request)
 
-  await createQuestionTool(BASE, projectId, { text: 'Question alpha?', x: 400, y: 200 })
-  await createQuestionTool(BASE, projectId, { text: 'Question beta?', x: 400, y: 360 })
+  await request.post(`${BASE}/projects/${projectId}/changeset`, {
+    data: {
+      id: `duplicate-questions-${Date.now()}`,
+      author: 'claude',
+      ops: [
+        { kind: 'create_question', text: 'Same question?', x: 400, y: 200 },
+        { kind: 'create_question', text: 'Same question?', x: 400, y: 360 },
+      ],
+    },
+  })
+  await expect(page.locator('.elves-question', { hasText: 'Same question?' })).toHaveCount(2)
 
-  const dismissAlpha = page.getByRole('button', { name: 'Dismiss question: Question alpha?' })
-  const dismissBeta = page.getByRole('button', { name: 'Dismiss question: Question beta?' })
-  await expect(dismissAlpha).toHaveCount(1)
-  await expect(dismissBeta).toHaveCount(1)
+  const dismissButtons = page.getByRole('button', { name: /^Dismiss question \d+ of \d+: Same question\?$/ })
+  await expect(dismissButtons).toHaveCount(2)
+  const labels = await dismissButtons.evaluateAll((buttons) =>
+    buttons.map((button) => button.getAttribute('aria-label')),
+  )
+  expect(new Set(labels).size).toBe(2)
 
-  await dismissAlpha.click()
-  await expect(dismissAlpha).toHaveCount(0)
-  await expect(dismissBeta).toHaveCount(1)
+  await dismissButtons.first().click()
+  await expect(dismissButtons).toHaveCount(1)
 })

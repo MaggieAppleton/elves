@@ -7,7 +7,7 @@ import { useLayoutEffect, type ReactNode } from 'react'
 import { makeQuestionProps } from '../model/questions'
 import { measuredQuestionHeight, fittedQuestionGistFontSize } from './autosize'
 import { agentInfo } from './agents'
-import { commentGist } from '../model/summary'
+import { commentGist, mechanicalGist } from '../model/summary'
 import { shouldShowQuestionGist, gistFontSize } from './summaryView'
 import './question.css'
 
@@ -124,6 +124,11 @@ export class QuestionShapeUtil extends ShapeUtil<QuestionShape> {
     const revealed =
       this.editor.getHoveredShapeId() === shape.id ||
       this.editor.getSelectedShapeIds().includes(shape.id)
+    const visibleQuestions = this.editor.getCurrentPageShapes()
+      .filter((candidate) => candidate.type === 'question' && !(candidate as QuestionShape).props.dismissed)
+      .map((candidate) => candidate as QuestionShape)
+      .sort((a, b) => a.id.localeCompare(b.id))
+    const questionNumber = visibleQuestions.findIndex((candidate) => candidate.id === shape.id) + 1
     return (
       <AutosizeQuestion editor={this.editor} shape={shape}>
         <HTMLContainer style={{ overflow: 'visible' }}>
@@ -154,7 +159,7 @@ export class QuestionShapeUtil extends ShapeUtil<QuestionShape> {
                 className="elves-question__dismiss"
                 data-testid="question-dismiss"
                 title="Dismiss — I've answered this (or it's not useful)"
-                aria-label={`Dismiss question: ${shape.props.text}`}
+                aria-label={`Dismiss question ${questionNumber} of ${visibleQuestions.length}: ${mechanicalGist(text, 80) || 'empty text'}`}
                 onPointerDown={stopEventPropagation}
                 onClick={(e) => {
                   stopEventPropagation(e)
