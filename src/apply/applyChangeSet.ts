@@ -8,7 +8,7 @@ import { makeNoteCardProps, makeReferenceCardProps, makeFigureCardProps, claudeM
 import { reattribute } from '../model/attribution'
 import { makeSectionProps } from '../model/sections'
 import { makeQuestionProps } from '../model/questions'
-import { cardObstacles, clearCardPosition, reflowCardLane } from '../client/canvasLayout'
+import { canvasObstacles, clearCardPosition, reflowCardLane } from '../client/canvasLayout'
 import { placeBelowObstacles } from '../model/layout'
 
 function newId(prefix: string): string {
@@ -68,7 +68,7 @@ function applyMove(editor: Editor, op: Extract<Op, { kind: 'move_cards' }>): TLS
       .filter((shape): shape is CardShape => shape?.type === 'card')
       .map((shape) => shape.id),
   )
-  const obstacles = cardObstacles(editor, movingIds)
+  const obstacles = canvasObstacles(editor, movingIds)
   for (const m of op.moves) {
     const shape = editor.getShape(m.cardId as CardShape['id']) as CardShape | undefined
     if (!shape) continue
@@ -198,15 +198,18 @@ function applyCreateQuestion(
   op: Extract<Op, { kind: 'create_question' }>,
   author: string,
 ): TLShapeId[] {
-  // Questions drop exactly where the agent asks (like sections) — no overlap slide;
-  // an editor's sticky note is meant to sit against the cluster it's about.
+  const props = makeQuestionProps(op.text, author)
+  const at = placeBelowObstacles(
+    { x: op.x, y: op.y, w: props.w, h: props.h },
+    canvasObstacles(editor),
+  )
   const id = createShapeId()
   editor.createShape<QuestionShape>({
     id,
     type: 'question',
-    x: op.x,
-    y: op.y,
-    props: makeQuestionProps(op.text, author),
+    x: at.x,
+    y: at.y,
+    props,
   })
   return [id]
 }
