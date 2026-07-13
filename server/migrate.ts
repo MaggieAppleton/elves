@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { projectsRoot, type Project } from './projects'
+import { withProjectLock, withProjectNamespaceLock } from './projectLock'
 
 /**
  * One-time migration from the single-canvas layout (data/canvas.json + data/assets/)
@@ -13,28 +14,32 @@ import { projectsRoot, type Project } from './projects'
  *    the UI prompts the user to create their first project).
  */
 export async function migrateLegacyCanvas(dataRoot: string, createdAt: string): Promise<void> {
-  try {
-    await fs.stat(projectsRoot(dataRoot))
-    return // projects/ exists — nothing to migrate
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
-  }
+  await withProjectNamespaceLock(dataRoot, async () => {
+    try {
+      await fs.stat(projectsRoot(dataRoot))
+      return // projects/ exists — nothing to migrate
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
+    }
 
-  const legacyCanvas = join(dataRoot, 'canvas.json')
-  try {
-    await fs.stat(legacyCanvas)
-  } catch {
-    return // no legacy canvas — fresh install
-  }
+    const legacyCanvas = join(dataRoot, 'canvas.json')
+    try {
+      await fs.stat(legacyCanvas)
+    } catch {
+      return // no legacy canvas — fresh install
+    }
 
-  const dir = join(projectsRoot(dataRoot), 'my-first-essay')
-  await fs.mkdir(dir, { recursive: true })
-  await fs.rename(legacyCanvas, join(dir, 'canvas.json'))
-  try {
-    await fs.rename(join(dataRoot, 'assets'), join(dir, 'assets'))
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
-  }
-  const meta: Project = { id: 'my-first-essay', name: 'My first essay', createdAt }
-  await fs.writeFile(join(dir, 'project.json'), JSON.stringify(meta, null, 2), 'utf8')
+    await withProjectLock(dataRoot, 'my-first-essay', async () => {
+      const dir = join(projectsRoot(dataRoot), 'my-first-essay')
+      await fs.mkdir(dir, { recursive: true })
+      await fs.rename(legacyCanvas, join(dir, 'canvas.json'))
+      try {
+        await fs.rename(join(dataRoot, 'assets'), join(dir, 'assets'))
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
+      }
+      const meta: Project = { id: 'my-first-essay', name: 'My first essay', createdAt }
+      await fs.writeFile(join(dir, 'project.json'), JSON.stringify(meta, null, 2), 'utf8')
+    })
+  })
 }

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { migrateLegacyCanvas } from '../../server/migrate'
 import { listProjects } from '../../server/projects'
+import { withProjectNamespaceLock } from '../../server/projectLock'
 
 let dirs: string[] = []
 async function root() {
@@ -57,4 +58,30 @@ test('fresh install creates no projects/ dir', async () => {
   const d = await root()
   await migrateLegacyCanvas(d, 'now')
   await expect(fs.stat(join(d, 'projects'))).rejects.toThrow()
+})
+
+test('legacy migration waits for the project namespace lock', async () => {
+  const d = await root()
+  await fs.writeFile(join(d, 'canvas.json'), JSON.stringify({ document: { store: {} } }), 'utf8')
+  let release!: () => void
+  let entered!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const started = new Promise<void>((resolve) => { entered = resolve })
+  const hold = withProjectNamespaceLock(d, async () => {
+    entered()
+    await gate
+  })
+  await started
+  let settled = false
+  const migration = migrateLegacyCanvas(d, '2026-07-02T10:00:00.000Z')
+    .finally(() => { settled = true })
+  await new Promise<void>((resolve) => setTimeout(resolve, 100))
+  const settledWhileLocked = settled
+  release()
+  await Promise.all([hold, migration])
+  expect(settledWhileLocked).toBe(false)
+  await expect(fs.readFile(
+    join(d, 'projects', 'my-first-essay', 'canvas.json'),
+    'utf8',
+  )).resolves.toContain('document')
 })

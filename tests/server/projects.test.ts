@@ -12,6 +12,7 @@ import {
   slugify,
   projectDir,
 } from '../../server/projects'
+import { withProjectLock } from '../../server/projectLock'
 
 let dirs: string[] = []
 async function root() {
@@ -104,6 +105,29 @@ test('rename preserves the project folder contents through the move', async () =
   await renameProject(d, 'draft', 'Final')
   const moved = await fs.readFile(join(d, 'projects', 'final', 'canvas.json'), 'utf8')
   expect(JSON.parse(moved)).toEqual({ kept: true })
+})
+
+test('rename waits for an active old-project mutation and moves its result', async () => {
+  const d = await root()
+  await createProject(d, 'Draft', '2026-07-02T10:00:00.000Z')
+  let release!: () => void
+  let entered!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const started = new Promise<void>((resolve) => { entered = resolve })
+  const mutation = withProjectLock(d, 'draft', async () => {
+    await fs.writeFile(join(d, 'projects', 'draft', 'marker'), 'kept')
+    entered()
+    await gate
+  })
+  await started
+  const rename = renameProject(d, 'draft', 'Final')
+  await new Promise<void>((resolve) => setTimeout(resolve, 100))
+  const oldDirectoryExists = await fs.access(join(d, 'projects', 'draft'))
+    .then(() => true, () => false)
+  release()
+  await Promise.all([mutation, rename])
+  expect(oldDirectoryExists).toBe(true)
+  await expect(fs.readFile(join(d, 'projects', 'final', 'marker'), 'utf8')).resolves.toBe('kept')
 })
 
 test('resyncProjectIds re-slugs a drifted project and is idempotent', async () => {

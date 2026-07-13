@@ -1,5 +1,10 @@
 import { promises as fs } from 'node:fs'
 import { basename, join } from 'node:path'
+import {
+  withProjectLock,
+  withProjectLocks,
+  withProjectNamespaceLock,
+} from './projectLock'
 
 export interface Project {
   id: string
@@ -166,37 +171,29 @@ export async function createProject(
   const trimmed = name.trim()
   if (!trimmed) throw new ProjectError('name required', 400)
   const base = slugify(trimmed)
-  const root = projectsRoot(dataRoot)
-  // Idempotent/safe: creates the projects root once so the per-project mkdir
-  // below can be non-recursive.
-  await fs.mkdir(root, { recursive: true })
-
-  // firstFreeN is a best-effort starting guess from a directory snapshot; a
-  // concurrent createProject racing for the same name can invalidate it
-  // between the read and now. The non-recursive mkdir is what actually
-  // decides ownership of an id: it's atomic, so it fails with EEXIST if
-  // another create just claimed that folder. On EEXIST we walk to the next
-  // candidate in the same base/-2/-3 sequence and retry, rather than trusting
-  // the initial read.
-  let n = await firstFreeN(dataRoot, base)
-  for (let attempt = 0; ; attempt++) {
-    const id = candidateId(base, n)
-    const dir = join(root, id)
-    try {
-      await fs.mkdir(dir)
-      const meta: Project = { id, name: trimmed, createdAt }
-      await fs.writeFile(join(dir, 'project.json'), JSON.stringify(meta, null, 2), 'utf8')
-      // No canvas.json until first save: readCanvas() returns EMPTY_CANVAS for
-      // a missing file, and saveAsset() creates assets/ lazily.
-      return meta
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e
+  return withProjectNamespaceLock(dataRoot, async () => {
+    const root = projectsRoot(dataRoot)
+    await fs.mkdir(root, { recursive: true })
+    let n = await firstFreeN(dataRoot, base)
+    for (let attempt = 0; ; attempt++, n++) {
+      const id = candidateId(base, n)
+      const created = await withProjectLock(dataRoot, id, async () => {
+        try {
+          await fs.mkdir(join(root, id))
+          const meta: Project = { id, name: trimmed, createdAt }
+          await fs.writeFile(join(root, id, 'project.json'), JSON.stringify(meta, null, 2), 'utf8')
+          return meta
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'EEXIST') return null
+          throw error
+        }
+      })
+      if (created) return created
       if (attempt + 1 >= MAX_CREATE_ATTEMPTS) {
         throw new ProjectError('could not allocate a unique project id', 500)
       }
-      n++
     }
-  }
+  })
 }
 
 export async function renameProject(
@@ -206,29 +203,24 @@ export async function renameProject(
 ): Promise<Project> {
   const trimmed = name.trim()
   if (!trimmed) throw new ProjectError('name required', 400)
-  const proj = await getProject(dataRoot, id)
-  if (!proj) throw new ProjectError('unknown project', 404)
-
-  // Keep the id in sync with the display name. If the new name slugs to a
-  // different id, move the project's folder to it (uniqueId disambiguates a
-  // clash with a *different* project, and excludes this project so it can
-  // reclaim its own natural slug). A name whose slug is unchanged — or only
-  // differs by punctuation/case — is a cheap name-only rewrite.
-  const desired = slugify(trimmed)
-  const newId = desired === id ? id : await uniqueId(dataRoot, desired, id)
-  const updated: Project = { ...proj, id: newId, name: trimmed }
-  if (newId !== id) {
-    await fs.rename(
-      join(projectsRoot(dataRoot), id),
-      join(projectsRoot(dataRoot), newId),
-    )
-  }
-  await fs.writeFile(
-    join(projectsRoot(dataRoot), newId, 'project.json'),
-    JSON.stringify(updated, null, 2),
-    'utf8',
-  )
-  return updated
+  return withProjectNamespaceLock(dataRoot, async () => {
+    const desired = slugify(trimmed)
+    const newId = desired === id ? id : await uniqueId(dataRoot, desired, id)
+    return withProjectLocks(dataRoot, [id, newId], async () => {
+      const proj = await getProject(dataRoot, id)
+      if (!proj) throw new ProjectError('unknown project', 404)
+      const updated: Project = { ...proj, id: newId, name: trimmed }
+      if (newId !== id) {
+        await fs.rename(join(projectsRoot(dataRoot), id), join(projectsRoot(dataRoot), newId))
+      }
+      await fs.writeFile(
+        join(projectsRoot(dataRoot), newId, 'project.json'),
+        JSON.stringify(updated, null, 2),
+        'utf8',
+      )
+      return updated
+    })
+  })
 }
 
 // One-time, idempotent reconciliation run at startup: bring every project's id
@@ -238,23 +230,31 @@ export async function renameProject(
 // nothing. uniqueId re-reads the folder listing on each call and excludes the
 // project being moved, so a batch stays clash-safe and deterministic.
 export async function resyncProjectIds(dataRoot: string): Promise<void> {
-  for (const proj of await listProjects(dataRoot)) {
-    // listProjects already filters out entries with a missing/blank name, but
-    // guard here too so no future caller can reach slugify(undefined).
-    if (!proj.name) continue
-    const desired = slugify(proj.name)
-    if (desired === proj.id) continue
-    const newId = await uniqueId(dataRoot, desired, proj.id)
-    if (newId === proj.id) continue
-    await fs.rename(
-      join(projectsRoot(dataRoot), proj.id),
-      join(projectsRoot(dataRoot), newId),
-    )
-    await fs.writeFile(
-      join(projectsRoot(dataRoot), newId, 'project.json'),
-      JSON.stringify({ ...proj, id: newId }, null, 2),
-      'utf8',
-    )
-    console.log(`[elves] project id resynced: ${proj.id} -> ${newId}`)
-  }
+  await withProjectNamespaceLock(dataRoot, async () => {
+    for (const proj of await listProjects(dataRoot)) {
+      if (!proj.name) continue
+      const desired = slugify(proj.name)
+      if (desired === proj.id) continue
+      const newId = await uniqueId(dataRoot, desired, proj.id)
+      if (newId === proj.id) continue
+      await withProjectLocks(dataRoot, [proj.id, newId], async () => {
+        const current = await getProject(dataRoot, proj.id)
+        if (!current) return
+        const currentDesired = slugify(current.name)
+        if (currentDesired === current.id) return
+        const currentNewId = await uniqueId(dataRoot, currentDesired, current.id)
+        if (currentNewId !== newId) return
+        await fs.rename(
+          join(projectsRoot(dataRoot), current.id),
+          join(projectsRoot(dataRoot), newId),
+        )
+        await fs.writeFile(
+          join(projectsRoot(dataRoot), newId, 'project.json'),
+          JSON.stringify({ ...current, id: newId }, null, 2),
+          'utf8',
+        )
+        console.log(`[elves] project id resynced: ${current.id} -> ${newId}`)
+      })
+    }
+  })
 }
