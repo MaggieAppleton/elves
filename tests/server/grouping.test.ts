@@ -75,20 +75,20 @@ test('ungroup_cards restores page coords to the members and removes the group', 
   expect(snapshotToGroups(ungrouped)).toEqual([])
 })
 
-test('move_cards on a grouped card writes local coords but lands at the requested PAGE coord', () => {
+test('move_cards on a grouped card writes local coords after collision-safe page placement', () => {
   const grouped = applyChangeSetToSnapshot(twoCardSnapshot(), cs({ kind: 'group_cards', cardIds: ['shape:a', 'shape:b'] }))!
   const moved = applyChangeSetToSnapshot(grouped, cs({ kind: 'move_cards', moves: [{ cardId: 'shape:a', x: 200, y: 200 }] }))!
   const store = storeOf(moved)
 
-  // stored coords are local to the group (origin 100,50)
-  expect({ x: store['shape:a'].x, y: store['shape:a'].y }).toEqual({ x: 100, y: 150 })
-  // but Claude sees the absolute page coord it asked for
-  expect(snapshotToCards(moved).find((c) => c.id === 'shape:a')).toMatchObject({ x: 200, y: 200 })
+  // The requested y=200 is only 20px below shape:b, so layout nudges it to
+  // y=204 for the 24px gutter. Stored coords remain local to the group origin.
+  expect({ x: store['shape:a'].x, y: store['shape:a'].y }).toEqual({ x: 100, y: 154 })
+  expect(snapshotToCards(moved).find((c) => c.id === 'shape:a')).toMatchObject({ x: 200, y: 204 })
 })
 
 test('move_cards on a loose card is unchanged (page coords written directly)', () => {
-  const moved = applyChangeSetToSnapshot(twoCardSnapshot(), cs({ kind: 'move_cards', moves: [{ cardId: 'shape:a', x: 7, y: 8 }] }))!
-  expect({ x: storeOf(moved)['shape:a'].x, y: storeOf(moved)['shape:a'].y }).toEqual({ x: 7, y: 8 })
+  const moved = applyChangeSetToSnapshot(twoCardSnapshot(), cs({ kind: 'move_cards', moves: [{ cardId: 'shape:a', x: 7, y: 300 }] }))!
+  expect({ x: storeOf(moved)['shape:a'].x, y: storeOf(moved)['shape:a'].y }).toEqual({ x: 7, y: 300 })
 })
 
 test('ungroup_cards with an unknown group id is a no-op', () => {
