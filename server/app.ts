@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express'
 import cors from 'cors'
 import {
-  readCanvas, withCanvasLock, clearCanvas, EmptyCanvasOverwriteError, ProjectGoneError, CanvasSnapshot,
+  readCanvas, withCanvasLock, clearCanvas, EmptyCanvasOverwriteError, CanvasSnapshot,
 } from './store'
 import {
   isChangeSet,
@@ -32,9 +32,9 @@ import {
   getProject,
   canvasPathFor,
   assetsDirFor,
-  projectAliveGuard,
   ProjectError,
 } from './projects'
+import { withProjectLock } from './projectLock'
 import { readReviews, createReview, transitionReview, reviewsPathFor, ReviewError } from './reviews'
 import { isPersonalityId, isReviewStatus, PERSONALITY_IDS, type Review } from '../src/model/reviews'
 
@@ -42,6 +42,8 @@ const UNFURL_UA = 'ElvesBot/0.1 (+local-first writing studio; reference unfurl)'
 const FETCH_TIMEOUT_MS = 8000
 const MAX_HTML_BYTES = 2_000_000
 const MAX_IMAGE_BYTES = 5_000_000
+
+type ProjectPaths = { canvasPath: string; assetsDir: string }
 
 class BodyTooLargeError extends Error {
   constructor(limit: number) {
@@ -87,7 +89,7 @@ async function readBodyLimited(res: FetchResponse, limit: number, signal: AbortS
 // Real network + asset I/O for unfurl, scoped to one project's assets dir. The
 // fetches are http(s)-only, time-limited, and size-capped; images are stored as
 // local files so a reference card stays offline-usable and portable.
-function unfurlDepsFor(assetsDir: string): UnfurlDeps {
+function unfurlDepsFor(dataRoot: string, projectId: string): UnfurlDeps {
   // SSRF-guarded: safeFetch resolves + range-checks the hostname of the
   // initial URL AND of every redirect hop (never `redirect: 'follow'`), so a
   // pasted URL can't reach this machine's own network or a cloud metadata
@@ -136,7 +138,12 @@ function unfurlDepsFor(assetsDir: string): UnfurlDeps {
     },
     saveImage: async (img) => {
       const ext = extForMime(img.contentType)
-      return ext ? saveAsset(assetsDir, img.bytes, ext) : null
+      if (!ext) return null
+      return withProjectLock(dataRoot, projectId, async () => {
+        if (!(await getProject(dataRoot, projectId))) return null
+        const assetsDir = assetsDirFor(dataRoot, projectId)
+        return assetsDir ? saveAsset(assetsDir, img.bytes, ext) : null
+      })
     },
     now: () => new Date().toISOString(),
   }
@@ -287,7 +294,7 @@ export function createServer(
   async function requireProject(
     id: string,
     res: Response,
-  ): Promise<{ canvasPath: string; assetsDir: string } | null> {
+  ): Promise<ProjectPaths | null> {
     const canvasPath = canvasPathFor(dataRoot, id)
     const assetsDir = assetsDirFor(dataRoot, id)
     if (!canvasPath || !assetsDir || !(await getProject(dataRoot, id))) {
@@ -295,6 +302,17 @@ export function createServer(
       return null
     }
     return { canvasPath, assetsDir }
+  }
+
+  async function withProjectMutation<T>(
+    id: string,
+    res: Response,
+    task: (paths: ProjectPaths) => Promise<T>,
+  ): Promise<T | null> {
+    return withProjectLock(dataRoot, id, async () => {
+      const paths = await requireProject(id, res)
+      return paths ? task(paths) : null
+    })
   }
 
   // --- Project management ---------------------------------------------------
@@ -354,37 +372,29 @@ export function createServer(
   app.post(
     '/projects/:id/canvas',
     wrap(async (req, res) => {
-      const paths = await requireProject(req.params.id, res)
-      if (!paths) return
-      const body = req.body
-      if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-        res.status(400).json({ error: 'canvas must be a JSON object' })
-        return
-      }
       try {
-        // Route through the per-path lock so a whole-snapshot save serializes
-        // against any in-flight change-set for the same canvas — otherwise a
-        // changeset's stale read could clobber this save (or vice versa). The
-        // guard refuses the write if the project was renamed away in the gap
-        // between resolving paths above and this write actually running.
-        await withCanvasLock(
-          paths.canvasPath,
-          () => body as CanvasSnapshot,
-          projectAliveGuard(dataRoot, req.params.id),
+        const saved = await withProjectMutation(
+          req.params.id,
+          res,
+          async (paths) => {
+            const body = req.body
+            if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+              return false
+            }
+            await withCanvasLock(paths.canvasPath, () => body as CanvasSnapshot)
+            return true
+          },
         )
+        if (saved === null) return
+        if (!saved) {
+          res.status(400).json({ error: 'canvas must be a JSON object' })
+          return
+        }
       } catch (err) {
         // A save that would blank a canvas holding a real document is refused,
         // never a silent data loss. To clear a canvas on purpose, use DELETE.
         if (err instanceof EmptyCanvasOverwriteError) {
           res.status(409).json({ error: 'refusing to blank a non-empty canvas; use DELETE to clear' })
-          return
-        }
-        // The project was renamed or deleted after paths were resolved above
-        // (a rename raced this save). The write is refused rather than
-        // recreating the old, now-orphaned directory — the caller's save did
-        // not land and should be retried against the project's current id.
-        if (err instanceof ProjectGoneError) {
-          res.status(404).json({ error: 'project no longer exists at this id; it may have been renamed' })
           return
         }
         throw err
@@ -400,9 +410,11 @@ export function createServer(
   app.delete(
     '/projects/:id/canvas',
     wrap(async (req, res) => {
-      const paths = await requireProject(req.params.id, res)
-      if (!paths) return
-      await clearCanvas(paths.canvasPath)
+      const cleared = await withProjectMutation(req.params.id, res, async (paths) => {
+        await clearCanvas(paths.canvasPath)
+        return true
+      })
+      if (cleared === null) return
       res.json({ ok: true })
     }),
   )
@@ -594,16 +606,6 @@ export function createServer(
   app.post(
     '/projects/:id/changeset',
     wrap(async (req, res) => {
-      const paths = await requireProject(req.params.id, res)
-      if (!paths) return
-      if (!isChangeSet(req.body)) {
-        res.status(400).json({ error: 'invalid change-set' })
-        return
-      }
-      if (changeSetWritesText(req.body)) {
-        res.status(403).json({ error: 'change-set may not write card text' })
-        return
-      }
       // Validate and apply inside the SAME per-path lock as the read, so every
       // cross-check runs against the exact snapshot that gets written — a
       // whole-snapshot save (or another change-set) landing between the read
@@ -611,12 +613,14 @@ export function createServer(
       // clobbered by this write (the lost-update race, #27). The 409 responses
       // are raised outside the lock via flags set inside it, so the lock holds
       // only the read/validate/apply, never the HTTP response.
-      let missing: string[] = []
-      let invalidMergeReps: string[] = []
-      let noCanvas = false
-      let applied: CanvasSnapshot | null
-      try {
-        applied = await withCanvasLock(
+      const mutation = await withProjectMutation(req.params.id, res, async (paths) => {
+        if (!isChangeSet(req.body)) return { kind: 'invalid' as const }
+        if (changeSetWritesText(req.body)) return { kind: 'writes-text' as const }
+        const changeSet = req.body
+        let missing: string[] = []
+        let invalidMergeReps: string[] = []
+        let noCanvas = false
+        const applied = await withCanvasLock(
           paths.canvasPath,
           (canvas) => {
             // Cross-check: every referenced existing card/section/group must
@@ -627,9 +631,9 @@ export function createServer(
             const sectionIds = new Set(snapshotToSections(canvas).map((s) => s.id))
             const groupIds = new Set(snapshotToGroupIds(canvas))
             missing = [
-              ...referencedCardIds(req.body).filter((cardId) => !cardIds.has(cardId)),
-              ...referencedSectionIds(req.body).filter((sectionId) => !sectionIds.has(sectionId)),
-              ...referencedGroupIds(req.body).filter((groupId) => !groupIds.has(groupId)),
+              ...referencedCardIds(changeSet).filter((cardId) => !cardIds.has(cardId)),
+              ...referencedSectionIds(changeSet).filter((sectionId) => !sectionIds.has(sectionId)),
+              ...referencedGroupIds(changeSet).filter((groupId) => !groupIds.has(groupId)),
             ]
             if (missing.length) return null
             // merge_notes is "note cards only" — reject outright if the
@@ -637,52 +641,55 @@ export function createServer(
             // visible) is not itself a note, rather than silently letting a
             // prose/figure/reference card become the visible head of a cluster.
             const noteCardIds = new Set(cards.filter((c) => c.kind === 'note').map((c) => c.id))
-            invalidMergeReps = mergeRepresentativeIds(req.body).filter((id) => !noteCardIds.has(id))
+            invalidMergeReps = mergeRepresentativeIds(changeSet).filter((id) => !noteCardIds.has(id))
             if (invalidMergeReps.length) return null
             // Apply and persist here, on the server, rather than relying on some
             // connected browser tab to have this project open and save it back —
             // that dependency meant a change-set could report success while never
             // landing on disk. A brand-new project with no canvas yet has no
             // tldraw schema to write into, so nothing is persisted here.
-            const next = applyChangeSetToSnapshot(canvas, req.body)
+            const next = applyChangeSetToSnapshot(canvas, changeSet)
             if (!next) {
               noCanvas = true
               return null
             }
             return next
           },
-          // Refuse the write if the project was renamed away between resolving
-          // paths above and the write actually running (#36); the caller's
-          // change-set did not land and should be retried against the new id.
-          projectAliveGuard(dataRoot, req.params.id),
         )
-      } catch (err) {
-        if (err instanceof ProjectGoneError) {
-          res.status(404).json({ error: 'project no longer exists at this id; it may have been renamed' })
-          return
-        }
-        throw err
-      }
-      if (missing.length) {
-        res.status(409).json({ error: 'card not in project', missing })
+        return { kind: 'applied' as const, changeSet, missing, invalidMergeReps, noCanvas, applied }
+      })
+      if (mutation === null) return
+      if (mutation.kind === 'invalid') {
+        res.status(400).json({ error: 'invalid change-set' })
         return
       }
-      if (invalidMergeReps.length) {
-        res.status(409).json({ error: 'merge_notes representative must be a note card', invalidMergeReps })
+      if (mutation.kind === 'writes-text') {
+        res.status(403).json({ error: 'change-set may not write card text' })
         return
       }
-      if (noCanvas || !applied) {
+      if (mutation.missing.length) {
+        res.status(409).json({ error: 'card not in project', missing: mutation.missing })
+        return
+      }
+      if (mutation.invalidMergeReps.length) {
+        res.status(409).json({
+          error: 'merge_notes representative must be a note card',
+          invalidMergeReps: mutation.invalidMergeReps,
+        })
+        return
+      }
+      if (mutation.noCanvas || !mutation.applied) {
         // Still broadcast, so a browser tab that happens to have the project
         // open can self-heal via the live connection — but don't claim
         // success or schedule summaries for something that never landed.
-        onChangeSet?.(req.params.id, req.body)
+        onChangeSet?.(req.params.id, mutation.changeSet)
         res.status(409).json({
           error: 'project has no canvas yet — open it once in the app to initialize the canvas',
           applied: false,
         })
         return
       }
-      onChangeSet?.(req.params.id, req.body)
+      onChangeSet?.(req.params.id, mutation.changeSet)
       // A new note card (e.g. a long transcribed note) may need summarizing;
       // set_summary change-sets themselves settle to a no-op on the next pass.
       scheduleSummaries(req.params.id)
@@ -696,15 +703,23 @@ export function createServer(
     '/projects/:id/assets',
     express.raw({ type: ['image/*'], limit: '25mb' }),
     wrap(async (req, res) => {
-      const paths = await requireProject(req.params.id, res)
-      if (!paths) return
-      const ext = extForMime((req.headers['content-type'] ?? '').split(';')[0].trim())
-      if (!ext || !Buffer.isBuffer(req.body) || req.body.length === 0) {
+      const result = await withProjectMutation(
+        req.params.id,
+        res,
+        async (paths) => {
+          const ext = extForMime((req.headers['content-type'] ?? '').split(';')[0].trim())
+          if (!ext || !Buffer.isBuffer(req.body) || req.body.length === 0) {
+            return { assetId: null }
+          }
+          return { assetId: await saveAsset(paths.assetsDir, req.body, ext) }
+        },
+      )
+      if (result === null) return
+      if (result.assetId === null) {
         res.status(400).json({ error: 'expected a non-empty image body' })
         return
       }
-      const assetId = await saveAsset(paths.assetsDir, req.body, ext)
-      res.json({ assetId })
+      res.json({ assetId: result.assetId })
     }),
   )
 
@@ -739,7 +754,7 @@ export function createServer(
         res.status(400).json({ error: 'a valid http(s) url is required' })
         return
       }
-      const reference = await unfurl(url, unfurlDepsFor(paths.assetsDir))
+      const reference = await unfurl(url, unfurlDepsFor(dataRoot, req.params.id))
       res.json({ reference })
     }),
   )
@@ -785,17 +800,23 @@ export function createServer(
     // out from under it — e.g. the user × cancelled mid-run), mark it failed
     // so the panel shows Retry instead of leaving it stuck "Starting…" forever.
     try {
-      const reviews = await readReviews(reviewsPath(projectId))
-      const review = reviews.find((r) => r.id === reviewId)
-      if (review && (review.status === 'pending' || review.status === 'in-progress')) {
-        await transitionReview(
-          reviewsPath(projectId),
-          reviewId,
-          { status: 'failed', error: lastError ?? 'the review agent stopped before finishing' },
-          new Date().toISOString(),
-        )
-        await broadcastReviews(projectId)
-      }
+      const updated = await withProjectLock(dataRoot, projectId, async () => {
+        if (!(await getProject(dataRoot, projectId))) return null
+        const path = reviewsPath(projectId)
+        const reviews = await readReviews(path)
+        const review = reviews.find((r) => r.id === reviewId)
+        if (review && (review.status === 'pending' || review.status === 'in-progress')) {
+          await transitionReview(
+            path,
+            reviewId,
+            { status: 'failed', error: lastError ?? 'the review agent stopped before finishing' },
+            new Date().toISOString(),
+          )
+          return readReviews(path)
+        }
+        return null
+      })
+      if (updated && onReviews) onReviews(projectId, updated)
     } catch (err) {
       // Lost the race to done/dismissed between the read above and this write
       // (ReviewError 409) — the pass finished or was cancelled on its own
@@ -816,26 +837,40 @@ export function createServer(
   app.post(
     '/projects/:id/reviews',
     wrap(async (req, res) => {
-      const paths = await requireProject(req.params.id, res)
-      if (!paths) return
-      const { personality, focus, agent } = req.body ?? {}
-      if (!isPersonalityId(personality)) {
+      const result = await withProjectMutation(
+        req.params.id,
+        res,
+        async () => {
+          const { personality, focus, agent } = req.body ?? {}
+          if (!isPersonalityId(personality)) return { error: 'personality' as const, review: null }
+          if (focus !== undefined && focus !== null && typeof focus !== 'string') {
+            return { error: 'focus' as const, review: null }
+          }
+          if (agent !== undefined && agent !== null && (typeof agent !== 'string' || !agent)) {
+            return { error: 'agent' as const, review: null }
+          }
+          const review = await createReview(
+            reviewsPath(req.params.id),
+            { personality, focus: focus ?? null, agent: agent ?? null },
+            new Date().toISOString(),
+          )
+          return { error: null, review }
+        },
+      )
+      if (result === null) return
+      if (result.error === 'personality') {
         res.status(400).json({ error: 'unknown personality', valid: PERSONALITY_IDS })
         return
       }
-      if (focus !== undefined && focus !== null && typeof focus !== 'string') {
+      if (result.error === 'focus') {
         res.status(400).json({ error: 'focus must be a string' })
         return
       }
-      if (agent !== undefined && agent !== null && (typeof agent !== 'string' || !agent)) {
+      if (result.error === 'agent') {
         res.status(400).json({ error: 'agent must be a non-empty string' })
         return
       }
-      const review = await createReview(
-        reviewsPath(req.params.id),
-        { personality, focus: focus ?? null, agent: agent ?? null },
-        new Date().toISOString(),
-      )
+      const review = result.review!
       await broadcastReviews(req.params.id)
       // A UI summon (no `agent` in the body) is born pending — launch the
       // in-app runner to claim and run it. An ad-hoc chat pass (`agent` given)
@@ -881,44 +916,47 @@ export function createServer(
   app.post(
     '/projects/:id/reviews/:reviewId/status',
     wrap(async (req, res) => {
-      const paths = await requireProject(req.params.id, res)
-      if (!paths) return
-      const { status, agent: agentId, verdict, error } = req.body ?? {}
-      if (!isReviewStatus(status)) {
-        res.status(400).json({ error: 'unknown status' })
-        return
-      }
-      // Dismissing a running pass must kill its child FIRST — otherwise the
-      // runner's own completion handler (launchReviewRun) would race this
-      // write, see the record still pending/in-progress once the kill lands,
-      // and re-mark it failed right after the user dismissed it. Idempotent
-      // no-op if nothing is running under this key.
-      if (status === 'dismissed') {
-        const result = agent?.cancel(`review:${req.params.reviewId}`, req.params.reviewId)
-        if (result?.status === 'signal-failed' || result?.status === 'run-mismatch') {
-          const message = result.status === 'run-mismatch'
+      try {
+        const result = await withProjectMutation(req.params.id, res, async (paths) => {
+          const { status, agent: agentId, verdict, error } = req.body ?? {}
+          if (!isReviewStatus(status)) return { kind: 'invalid-status' as const }
+          // Dismissing a running pass must kill its child before transitioning,
+          // otherwise the runner's completion handler can re-mark it failed.
+          if (status === 'dismissed') {
+            const cancelled = agent?.cancel(`review:${req.params.reviewId}`, req.params.reviewId)
+            if (cancelled?.status === 'signal-failed' || cancelled?.status === 'run-mismatch') {
+              return { kind: 'cancel-failed' as const, cancelled }
+            }
+          }
+          // Completion stamps the pass's comment footprint, so it needs the
+          // canvas as it stands; the other transitions never read the document.
+          const canvas = status === 'done' ? await readCanvas(paths.canvasPath) : null
+          const review = await transitionReview(
+            reviewsPath(req.params.id),
+            req.params.reviewId,
+            { status, agent: agentId ?? null, verdict: verdict ?? null, error: error ?? null },
+            new Date().toISOString(),
+            canvas,
+          )
+          return { kind: 'transitioned' as const, review }
+        })
+        if (result === null) return
+        if (result.kind === 'invalid-status') {
+          res.status(400).json({ error: 'unknown status' })
+          return
+        }
+        if (result.kind === 'cancel-failed') {
+          const message = result.cancelled.status === 'run-mismatch'
             ? 'the requested review run is no longer active'
             : 'could not signal the active review run'
-          res.status(result.status === 'signal-failed' ? 503 : 409).json({
-            code: result.status,
+          res.status(result.cancelled.status === 'signal-failed' ? 503 : 409).json({
+            code: result.cancelled.status,
             error: message,
           })
           return
         }
-      }
-      try {
-        // Completion stamps the pass's comment footprint, so it needs the
-        // canvas as it stands; the other transitions never read the document.
-        const canvas = status === 'done' ? await readCanvas(paths.canvasPath) : null
-        const review = await transitionReview(
-          reviewsPath(req.params.id),
-          req.params.reviewId,
-          { status, agent: agentId ?? null, verdict: verdict ?? null, error: error ?? null },
-          new Date().toISOString(),
-          canvas,
-        )
         await broadcastReviews(req.params.id)
-        res.json({ review })
+        res.json({ review: result.review })
       } catch (err) {
         if (err instanceof ReviewError) {
           res.status(err.status).json({ error: err.message })

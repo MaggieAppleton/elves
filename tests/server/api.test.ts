@@ -6,12 +6,47 @@ import request from 'supertest'
 import { createServer } from '../../server/app'
 import { renameProject, canvasPathFor, projectAliveGuard } from '../../server/projects'
 import { writeCanvas, ProjectGoneError } from '../../server/store'
+import { withProjectLock } from '../../server/projectLock'
 
 let dirs: string[] = []
 async function appWithTmp() {
   const d = await fs.mkdtemp(join(tmpdir(), 'elves-api-'))
   dirs.push(d)
   return createServer(d)
+}
+
+async function nextEventLoopTurn(): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve))
+}
+
+async function holdProject(dataRoot: string, id: string): Promise<{
+  release: () => void
+  done: Promise<void>
+}> {
+  let release!: () => void
+  let entered!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const started = new Promise<void>((resolve) => { entered = resolve })
+  const done = withProjectLock(dataRoot, id, async () => {
+    entered()
+    await gate
+  })
+  await started
+  return { release, done }
+}
+
+async function observeSettlement<T>(promise: Promise<T>): Promise<{
+  done: Promise<T>
+  settled: () => boolean
+}> {
+  let value = false
+  const done = promise.finally(() => { value = true })
+  for (let turn = 0; turn < 8; turn++) await nextEventLoopTurn()
+  // Supertest's loopback socket can take longer than a handful of immediate
+  // turns to dispatch. Give an unlocked handler a brief real-I/O window to
+  // settle; a correctly locked mutation remains queued behind holdProject.
+  await new Promise<void>((resolve) => setTimeout(resolve, 50))
+  return { done, settled: () => value }
 }
 afterEach(async () => {
   vi.useRealTimers()
@@ -189,6 +224,60 @@ test('DELETE canvas clears an existing canvas back to empty', async () => {
 test('DELETE canvas on an unknown project → 404', async () => {
   const app = await appWithTmp()
   expect((await request(app).delete('/projects/ghost/canvas')).status).toBe(404)
+})
+
+test('a canvas save participates in the project lock and survives rename', async () => {
+  const app = await appWithTmp()
+  const dataRoot = dirs[dirs.length - 1]
+  await request(app).post('/projects').send({ name: 'Essay' })
+  const hold = await holdProject(dataRoot, 'essay')
+  const snapshot = { document: { records: [{ id: 'queued-save' }] }, session: null }
+  const save = await observeSettlement(
+    Promise.resolve(request(app).post('/projects/essay/canvas').send(snapshot)),
+  )
+  expect(save.settled()).toBe(false)
+  hold.release()
+  await hold.done
+  expect((await save.done).status).toBe(200)
+  const renamed = await request(app).patch('/projects/essay').send({ name: 'Final' })
+  expect(renamed.status).toBe(200)
+  expect((await request(app).get('/projects/final/canvas')).body).toEqual(snapshot)
+  await expect(fs.access(join(dataRoot, 'projects', 'essay'))).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+test('asset upload participates in the project lock', async () => {
+  const app = await appWithTmp()
+  const dataRoot = dirs[dirs.length - 1]
+  await request(app).post('/projects').send({ name: 'Essay' })
+  const hold = await holdProject(dataRoot, 'essay')
+  const upload = await observeSettlement(Promise.resolve(
+    request(app).post('/projects/essay/assets').set('content-type', 'image/png').send(Buffer.from([1])),
+  ))
+  expect(upload.settled()).toBe(false)
+  hold.release()
+  await hold.done
+  const response = await upload.done
+  expect(response.status).toBe(200)
+  expect(response.body.assetId).toMatch(/\.png$/)
+})
+
+test('review creation participates in the project lock', async () => {
+  const app = await appWithTmp()
+  const dataRoot = dirs[dirs.length - 1]
+  await request(app).post('/projects').send({ name: 'Essay' })
+  const hold = await holdProject(dataRoot, 'essay')
+  const create = await observeSettlement(Promise.resolve(
+    request(app).post('/projects/essay/reviews').send({
+      personality: 'trimmer',
+      agent: 'reviewer',
+    }),
+  ))
+  expect(create.settled()).toBe(false)
+  hold.release()
+  await hold.done
+  const response = await create.done
+  expect(response.status).toBe(200)
+  expect(response.body.review).toMatchObject({ personality: 'trimmer', status: 'in-progress' })
 })
 
 // Regression for the orphan-directory bug (#36): requireProject bakes the
