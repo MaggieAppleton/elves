@@ -454,9 +454,14 @@ test('a versioned save atomically persists a complete stamped create and removes
     .body.pendingChangeSets).toEqual([])
 })
 
-test('partial and legacy materialization stay pending, and a stale complete save changes nothing', async () => {
+test('partial materialization is rejected without side effects, then reload/reapply can complete', async () => {
   const { root, app } = await setup()
   const path = canvasPathFor(root, 'essay')!
+  const broadcast = vi.fn()
+  const summarize = vi.fn(async () => null)
+  const guarded = createServer(root, broadcast, {
+    summarizer: { label: 'test', summarize }, debounceMs: 1,
+  })
   const issued = (await token(app)).body.token
   const changeSet: ChangeSet = {
     id: 'partial-materialization', author: 'claude',
@@ -476,21 +481,48 @@ test('partial and legacy materialization stay pending, and a stale complete save
     .find((record: any) => record?.type === 'section') as any)?.id
   delete partial.document.store[sectionId]
 
-  const partialSave = await request(app).post('/projects/essay/canvas?protocol=2')
+  const beforeCanvas = await bytes(path)
+  const beforeBackup = await bytes(`${path}.bak`)
+  const partialSave = await request(guarded).post('/projects/essay/canvas?protocol=2')
     .set(REVISION_HEADER, '1').send(partial)
-  expect(partialSave.status).toBe(200)
-  let loaded = await request(app).get('/projects/essay/canvas?protocol=2')
-  expect(loaded.body.pendingChangeSets).toEqual([{ token: issued, changeSet }])
+  expect(partialSave.status).toBe(409)
+  expect(partialSave.body).toEqual({
+    code: 'pending-materialization-incomplete',
+    error: 'pending materialization incomplete',
+    revision: 1,
+    nextChangeSetToken: { epoch: issued.epoch, sequence: 1 },
+  })
+  expect(await bytes(path)).toEqual(beforeCanvas)
+  expect(await bytes(`${path}.bak`)).toEqual(beforeBackup)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  expect(summarize).not.toHaveBeenCalled()
+  expect(broadcast).not.toHaveBeenCalled()
 
-  const beforeStale = await bytes(path)
-  const stale = await request(app).post('/projects/essay/canvas?protocol=2')
+  const loaded = await request(createServer(root)).get('/projects/essay/canvas?protocol=2')
+  expect(loaded.body.revision).toBe(1)
+  expect(loaded.body.pendingChangeSets).toEqual([{ token: issued, changeSet }])
+  expect(loaded.body.snapshot.document).toBeNull()
+
+  const completed = await request(createServer(root)).post('/projects/essay/canvas?protocol=2')
     .set(REVISION_HEADER, '1').send(complete)
-  expect(stale.status).toBe(409)
-  expect(await bytes(path)).toEqual(beforeStale)
+  expect(completed.status).toBe(200)
+  expect(completed.body).toEqual({ ok: true, revision: 2 })
+  expect((await request(createServer(root)).get('/projects/essay/canvas?protocol=2'))
+    .body.pendingChangeSets).toEqual([])
+})
+
+test('legacy materialization still saves without clearing pending', async () => {
+  const { root, app } = await setup()
+  const issued = (await token(app)).body.token
+  const changeSet = create('legacy-materialization')
+  expect((await tokenPost(app, issued, changeSet)).status).toBe(202)
+  const complete = applyChangeSetToSnapshot(
+    canvas() as never, changeSet, changeSetTokenStamp(issued),
+  )!
 
   const legacySave = await request(app).post('/projects/essay/canvas').send(complete)
   expect(legacySave.status).toBe(200)
-  loaded = await request(createServer(root)).get('/projects/essay/canvas?protocol=2')
+  const loaded = await request(createServer(root)).get('/projects/essay/canvas?protocol=2')
   expect(loaded.body.pendingChangeSets).toEqual([{ token: issued, changeSet }])
 })
 

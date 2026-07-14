@@ -34,6 +34,7 @@ import { readReviews, createReview, transitionReview, reviewsPathFor, ReviewErro
 import { isPersonalityId, isReviewStatus, PERSONALITY_IDS, type Review } from '../src/model/reviews'
 import {
   CanvasRevisionExhaustedError,
+  PendingMaterializationIncompleteError,
   canvasRevision,
   clearCanvasSnapshot,
   ensureCanvasMetadata,
@@ -460,6 +461,7 @@ export function createServer(
         return
       }
       let observedRevision = 0
+      let observedNextChangeSetToken: ChangeSetToken | null = null
       let savedRevision: number | null = null
       try {
         const saved = await withProjectMutation(
@@ -468,6 +470,9 @@ export function createServer(
           async (paths) => {
             await withCanvasLock(paths.canvasPath, (current) => {
               observedRevision = canvasRevision(current)
+              observedNextChangeSetToken = pendingChangeSetsForClient(current).length > 0
+                ? nextChangeSetToken(current)
+                : null
               if (parsedRevision?.ok && parsedRevision.revision !== observedRevision) return null
               const next = replaceCanvasSnapshot(current, body, { materializePending: versioned })
               savedRevision = canvasRevision(next)
@@ -490,6 +495,17 @@ export function createServer(
         // never a silent data loss. To clear a canvas on purpose, use DELETE.
         if (err instanceof EmptyCanvasOverwriteError) {
           res.status(409).json({ error: 'refusing to blank a non-empty canvas; use DELETE to clear' })
+          return
+        }
+        if (err instanceof PendingMaterializationIncompleteError) {
+          res.status(409).json({
+            code: 'pending-materialization-incomplete',
+            error: err.message,
+            revision: observedRevision,
+            ...(observedNextChangeSetToken
+              ? { nextChangeSetToken: observedNextChangeSetToken }
+              : {}),
+          })
           return
         }
         if (err instanceof CanvasRevisionExhaustedError) {

@@ -74,6 +74,13 @@ export class ChangeSetSequenceExhaustedError extends Error {
   }
 }
 
+export class PendingMaterializationIncompleteError extends Error {
+  constructor() {
+    super('pending materialization incomplete')
+    this.name = 'PendingMaterializationIncompleteError'
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -338,30 +345,36 @@ function createdRecordKind(record: unknown): CreatedRecordKind | null {
   if (record.type !== 'card') return null
   if (record.props.kind === 'figure') return 'create_figure_card'
   if (record.props.kind !== 'note') return null
-  return record.props.noteKind === 'reference' ? 'create_reference' : 'create_note_card'
+  if (record.props.noteKind === 'reference') return 'create_reference'
+  return record.props.noteKind === 'text' ? 'create_note_card' : null
 }
 
-function pendingEntryIsMaterialized(
+type PendingMaterializationStatus = 'absent' | 'complete' | 'incomplete'
+
+function pendingEntryMaterializationStatus(
   incoming: CanvasSnapshot,
   entry: StoredPendingChangeSet,
-): boolean {
-  const expected = expectedCreatedKinds(entry.changeSet)
-  if (!expected) return false
+): PendingMaterializationStatus {
   const document = incoming.document
-  if (!isRecord(document) || !isRecord(document.store)) return false
+  if (!isRecord(document) || !isRecord(document.store)) return 'absent'
   const stamp = changeSetTokenStamp(entry.token)
+  const stampedRecords = Object.values(document.store).filter((record) =>
+    isRecord(record) && isRecord(record.meta) &&
+    record.meta[CHANGE_SET_STAMP_META_KEY] === stamp)
+  if (stampedRecords.length === 0) return 'absent'
+
+  const expected = expectedCreatedKinds(entry.changeSet)
+  if (!expected) return 'incomplete'
   const actual: CreatedRecordKind[] = []
-  for (const record of Object.values(document.store)) {
-    if (!isRecord(record) || !isRecord(record.meta) ||
-      record.meta[CHANGE_SET_STAMP_META_KEY] !== stamp) continue
+  for (const record of stampedRecords) {
     const kind = createdRecordKind(record)
-    if (!kind) return false
+    if (!kind) return 'incomplete'
     actual.push(kind)
   }
-  if (actual.length !== expected.length) return false
+  if (actual.length !== expected.length) return 'incomplete'
   actual.sort()
   expected.sort()
-  return actual.every((kind, index) => kind === expected[index])
+  return actual.every((kind, index) => kind === expected[index]) ? 'complete' : 'incomplete'
 }
 
 interface ReplaceCanvasSnapshotOptions {
@@ -375,9 +388,15 @@ export function replaceCanvasSnapshot(
 ): CanvasSnapshot {
   const metadata = metadataForMutation(current)
   const { [SERVER_CANVAS_METADATA_KEY]: _forged, ...publicIncoming } = incoming
-  const pendingChangeSets = options.materializePending
-    ? metadata.pendingChangeSets.filter((entry) => !pendingEntryIsMaterialized(publicIncoming, entry))
-    : metadata.pendingChangeSets
+  let pendingChangeSets = metadata.pendingChangeSets
+  if (options.materializePending) {
+    pendingChangeSets = []
+    for (const entry of metadata.pendingChangeSets) {
+      const status = pendingEntryMaterializationStatus(publicIncoming, entry)
+      if (status === 'incomplete') throw new PendingMaterializationIncompleteError()
+      if (status === 'absent') pendingChangeSets.push(entry)
+    }
+  }
   return withMetadata(publicIncoming, {
     ...metadata,
     revision: nextRevision(metadata.revision),

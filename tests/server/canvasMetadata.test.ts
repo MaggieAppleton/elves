@@ -17,6 +17,7 @@ import {
   CanvasRevisionExhaustedError,
   ChangeSetSequenceExhaustedError,
   InvalidCanvasMetadataError,
+  PendingMaterializationIncompleteError,
   addPendingChangeSet,
   canvasRevision,
   clearCanvasSnapshot,
@@ -362,7 +363,18 @@ describe('public snapshots, replacement, and clear', () => {
       ops: [
         { kind: 'create_note_card', text: 'One', x: 0, y: 0 },
         { kind: 'create_note_card', text: 'Two', x: 0, y: 100 },
+        {
+          kind: 'create_reference', x: 0, y: 200,
+          reference: {
+            url: 'https://example.com', refType: 'link', title: 'Example', authors: [],
+            siteName: 'example.com', year: null, venue: null, description: null,
+            faviconAssetId: null, thumbnailAssetId: null, doi: null, arxivId: null,
+            fetchedBy: 'claude', fetchedAt: 'T',
+          },
+        },
+        { kind: 'create_figure_card', title: 'Figure', description: 'Plan', x: 0, y: 300 },
         { kind: 'create_section', text: 'Section', x: 300, y: 0 },
+        { kind: 'create_question', text: 'Question?', x: 600, y: 0 },
       ],
     }
     const current = withPending(changeSet)
@@ -371,7 +383,10 @@ describe('public snapshots, replacement, and clear', () => {
     const incoming = incomingWith(
       stampedShape('shape:n1', stamp, 'card', { kind: 'note', noteKind: 'text' }),
       stampedShape('shape:n2', stamp, 'card', { kind: 'note', noteKind: 'text' }),
+      stampedShape('shape:r1', stamp, 'card', { kind: 'note', noteKind: 'reference' }),
+      stampedShape('shape:f1', stamp, 'card', { kind: 'figure' }),
       stampedShape('shape:s1', stamp, 'section'),
+      stampedShape('shape:q1', stamp, 'question'),
     )
 
     const replaced = replaceCanvasSnapshot(current, incoming, { materializePending: true })
@@ -390,18 +405,13 @@ describe('public snapshots, replacement, and clear', () => {
       stampedShape('shape:n2', stamp, 'card', { kind: 'note', noteKind: 'text' }),
       stampedShape('shape:q1', stamp, 'question'),
     ]],
-    ['wrong token', (stamp: string) => [
-      stampedShape('shape:n1', `${stamp}-wrong`, 'card', { kind: 'note', noteKind: 'text' }),
-      stampedShape('shape:n2', `${stamp}-wrong`, 'card', { kind: 'note', noteKind: 'text' }),
-      stampedShape('shape:s1', `${stamp}-wrong`, 'section'),
-    ]],
     ['duplicated unrelated record', (stamp: string) => [
       stampedShape('shape:n1', stamp, 'card', { kind: 'note', noteKind: 'text' }),
       stampedShape('shape:n2', stamp, 'card', { kind: 'note', noteKind: 'text' }),
       stampedShape('shape:n3', stamp, 'card', { kind: 'note', noteKind: 'text' }),
       stampedShape('shape:s1', stamp, 'section'),
     ]],
-  ])('versioned replacement keeps pending for a %s stamp set', (_label, records) => {
+  ])('versioned replacement rejects a %s stamp set atomically', (_label, records) => {
     const changeSet: ChangeSet = {
       id: 'incomplete', author: 'claude',
       ops: [
@@ -412,12 +422,39 @@ describe('public snapshots, replacement, and clear', () => {
     }
     const current = withPending(changeSet)
     const pending = pendingChangeSetsForClient(current)[0]!
-    const replaced = replaceCanvasSnapshot(
-      current,
-      incomingWith(...records(changeSetTokenStamp(pending.token))),
+    const before = structuredClone(current)
+    expect(() => replaceCanvasSnapshot(
+      current, incomingWith(...records(changeSetTokenStamp(pending.token))),
       { materializePending: true },
-    )
+    )).toThrow(PendingMaterializationIncompleteError)
+    expect(current).toEqual(before)
+  })
+
+  test.each([
+    ['malformed note', { kind: 'note' }],
+    ['image note', { kind: 'note', noteKind: 'image' }],
+  ])('a single exact-stamped %s cannot clear a pending text-note create', (_label, props) => {
+    const current = withPending(note('strict-note-kind'))
+    const pending = pendingChangeSetsForClient(current)[0]!
+    const incoming = incomingWith(stampedShape(
+      'shape:n1', changeSetTokenStamp(pending.token), 'card', props,
+    ))
+
+    expect(() => replaceCanvasSnapshot(current, incoming, { materializePending: true }))
+      .toThrow(PendingMaterializationIncompleteError)
+  })
+
+  test('versioned replacement permits zero exact-stamped records and retains pending', () => {
+    const current = withPending(note('unrelated-save'))
+    const pending = pendingChangeSetsForClient(current)[0]!
+    const wrongStamp = `${changeSetTokenStamp(pending.token)}-wrong`
+    const incoming = incomingWith(stampedShape(
+      'shape:n1', wrongStamp, 'card', { kind: 'note', noteKind: 'text' },
+    ))
+
+    const replaced = replaceCanvasSnapshot(current, incoming, { materializePending: true })
     expect(pendingChangeSetsForClient(replaced)).toEqual([pending])
+    expect(replaced.document).toEqual(incoming.document)
   })
 
   test('versioned replacement evaluates multiple pending entries independently', () => {
@@ -434,6 +471,27 @@ describe('public snapshots, replacement, and clear', () => {
 
     const replaced = replaceCanvasSnapshot(current, incoming, { materializePending: true })
     expect(pendingChangeSetsForClient(replaced)).toEqual([notePending])
+  })
+
+  test('one invalid pending materialization rejects removal of another completed entry', () => {
+    const noteChangeSet = note('complete-note')
+    const sectionChangeSet: ChangeSet = {
+      id: 'invalid-section', author: 'claude',
+      ops: [{ kind: 'create_section', text: 'Section', x: 0, y: 0 }],
+    }
+    const current = withPending(noteChangeSet, sectionChangeSet)
+    const [notePending, sectionPending] = pendingChangeSetsForClient(current)
+    const incoming = incomingWith(
+      stampedShape(
+        'shape:n1', changeSetTokenStamp(notePending!.token),
+        'card', { kind: 'note', noteKind: 'text' },
+      ),
+      stampedShape('shape:q1', changeSetTokenStamp(sectionPending!.token), 'question'),
+    )
+
+    expect(() => replaceCanvasSnapshot(current, incoming, { materializePending: true }))
+      .toThrow(PendingMaterializationIncompleteError)
+    expect(pendingChangeSetsForClient(current)).toEqual([notePending, sectionPending])
   })
 
   test('legacy replacement never confirms pending, even when the complete stamp is present', () => {
