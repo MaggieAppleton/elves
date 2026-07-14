@@ -8,18 +8,15 @@ import {
   finalizeAddedCardRecord,
   mergeCardComments,
 } from './canvasMergeComments'
+import { validateBoundary } from './canvasMergeBoundary'
 import type {
   CanvasMergeConflict,
   CanvasMergeInput,
   CanvasMergeResult,
   DocumentRecord,
   DocumentRecords,
-  DocumentRecordType,
 } from './canvasMergeTypes'
 
-const DOCUMENT_TYPES = new Set<DocumentRecordType>([
-  'asset', 'binding', 'document', 'page', 'shape',
-])
 const MISSING = Symbol('missing')
 type Missing = typeof MISSING
 type Slot = unknown | Missing
@@ -206,33 +203,6 @@ function mergeSlot(
 
   conflicts.push({ kind: 'field-value-conflict', recordId, path })
   return MISSING
-}
-
-function validateBoundary(input: CanvasMergeInput): CanvasMergeConflict[] {
-  const conflicts: CanvasMergeConflict[] = []
-  for (const source of ['base', 'local', 'remote'] as const) {
-    const records = input[source] as Record<string, unknown>
-    for (const recordId of Object.keys(records).sort()) {
-      const record = records[recordId]
-      if (!isPlainObject(record) || typeof record.id !== 'string' || typeof record.typeName !== 'string') {
-        conflicts.push({
-          kind: 'invalid-document-record', source, recordId, path: [], reason: 'invalid-record',
-        })
-        continue
-      }
-      if (record.id !== recordId) {
-        conflicts.push({
-          kind: 'invalid-document-record', source, recordId, path: ['id'], reason: 'key-id-mismatch',
-        })
-      }
-      if (!DOCUMENT_TYPES.has(record.typeName as DocumentRecordType)) {
-        conflicts.push({
-          kind: 'invalid-document-record', source, recordId, path: ['typeName'], reason: 'non-document-type',
-        })
-      }
-    }
-  }
-  return conflicts
 }
 
 export function mergeCanvasRecords(input: CanvasMergeInput): CanvasMergeResult {
