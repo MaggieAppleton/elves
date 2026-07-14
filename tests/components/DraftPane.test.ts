@@ -1,5 +1,7 @@
-import { createElement, StrictMode } from 'react'
-import { act, create, type ReactTestRenderer } from 'react-test-renderer'
+// @vitest-environment jsdom
+
+import { act, createElement, StrictMode, useEffect, type ReactNode } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { Editor } from 'tldraw'
 
@@ -34,43 +36,66 @@ const editor = {
   getShapePageBounds: () => ({ x: 0, y: 0, w: 240, h: 120 }),
 } as unknown as Editor
 
-function renderDraft(): ReactTestRenderer {
-  return create(createElement(DraftPane, {
+type Harness = { container: HTMLDivElement; root: Root }
+const mounted = new Set<Harness>()
+const actEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+
+function render(node: ReactNode): Harness {
+  const container = document.createElement('div')
+  document.body.append(container)
+  const harness = { container, root: createRoot(container) }
+  mounted.add(harness)
+  act(() => { harness.root.render(node) })
+  return harness
+}
+
+function renderDraft(): Harness {
+  return render(createElement(DraftPane, {
     editor,
     onSelectCard: vi.fn(),
   }))
 }
 
-function copyButton(renderer: ReactTestRenderer) {
-  return renderer.root.findByProps({ 'data-testid': 'draft-copy' })
+function unmount(harness: Harness) {
+  act(() => { harness.root.unmount() })
+  harness.container.remove()
+  mounted.delete(harness)
 }
 
-function copyLabel(renderer: ReactTestRenderer): string {
-  return copyButton(renderer).children.join('')
+function copyButton(harness: Harness): HTMLButtonElement {
+  const button = harness.container.querySelector<HTMLButtonElement>('[data-testid="draft-copy"]')
+  if (!button) throw new Error('copy button not rendered')
+  return button
+}
+
+function copyLabel(harness: Harness): string {
+  return copyButton(harness).textContent ?? ''
 }
 
 beforeEach(() => {
+  actEnvironment.IS_REACT_ACT_ENVIRONMENT = true
   vi.useFakeTimers()
 })
 
 afterEach(() => {
+  for (const harness of mounted) unmount(harness)
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
   vi.useRealTimers()
+  delete actEnvironment.IS_REACT_ACT_ENVIRONMENT
 })
 
 test('a repeated copy replaces the previous status-reset timer', async () => {
   const writeText = vi.fn(async () => {})
   vi.stubGlobal('navigator', { clipboard: { writeText } })
-  let renderer!: ReactTestRenderer
-  await act(async () => { renderer = renderDraft() })
+  const renderer = renderDraft()
 
-  await act(async () => { await copyButton(renderer).props.onClick() })
+  await act(async () => { copyButton(renderer).click() })
   expect(copyLabel(renderer)).toBe('Copied')
   expect(vi.getTimerCount()).toBe(1)
 
   await act(async () => { vi.advanceTimersByTime(1000) })
-  await act(async () => { await copyButton(renderer).props.onClick() })
+  await act(async () => { copyButton(renderer).click() })
   expect(vi.getTimerCount()).toBe(1)
 
   await act(async () => { vi.advanceTimersByTime(401) })
@@ -78,7 +103,7 @@ test('a repeated copy replaces the previous status-reset timer', async () => {
   await act(async () => { vi.advanceTimersByTime(999) })
   expect(copyLabel(renderer)).toBe('Copy as Markdown')
 
-  await act(async () => { renderer.unmount() })
+  unmount(renderer)
 })
 
 test('an older clipboard completion cannot overwrite a newer copy status', async () => {
@@ -89,29 +114,34 @@ test('an older clipboard completion cannot overwrite a newer copy status', async
     .mockImplementationOnce(() => second.promise)
   vi.stubGlobal('navigator', { clipboard: { writeText } })
   vi.spyOn(console, 'error').mockImplementation(() => {})
-  let renderer!: ReactTestRenderer
-  await act(async () => { renderer = renderDraft() })
+  const renderer = renderDraft()
 
-  let firstCopy!: Promise<void>
-  let secondCopy!: Promise<void>
-  act(() => { firstCopy = copyButton(renderer).props.onClick() })
-  act(() => { secondCopy = copyButton(renderer).props.onClick() })
+  act(() => { copyButton(renderer).click() })
+  act(() => { copyButton(renderer).click() })
   await act(async () => {
     second.resolve()
-    await secondCopy
+    await second.promise
   })
   expect(copyLabel(renderer)).toBe('Copied')
 
   await act(async () => {
     first.reject(new Error('older failure'))
-    await firstCopy
+    await first.promise.catch(() => {})
   })
   expect(copyLabel(renderer)).toBe('Copied')
 
-  await act(async () => { renderer.unmount() })
+  unmount(renderer)
 })
 
 test('StrictMode keeps the latest rejection authoritative over an older success', async () => {
+  const lifecycle = { setups: 0, cleanups: 0 }
+  function LifecycleProbe() {
+    useEffect(() => {
+      lifecycle.setups += 1
+      return () => { lifecycle.cleanups += 1 }
+    }, [])
+    return null
+  }
   const older = deferred<void>()
   const latest = deferred<void>()
   const writeText = vi.fn()
@@ -119,22 +149,19 @@ test('StrictMode keeps the latest rejection authoritative over an older success'
     .mockImplementationOnce(() => latest.promise)
   vi.stubGlobal('navigator', { clipboard: { writeText } })
   const log = vi.spyOn(console, 'error').mockImplementation(() => {})
-  let renderer!: ReactTestRenderer
-  await act(async () => {
-    renderer = create(createElement(
-      StrictMode,
-      null,
-      createElement(DraftPane, { editor, onSelectCard: vi.fn() }),
-    ))
-  })
+  const renderer = render(createElement(
+    StrictMode,
+    null,
+    createElement(LifecycleProbe),
+    createElement(DraftPane, { editor, onSelectCard: vi.fn() }),
+  ))
+  expect(lifecycle).toEqual({ setups: 2, cleanups: 1 })
 
-  let olderCopy!: Promise<void>
-  let latestCopy!: Promise<void>
-  act(() => { olderCopy = copyButton(renderer).props.onClick() })
-  act(() => { latestCopy = copyButton(renderer).props.onClick() })
+  act(() => { copyButton(renderer).click() })
+  act(() => { copyButton(renderer).click() })
   await act(async () => {
     latest.reject(new Error('latest failure'))
-    await latestCopy
+    await latest.promise.catch(() => {})
   })
 
   expect(copyLabel(renderer)).toBe('Copy failed')
@@ -143,7 +170,7 @@ test('StrictMode keeps the latest rejection authoritative over an older success'
 
   await act(async () => {
     older.resolve()
-    await olderCopy
+    await older.promise
   })
   expect(copyLabel(renderer)).toBe('Copy failed')
   expect(log).toHaveBeenCalledOnce()
@@ -153,7 +180,7 @@ test('StrictMode keeps the latest rejection authoritative over an older success'
   expect(copyLabel(renderer)).toBe('Copy as Markdown')
   expect(vi.getTimerCount()).toBe(0)
 
-  await act(async () => { renderer.unmount() })
+  unmount(renderer)
 })
 
 test('unmount clears reset timers and invalidates pending clipboard completion', async () => {
@@ -163,21 +190,18 @@ test('unmount clears reset timers and invalidates pending clipboard completion',
     .mockImplementationOnce(() => pending.promise)
   vi.stubGlobal('navigator', { clipboard: { writeText } })
 
-  let settledRenderer!: ReactTestRenderer
-  await act(async () => { settledRenderer = renderDraft() })
-  await act(async () => { await copyButton(settledRenderer).props.onClick() })
+  const settledRenderer = renderDraft()
+  await act(async () => { copyButton(settledRenderer).click() })
   expect(vi.getTimerCount()).toBe(1)
-  await act(async () => { settledRenderer.unmount() })
+  unmount(settledRenderer)
   expect(vi.getTimerCount()).toBe(0)
 
-  let pendingRenderer!: ReactTestRenderer
-  await act(async () => { pendingRenderer = renderDraft() })
-  let copyPromise!: Promise<void>
-  act(() => { copyPromise = copyButton(pendingRenderer).props.onClick() })
-  await act(async () => { pendingRenderer.unmount() })
+  const pendingRenderer = renderDraft()
+  act(() => { copyButton(pendingRenderer).click() })
+  unmount(pendingRenderer)
   await act(async () => {
     pending.resolve()
-    await copyPromise
+    await pending.promise
   })
   expect(vi.getTimerCount()).toBe(0)
 })
