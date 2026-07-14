@@ -3,8 +3,10 @@ import {
   createTLStore,
   defaultShapeUtils,
   getSnapshot,
+  type TLCameraId,
   type TLPageId,
   type TLStore,
+  type TLStoreSnapshot,
 } from 'tldraw'
 import {
   applyCanvasDocument,
@@ -41,20 +43,34 @@ describe('canvas document adapter', () => {
     expect(Object.keys(document).some((id) => id.startsWith('instance:'))).toBe(false)
   })
 
-  test('normalizes an incoming document through the live store schema', () => {
+  test('normalizes a fetched editor document through the live store schema', () => {
     const source = makeStore()
-    source.update('page:page' as TLPageId, (page) => ({ ...page, name: 'Remote title' }))
-    const incoming = source.getStoreSnapshot()
+    const incoming = structuredClone(source.getStoreSnapshot()) as unknown as {
+      store: Record<string, Record<string, unknown>>
+      schema: { schemaVersion: number; sequences: Record<string, number> }
+    }
+    delete (incoming.store['document:document'] as Record<string, unknown>).name
+    delete (incoming.store['document:document'] as Record<string, unknown>).meta
+    delete (incoming.store['page:page'] as Record<string, unknown>).meta
+    incoming.schema.sequences['com.tldraw.document'] = 0
+    incoming.schema.sequences['com.tldraw.page'] = 0
 
     const target = makeStore()
-    const normalized = normalizeCanvasDocument(target, incoming)
+    const normalized = normalizeCanvasDocument(target, {
+      document: incoming as unknown as TLStoreSnapshot,
+    })
 
     expect(normalized['page:page']).toMatchObject({
       id: 'page:page',
       typeName: 'page',
-      name: 'Remote title',
+      meta: {},
     })
+    expect(normalized['document:document']).toMatchObject({ name: '', meta: {} })
     expect(normalized).not.toBe(incoming.store)
+  })
+
+  test('normalizes an empty fetched canvas to an empty document', () => {
+    expect(normalizeCanvasDocument(makeStore(), { document: null })).toEqual({})
   })
 
   test('builds deterministic added, updated, and removed record diffs', () => {
@@ -76,6 +92,12 @@ describe('canvas document adapter', () => {
 
   test('applies only document records as remote changes and preserves session state', () => {
     const store = makeStore()
+    store.update('camera:page:page' as TLCameraId, (camera) => ({
+      ...camera,
+      x: 42,
+      y: -17,
+      z: 2,
+    }))
     const beforeSession = structuredClone(getSnapshot(store).session)
     const onUserChange = vi.fn()
     store.listen(onUserChange, { source: 'user', scope: 'document' })

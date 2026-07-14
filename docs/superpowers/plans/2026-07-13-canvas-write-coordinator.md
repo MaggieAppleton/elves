@@ -28,7 +28,7 @@ Files:
 Write failing tests proving that normalization migrates incoming document
 snapshots, diff application changes only document records, uses
 `mergeRemoteChanges`, and preserves local session state. Add helpers to capture,
-normalize, diff, apply, and stamp newly materialized shapes.
+normalize, diff, and apply document state.
 
 Verify: focused adapter tests and typecheck.
 
@@ -65,7 +65,9 @@ Files:
 Test read-only initialization, exact pending materialization stamps, conflict
 reload/retry, initialization failure, switch flush behavior, and exclusive
 rename/rebind. Edits made during rename must drain under the new identity; a
-failed rename must resume saving under the old identity.
+failed rename must resume saving under the old identity. Pending application
+must pass `changeSetTokenStamp(token)` into the existing stamped change-set
+applier, with focused metadata coverage.
 
 Verify: focused coordinator tests.
 

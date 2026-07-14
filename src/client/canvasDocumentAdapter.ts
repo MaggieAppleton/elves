@@ -1,12 +1,15 @@
 import {
   isEqual,
   type RecordsDiff,
-  type TLEditorSnapshot,
   type TLRecord,
   type TLStore,
   type TLStoreSnapshot,
 } from 'tldraw'
 import type { DocumentRecord, DocumentRecords } from './canvasMerge'
+
+export type CanvasDocumentSnapshot =
+  | TLStoreSnapshot
+  | { document?: TLStoreSnapshot | null }
 
 const DOCUMENT_TYPES = new Set(['asset', 'binding', 'document', 'page', 'shape'])
 
@@ -29,7 +32,7 @@ export function captureCanvasDocument(store: TLStore): DocumentRecords {
 /** Migrate a fetched document with the exact schema owned by the mounted store. */
 export function normalizeCanvasDocument(
   store: TLStore,
-  snapshot: TLStoreSnapshot | Partial<TLEditorSnapshot>,
+  snapshot: CanvasDocumentSnapshot,
 ): DocumentRecords {
   const document = 'store' in snapshot ? snapshot : snapshot.document
   if (!document) return {}
