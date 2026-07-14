@@ -9,6 +9,10 @@ import {
 type CreatedRecordKind = Extract<Op, { kind: `create_${string}` }>['kind']
 export type PendingMaterializationStatus = 'absent' | 'complete' | 'incomplete'
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 function expectedKinds(entry: PendingChangeSetV2): CreatedRecordKind[] | null {
   const kinds: CreatedRecordKind[] = []
   for (const op of entry.changeSet.ops) {
@@ -29,15 +33,14 @@ function expectedKinds(entry: PendingChangeSetV2): CreatedRecordKind[] | null {
 
 function createdKind(record: DocumentRecord): CreatedRecordKind | null {
   const props = record.props
-  if (record.typeName !== 'shape' || typeof props !== 'object' || props === null) return null
+  if (record.typeName !== 'shape' || !isRecord(props)) return null
   if (record.type === 'section') return 'create_section'
   if (record.type === 'question') return 'create_question'
   if (record.type !== 'card') return null
-  const shapeProps = props as Record<string, unknown>
-  if (shapeProps.kind === 'figure') return 'create_figure_card'
-  if (shapeProps.kind !== 'note') return null
-  if (shapeProps.noteKind === 'reference') return 'create_reference'
-  return shapeProps.noteKind === 'text' ? 'create_note_card' : null
+  if (props.kind === 'figure') return 'create_figure_card'
+  if (props.kind !== 'note') return null
+  if (props.noteKind === 'reference') return 'create_reference'
+  return props.noteKind === 'text' ? 'create_note_card' : null
 }
 
 export function pendingMaterializationStatus(
@@ -47,8 +50,7 @@ export function pendingMaterializationStatus(
   const stamp = changeSetTokenStamp(entry.token)
   const stamped = Object.values(document).filter((record) => {
     const meta = record.meta
-    return typeof meta === 'object' && meta !== null &&
-      (meta as Record<string, unknown>)[CHANGE_SET_STAMP_META_KEY] === stamp
+    return isRecord(meta) && meta[CHANGE_SET_STAMP_META_KEY] === stamp
   })
   if (stamped.length === 0) return 'absent'
 

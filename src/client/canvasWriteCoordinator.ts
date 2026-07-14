@@ -293,6 +293,7 @@ export function createCanvasWriteCoordinator(
       try {
         let conflictRetries = 0
         for (;;) {
+          assertCurrent(expected, expectedProjectId)
           const loaded = await transport.load(expectedProjectId)
           assertCurrent(expected, expectedProjectId)
           editor.loadInitialSnapshot(loaded.snapshot)

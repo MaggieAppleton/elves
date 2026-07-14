@@ -231,3 +231,23 @@ test('dispose during a materialization save never commits or unlocks', async () 
   await expect(initialized).rejects.toBeInstanceOf(CanvasWriteCoordinatorDisposedError)
   expect(h.readOnly.mock.calls).toEqual([[true]])
 })
+
+test('dispose before a save conflict rejection never starts a retry load', async () => {
+  const heldSave = deferred<number>()
+  const unexpectedRetry = deferred<CanvasVersionedState>()
+  const load = vi.fn()
+    .mockResolvedValueOnce(state(null, 1, [pendingNote]))
+    .mockImplementationOnce(() => unexpectedRetry.promise)
+  const h = initHarness({ load, save: () => heldSave.promise })
+  const initialized = h.coordinator.initialize()
+  await tick()
+
+  h.coordinator.dispose()
+  heldSave.reject(conflict(2))
+  await tick()
+  unexpectedRetry.resolve(state(null, 2, [pendingNote]))
+
+  await expect(initialized).rejects.toBeInstanceOf(CanvasWriteCoordinatorDisposedError)
+  expect(load).toHaveBeenCalledTimes(1)
+  expect(h.readOnly.mock.calls).toEqual([[true]])
+})

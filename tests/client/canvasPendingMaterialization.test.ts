@@ -98,3 +98,36 @@ test('matches server classification for all five created record kinds', () => {
     question: { id: 'question', typeName: 'shape', type: 'question', props: {}, meta },
   }, allKinds)).toBe('complete')
 })
+
+test('rejects a wrong created-kind multiset even when stamp count matches', () => {
+  const stamp = changeSetTokenStamp(pending.token)
+  expect(pendingMaterializationStatus({
+    first: record('first', stamp, 'note'),
+    second: record('second', stamp, 'note'),
+  }, pending)).toBe('incomplete')
+})
+
+test('rejects array-valued props and meta like the server plain-object guard', () => {
+  const single: PendingChangeSetV2 = {
+    token: { epoch: 'epoch-c', sequence: 1 },
+    changeSet: {
+      id: 'single', author: 'agent',
+      ops: [{ kind: 'create_note_card', text: 'Note', x: 0, y: 0 }],
+    },
+  }
+  const stamp = changeSetTokenStamp(single.token)
+  const arrayProps = Object.assign([], { kind: 'note', noteKind: 'text' })
+  const arrayMeta = Object.assign([], { elvesChangeSetToken: stamp })
+  expect(pendingMaterializationStatus({
+    note: {
+      id: 'note', typeName: 'shape', type: 'card', props: arrayProps,
+      meta: { elvesChangeSetToken: stamp },
+    },
+  }, single)).toBe('incomplete')
+  expect(pendingMaterializationStatus({
+    note: {
+      id: 'note', typeName: 'shape', type: 'card',
+      props: { kind: 'note', noteKind: 'text' }, meta: arrayMeta,
+    },
+  }, single)).toBe('absent')
+})
