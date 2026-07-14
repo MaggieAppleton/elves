@@ -3,7 +3,11 @@ import {
   debounce,
   createSaver,
   loadCanvas,
+  loadCanvasVersioned,
   saveCanvas,
+  saveCanvasVersioned,
+  CanvasProtocolError,
+  CanvasRevisionConflictError,
   listProjects,
   createProject,
   renameProject,
@@ -30,6 +34,110 @@ test('saveCanvas POSTs the snapshot to the project canvas as JSON', async () => 
   expect(init.method).toBe('POST')
   expect(JSON.parse(init.body as string)).toEqual({ a: 1 })
   expect((init.headers as Record<string, string>)['content-type']).toBe('application/json')
+})
+
+test('loadCanvasVersioned GETs protocol 2 and returns the versioned canvas state', async () => {
+  const state = {
+    snapshot: { document: null, session: null },
+    revision: 7,
+    pendingChangeSets: [{
+      token: { epoch: 'epoch-a', sequence: 0 },
+      changeSet: { id: 'cs-a', author: 'claude', ops: [] },
+    }],
+    nextChangeSetToken: { epoch: 'epoch-a', sequence: 1 },
+  }
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => state })))
+
+  await expect(loadCanvasVersioned('essay notes')).resolves.toEqual(state)
+  expect(fetch).toHaveBeenCalledWith(
+    expect.stringContaining('/projects/essay%20notes/canvas?protocol=2'),
+  )
+})
+
+test('saveCanvasVersioned POSTs protocol 2 with the revision header and returns the new revision', async () => {
+  const fetchMock = vi.fn(async () => ({
+    ok: true,
+    json: async () => ({ ok: true, revision: 8 }),
+  }))
+  vi.stubGlobal('fetch', fetchMock)
+
+  await expect(saveCanvasVersioned('essay notes', { document: null }, 7)).resolves.toBe(8)
+  const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+  expect(url).toContain('/projects/essay%20notes/canvas?protocol=2')
+  expect(init.method).toBe('POST')
+  expect(init.headers).toEqual({
+    'content-type': 'application/json',
+    'x-elves-canvas-revision': '7',
+  })
+  expect(JSON.parse(init.body as string)).toEqual({ document: null })
+})
+
+test('saveCanvasVersioned throws a typed stale-revision error with the server revision', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => ({
+    ok: false,
+    status: 409,
+    json: async () => ({
+      code: 'canvas-revision-conflict',
+      error: 'canvas revision conflict',
+      revision: 8,
+    }),
+  })))
+
+  const error = await saveCanvasVersioned('essay', { document: null }, 7)
+    .catch((caught: unknown) => caught)
+  expect(error).toBeInstanceOf(CanvasRevisionConflictError)
+  expect(error).toMatchObject({
+    status: 409,
+    code: 'canvas-revision-conflict',
+    revision: 8,
+    serverRevision: 8,
+  })
+})
+
+test('saveCanvasVersioned preserves pending-incomplete protocol details without calling it stale', async () => {
+  const nextChangeSetToken = { epoch: 'epoch-a', sequence: 2 }
+  vi.stubGlobal('fetch', vi.fn(async () => ({
+    ok: false,
+    status: 409,
+    json: async () => ({
+      code: 'pending-materialization-incomplete',
+      error: 'pending materialization incomplete',
+      revision: 7,
+      nextChangeSetToken,
+    }),
+  })))
+
+  const error = await saveCanvasVersioned('essay', { document: null }, 7)
+    .catch((caught: unknown) => caught)
+  expect(error).toBeInstanceOf(CanvasProtocolError)
+  expect(error).not.toBeInstanceOf(CanvasRevisionConflictError)
+  expect(error).toMatchObject({
+    status: 409,
+    code: 'pending-materialization-incomplete',
+    revision: 7,
+    nextChangeSetToken,
+  })
+})
+
+test('loadCanvasVersioned reports other protocol failures with status and code', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => ({
+    ok: false,
+    status: 507,
+    json: async () => ({
+      code: 'canvas-revision-exhausted',
+      error: 'canvas revision exhausted',
+      revision: Number.MAX_SAFE_INTEGER,
+    }),
+  })))
+
+  const error = await loadCanvasVersioned('essay').catch((caught: unknown) => caught)
+  expect(error).toBeInstanceOf(CanvasProtocolError)
+  expect(error).toMatchObject({
+    message: 'canvas revision exhausted',
+    status: 507,
+    code: 'canvas-revision-exhausted',
+    revision: Number.MAX_SAFE_INTEGER,
+  })
 })
 
 test('listProjects GETs /projects', async () => {
