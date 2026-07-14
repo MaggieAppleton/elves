@@ -40,7 +40,8 @@ export type CanvasMergeConflict =
       source: CanvasMergeSource
       recordId: string
       path: string[]
-      reason: 'duplicate-id' | 'missing-id' | 'non-string-id' | 'invalid-list'
+      reason: 'duplicate-id' | 'missing-id' | 'non-string-id' |
+        'missing-text' | 'non-string-text' | 'invalid-list'
     }
   | {
       kind: 'invalid-document-record'

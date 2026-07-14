@@ -67,6 +67,20 @@ function indexComments(
       })
       return
     }
+    if (!Object.prototype.hasOwnProperty.call(entry, 'text')) {
+      conflicts.push({
+        kind: 'invalid-comment', source, recordId,
+        path: ['props', 'comments', String(position), 'text'], reason: 'missing-text',
+      })
+      return
+    }
+    if (typeof entry.text !== 'string') {
+      conflicts.push({
+        kind: 'invalid-comment', source, recordId,
+        path: ['props', 'comments', String(position), 'text'], reason: 'non-string-text',
+      })
+      return
+    }
     if (indexed.has(entry.id)) duplicateIds.add(entry.id)
     else indexed.set(entry.id, entry)
   })
@@ -168,6 +182,8 @@ export function mergeCardComments(input: CommentMergeInput): CommentMergeResult 
 
     merged.set(id, input.tools.merge(baseComment, localComment, remoteComment, path))
   }
+
+  if (input.conflicts.length !== conflictCount) return { ok: false }
 
   const comments: CommentRecord[] = []
   const emitted = new Set<string>()

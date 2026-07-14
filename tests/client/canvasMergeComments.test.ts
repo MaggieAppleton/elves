@@ -103,6 +103,23 @@ test('concurrent edits to distinct fields of one comment merge generically', () 
   ])
 })
 
+test('unequal text edits return the nested conflict without deriving from a partial comment', () => {
+  const original = comment('cmt-a', 'base')
+  const base = document(card({ comments: [original] }))
+  const local = document(card({ comments: [{ ...original, text: 'local edit' }] }))
+  const remote = document(card({ comments: [{ ...original, text: 'remote edit' }] }))
+
+  expect(() => {
+    expect(mergeCanvasRecords({ base, local, remote })).toEqual({
+      ok: false,
+      conflicts: [{
+        kind: 'field-value-conflict', recordId: 'shape:card',
+        path: ['props', 'comments', 'cmt-a', 'text'],
+      }],
+    })
+  }).not.toThrow()
+})
+
 test('a local resolve combines with a remote append', () => {
   const original = comment('cmt-a')
   const appended = comment('cmt-b')
@@ -152,6 +169,16 @@ test.each([
     source: 'remote' as const,
     comments: [{ id: 42, text: 'numeric id' }],
     path: ['props', 'comments', '0', 'id'], reason: 'non-string-id',
+  },
+  {
+    source: 'local' as const,
+    comments: [{ id: 'cmt-a' }],
+    path: ['props', 'comments', '0', 'text'], reason: 'missing-text',
+  },
+  {
+    source: 'remote' as const,
+    comments: [{ ...comment('cmt-a'), text: 42 }],
+    path: ['props', 'comments', '0', 'text'], reason: 'non-string-text',
   },
 ])('invalid comments in $source return a typed conflict', ({ source, comments, path, reason }) => {
   const empty = document(card())
