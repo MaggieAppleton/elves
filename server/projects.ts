@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { basename, join } from 'node:path'
 import {
   withProjectLock,
@@ -19,6 +20,23 @@ export class ProjectError extends Error {
   ) {
     super(message)
   }
+}
+
+export class ProjectRenameRollbackError extends Error {
+  constructor(
+    readonly oldId: string,
+    readonly newId: string,
+    readonly commitError: unknown,
+    readonly rollbackError: unknown,
+    readonly cleanupError: unknown = null,
+  ) {
+    super(`project rename commit failed and rollback failed: ${oldId} -> ${newId}`)
+    this.name = 'ProjectRenameRollbackError'
+  }
+}
+
+export interface RenameProjectOptions {
+  rename?: (oldPath: string, newPath: string) => Promise<void>
 }
 
 export function projectsRoot(dataRoot: string): string {
@@ -197,6 +215,7 @@ export async function renameProject(
   dataRoot: string,
   id: string,
   name: string,
+  options: RenameProjectOptions = {},
 ): Promise<Project> {
   const trimmed = name.trim()
   if (!trimmed) throw new ProjectError('name required', 400)
@@ -207,17 +226,85 @@ export async function renameProject(
       const proj = await getProject(dataRoot, id)
       if (!proj) throw new ProjectError('unknown project', 404)
       const updated: Project = { ...proj, id: newId, name: trimmed }
-      if (newId !== id) {
-        await fs.rename(join(projectsRoot(dataRoot), id), join(projectsRoot(dataRoot), newId))
-      }
+      const rename = options.rename ?? fs.rename
+      const root = projectsRoot(dataRoot)
+      const oldDir = join(root, id)
+      const newDir = join(root, newId)
+      const tempName = `.project.json.${process.pid}.${randomUUID()}.tmp`
+      const oldTempPath = join(oldDir, tempName)
+      const newTempPath = join(newDir, tempName)
       await fs.writeFile(
-        join(projectsRoot(dataRoot), newId, 'project.json'),
+        oldTempPath,
         JSON.stringify(updated, null, 2),
-        'utf8',
+        { encoding: 'utf8', flag: 'wx' },
       )
+
+      if (newId === id) {
+        try {
+          await rename(oldTempPath, join(oldDir, 'project.json'))
+        } catch (commitError) {
+          const cleanupError = await removeRenameTemp(oldTempPath)
+          if (cleanupError) {
+            throw new AggregateError(
+              [commitError, cleanupError],
+              'project metadata commit and temp cleanup failed',
+            )
+          }
+          throw commitError
+        }
+        return updated
+      }
+
+      try {
+        await rename(oldDir, newDir)
+      } catch (moveError) {
+        const cleanupError = await removeRenameTemp(oldTempPath)
+        if (cleanupError) {
+          throw new AggregateError(
+            [moveError, cleanupError],
+            'project directory move and temp cleanup failed',
+          )
+        }
+        throw moveError
+      }
+
+      try {
+        await rename(newTempPath, join(newDir, 'project.json'))
+      } catch (commitError) {
+        let rollbackError: unknown = null
+        try {
+          await rename(newDir, oldDir)
+        } catch (error) {
+          rollbackError = error
+        }
+        const cleanupError = await removeRenameTemp(
+          rollbackError === null ? oldTempPath : newTempPath,
+        )
+        if (rollbackError !== null) {
+          throw new ProjectRenameRollbackError(
+            id, newId, commitError, rollbackError, cleanupError,
+          )
+        }
+        if (cleanupError) {
+          throw new AggregateError(
+            [commitError, cleanupError],
+            'project metadata commit and temp cleanup failed after rollback',
+          )
+        }
+        throw commitError
+      }
       return updated
     })
   })
+}
+
+async function removeRenameTemp(path: string): Promise<unknown | null> {
+  try {
+    await fs.rm(path, { force: true })
+    return null
+  } catch (error) {
+    return error
+  }
 }
 
 // One-time, idempotent reconciliation run at startup: bring every project's id

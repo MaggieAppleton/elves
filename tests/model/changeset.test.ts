@@ -151,6 +151,80 @@ describe('isChangeSet', () => {
     expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'create_question', text: 'why?', x: 0, y: 0 }] })).toBe(true)
     expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'create_question', text: 'why?' }] })).toBe(false) // missing x/y
   })
+
+  test('rejects every non-finite semantic number', () => {
+    const numericOps = [
+      { kind: 'move_cards', moves: [{ cardId: 'a', x: 1, y: 2 }] },
+      { kind: 'create_note_card', text: 'x', x: 1, y: 2 },
+      { kind: 'create_reference', reference: VALID_REF, x: 1, y: 2 },
+      { kind: 'create_section', text: 'x', x: 1, y: 2 },
+      { kind: 'create_figure_card', title: 'x', description: 'y', x: 1, y: 2 },
+      { kind: 'move_sections', moves: [{ sectionId: 'a', x: 1, y: 2 }] },
+      { kind: 'create_question', text: 'x', x: 1, y: 2 },
+    ]
+    const numberPaths = (value: unknown, path: Array<string | number> = []): Array<Array<string | number>> => {
+      if (Array.isArray(value)) {
+        return value.flatMap((entry, index) => numberPaths(entry, [...path, index]))
+      }
+      if (typeof value === 'object' && value !== null) {
+        return Object.entries(value).flatMap(([key, entry]) => numberPaths(entry, [...path, key]))
+      }
+      return typeof value === 'number' ? [path] : []
+    }
+    for (const op of numericOps) {
+      for (const path of numberPaths(op)) {
+        for (const invalid of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+          const changed = structuredClone(op) as any
+          let cursor = changed
+          for (const segment of path.slice(0, -1)) cursor = cursor[segment]
+          cursor[path.at(-1)!] = invalid
+          expect(isChangeSet({ id: 'x', author: 'claude', ops: [changed] }),
+            `${op.kind}.${path.join('.')} rejects ${invalid}`).toBe(false)
+        }
+      }
+    }
+  })
+
+  test.each(['move_cards', 'move_sections'] as const)(
+    '%s rejects primitive move entries without throwing',
+    (kind) => {
+      for (const entry of [null, undefined, false, 0, 'move']) {
+        const value = { id: 'x', author: 'claude', ops: [{ kind, moves: [entry] }] }
+        expect(() => isChangeSet(value)).not.toThrow()
+        expect(isChangeSet(value)).toBe(false)
+      }
+    },
+  )
+
+  test.each(['__proto__', 'prototype', 'constructor'])(
+    'rejects prototype-like own key %s at every object level',
+    (key) => {
+      const payload: any = {
+        id: 'x', author: 'claude',
+        ops: [{ kind: 'add_comment', cardId: 'a', comment: { type: null, text: 'x' } }],
+      }
+      for (const target of [payload, payload.ops[0], payload.ops[0].comment]) {
+        const changed = structuredClone(payload)
+        const changedTarget = target === payload
+          ? changed
+          : target === payload.ops[0] ? changed.ops[0] : changed.ops[0].comment
+        Object.defineProperty(changedTarget, key, { value: 'unsafe', enumerable: true })
+        expect(isChangeSet(changed)).toBe(false)
+      }
+    },
+  )
+
+  test.each(['__proto__', 'prototype', 'constructor'])(
+    'rejects non-enumerable prototype-like own key %s',
+    (key) => {
+      const changed: any = {
+        id: 'x', author: 'claude',
+        ops: [{ kind: 'add_comment', cardId: 'a', comment: { type: null, text: 'x' } }],
+      }
+      Object.defineProperty(changed.ops[0].comment, key, { value: 'unsafe' })
+      expect(isChangeSet(changed)).toBe(false)
+    },
+  )
 })
 
 describe('isReference', () => {
@@ -164,6 +238,22 @@ describe('isReference', () => {
     expect(isReference({ ...VALID_REF, year: '2025' })).toBe(false)
     expect(isReference(null)).toBe(false)
   })
+  test.each(['__proto__', 'prototype', 'constructor'])(
+    'rejects prototype-like own key %s',
+    (key) => {
+      const changed = structuredClone(VALID_REF) as Reference & Record<string, unknown>
+      Object.defineProperty(changed, key, { value: 'unsafe', enumerable: true })
+      expect(isReference(changed)).toBe(false)
+    },
+  )
+  test.each(['__proto__', 'prototype', 'constructor'])(
+    'rejects non-enumerable prototype-like own key %s',
+    (key) => {
+      const changed = structuredClone(VALID_REF) as Reference & Record<string, unknown>
+      Object.defineProperty(changed, key, { value: 'unsafe' })
+      expect(isReference(changed)).toBe(false)
+    },
+  )
 })
 
 describe('create_reference in a change-set', () => {

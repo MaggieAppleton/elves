@@ -12,6 +12,16 @@ async function expectInsideViewport(page: Page, locator: Locator): Promise<void>
   expect(box!.y + box!.height).toBeLessThanOrEqual(viewport!.height)
 }
 
+async function expectInside(locator: Locator, container: Locator): Promise<void> {
+  const [box, containerBox] = await Promise.all([locator.boundingBox(), container.boundingBox()])
+  expect(box).not.toBeNull()
+  expect(containerBox).not.toBeNull()
+  expect(box!.x).toBeGreaterThanOrEqual(containerBox!.x)
+  expect(box!.y).toBeGreaterThanOrEqual(containerBox!.y)
+  expect(box!.x + box!.width).toBeLessThanOrEqual(containerBox!.x + containerBox!.width)
+  expect(box!.y + box!.height).toBeLessThanOrEqual(containerBox!.y + containerBox!.height)
+}
+
 test.beforeEach(async ({ request }) => {
   await resetProject(request)
 })
@@ -86,6 +96,78 @@ test('topbar controls stay reachable at 320px', async ({ page }) => {
   await expectInsideViewport(page, projectMenu)
 })
 
+test('creation toolbar stays reachable inside a narrow split canvas pane', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 800 })
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await page.getByTestId('draft-open').click()
+  await expect(page.locator('.elves-stage')).toHaveAttribute('data-view', 'split')
+
+  const pane = page.locator('.elves-canvas-pane')
+  const toolbar = page.locator('.elves-toolbar')
+  await expect.poll(async () => (await pane.boundingBox())?.width ?? Infinity).toBeLessThan(200)
+  await expectInside(toolbar, pane)
+  expect(await toolbar.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true)
+
+  const creationButtons = [
+    'new-prose',
+    'new-note',
+    'new-image',
+    'new-reference',
+    'new-figure',
+    'new-section',
+  ]
+  const focusClearance = 4.5 // 1px border + 4px padding, allowing subpixel rounding.
+  await page.getByTestId(creationButtons[0]).focus()
+  for (const [index, testId] of creationButtons.entries()) {
+    const button = page.getByTestId(testId)
+    await expect(button).toBeFocused()
+    await expect.poll(async () => {
+      const [buttonBox, toolbarBox] = await Promise.all([button.boundingBox(), toolbar.boundingBox()])
+      if (!buttonBox || !toolbarBox) return false
+      return buttonBox.x >= toolbarBox.x + focusClearance &&
+        buttonBox.x + buttonBox.width <= toolbarBox.x + toolbarBox.width - focusClearance
+    }, { message: `${testId} should scroll fully inside the toolbar with room for its focus ring` })
+      .toBe(true)
+    if (index < creationButtons.length - 1) await page.keyboard.press('Tab')
+  }
+})
+
+test.describe('touch creation toolbar', () => {
+  test.use({ hasTouch: true, viewport: { width: 320, height: 800 } })
+
+  test('swipes to and taps controls at both ends of a narrow split toolbar', async ({ page }) => {
+    await page.goto('/')
+    await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+    await page.getByTestId('draft-open').tap()
+    await expect(page.locator('.elves-stage')).toHaveAttribute('data-view', 'split')
+
+    const toolbar = page.locator('.elves-toolbar')
+    await page.getByTestId('new-prose').tap()
+    await expect(page.locator('.elves-card--prose')).toHaveCount(1)
+
+    const box = await toolbar.boundingBox()
+    expect(box).not.toBeNull()
+    const client = await page.context().newCDPSession(page)
+    const y = box!.y + box!.height / 2
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x: box!.x + box!.width - 12, y }],
+    })
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchMove',
+      touchPoints: [{ x: box!.x + 12, y }],
+    })
+    await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await expect.poll(() => toolbar.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0)
+
+    const lastButton = page.getByTestId('new-section')
+    await expectInside(lastButton, toolbar)
+    await lastButton.tap()
+    await expect(page.locator('.elves-section')).toHaveCount(1)
+  })
+})
+
 test('topbar keeps its labelled desktop layout above 640px', async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 800 })
   await page.goto('/')
@@ -105,6 +187,9 @@ test('topbar keeps its labelled desktop layout above 640px', async ({ page }) =>
   expect(toolbar!.y).toBeLessThan(30)
   expect(topbar!.y).toBeLessThan(30)
   expect(toolbar!.width).toBeGreaterThan(400)
+  expect(
+    await page.locator('.elves-toolbar').evaluate((element) => element.scrollWidth === element.clientWidth),
+  ).toBe(true)
 
   await page.getByTestId('review-button').click()
   await expectInsideViewport(page, page.getByTestId('review-menu'))
