@@ -63,6 +63,12 @@ export type CanvasMergeConflict =
       path: string[]
       cycleIds: string[]
     }
+  | {
+      kind: 'shape-structure-overlap'
+      recordId: string
+      path: string[]
+      shapeIds: string[]
+    }
 
 export type CanvasMergeResult =
   | { ok: true; document: DocumentRecords }

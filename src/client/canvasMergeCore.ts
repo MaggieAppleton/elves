@@ -11,6 +11,7 @@ import {
 import { validateBoundary } from './canvasMergeBoundary'
 import { requiresCanvasParentGraph, validateCanvasParentGraph } from './canvasMergeGraph'
 import { finalizeRecordSummaries } from './canvasMergeSummaries'
+import { detectCanvasStructureOverlaps } from './canvasMergeStructure'
 import type {
   CanvasMergeConflict,
   CanvasMergeInput,
@@ -278,6 +279,8 @@ export function mergeCanvasRecords(input: CanvasMergeInput): CanvasMergeResult {
   }
 
   if (conflicts.length > 0) return { ok: false, conflicts }
+  const structureConflicts = detectCanvasStructureOverlaps(input, requireGraphValidation)
+  if (structureConflicts.length > 0) return { ok: false, conflicts: structureConflicts }
   const graphConflicts = validateCanvasParentGraph(document, requireGraphValidation)
   return graphConflicts.length > 0
     ? { ok: false, conflicts: graphConflicts }
