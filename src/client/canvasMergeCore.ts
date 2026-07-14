@@ -3,6 +3,11 @@ import {
   canvasMergeDomainContext,
   type CanvasMergeDomainContext,
 } from './canvasMergeDomain'
+import {
+  estimateMergedCommentHeight,
+  finalizeAddedCardRecord,
+  mergeCardComments,
+} from './canvasMergeComments'
 import type {
   CanvasMergeConflict,
   CanvasMergeInput,
@@ -89,6 +94,28 @@ function mergeObject(
   ])].sort()
   const values = new Map<string, Slot>()
   const groupedKeys = new Set<string>()
+  const hasCardComments = domain.isCard && path.length === 1 && path[0] === 'props' &&
+    [base, local, remote].some((props) =>
+      props && Object.prototype.hasOwnProperty.call(props, 'comments'))
+  if (hasCardComments) {
+    groupedKeys.add('comments')
+    groupedKeys.add('commentH')
+    const result = mergeCardComments({
+      base: base?.comments,
+      local: local.comments,
+      remote: remote.comments,
+      recordId,
+      conflicts,
+      tools: {
+        clone: cloneValue,
+        equal: structuralEqual,
+        merge: (baseComment, localComment, remoteComment, commentPath) => mergeObject(
+          baseComment, localComment, remoteComment, recordId, commentPath, conflicts, domain,
+        ),
+      },
+    })
+    if (result.ok) values.set('comments', result.comments)
+  }
   for (const group of atomicFieldGroupsAt(domain, path)) {
     group.keys.forEach((key) => groupedKeys.add(key))
     const baseFields = selectFields(base, group.keys)
@@ -120,6 +147,15 @@ function mergeObject(
     )
     values.set(key, value)
   }
+  if (hasCardComments) {
+    const comments = values.get('comments')
+    const width = values.get('w')
+    if (Array.isArray(comments) && typeof width === 'number') {
+      values.set('commentH', estimateMergedCommentHeight(comments, width))
+      if (!keys.includes('commentH')) keys.push('commentH')
+      keys.sort()
+    }
+  }
   for (const key of keys) {
     const value = values.has(key) ? values.get(key)! : MISSING
     if (value !== MISSING) setOwn(merged, key, value)
@@ -136,6 +172,21 @@ function mergeSlot(
   conflicts: CanvasMergeConflict[],
   domain: CanvasMergeDomainContext,
 ): Slot {
+  const forceCardObjectMerge = domain.isCard &&
+    (path.length === 0 || (path.length === 1 && path[0] === 'props')) &&
+    local !== MISSING && remote !== MISSING && isPlainObject(local) && isPlainObject(remote) &&
+    (base === MISSING || isPlainObject(base))
+  if (forceCardObjectMerge) {
+    return mergeObject(
+      base === MISSING ? undefined : base,
+      local,
+      remote,
+      recordId,
+      path,
+      conflicts,
+      domain,
+    )
+  }
   if (structuralEqual(local, remote)) return local === MISSING ? MISSING : cloneValue(local)
   if (structuralEqual(local, base)) return remote === MISSING ? MISSING : cloneValue(remote)
   if (structuralEqual(remote, base)) return local === MISSING ? MISSING : cloneValue(local)
@@ -204,9 +255,23 @@ export function mergeCanvasRecords(input: CanvasMergeInput): CanvasMergeResult {
     if (base === MISSING) {
       if (local === MISSING && remote === MISSING) continue
       if (local === MISSING || remote === MISSING) {
-        setOwn(document, recordId, cloneValue((local === MISSING ? remote : local) as DocumentRecord))
+        const source = local === MISSING ? 'remote' : 'local'
+        const added = (local === MISSING ? remote : local) as DocumentRecord
+        setOwn(document, recordId, finalizeAddedCardRecord(
+          added,
+          [source],
+          source === 'remote',
+          conflicts,
+          cloneValue,
+        ))
       } else if (structuralEqual(local, remote)) {
-        setOwn(document, recordId, cloneValue(local as DocumentRecord))
+        setOwn(document, recordId, finalizeAddedCardRecord(
+          local as DocumentRecord,
+          ['local', 'remote'],
+          true,
+          conflicts,
+          cloneValue,
+        ))
       } else {
         conflicts.push({ kind: 'record-addition-conflict', recordId, path: [] })
       }

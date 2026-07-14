@@ -31,6 +31,18 @@ export type CanvasMergeConflict =
       path: string[]
     }
   | {
+      kind: 'comment-addition-conflict' | 'comment-delete-edit-conflict'
+      recordId: string
+      path: string[]
+    }
+  | {
+      kind: 'invalid-comment'
+      source: CanvasMergeSource
+      recordId: string
+      path: string[]
+      reason: 'duplicate-id' | 'missing-id' | 'non-string-id' | 'invalid-list'
+    }
+  | {
       kind: 'invalid-document-record'
       source: CanvasMergeSource
       recordId: string
