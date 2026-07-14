@@ -221,6 +221,7 @@ test('a same-tick edit is admitted before a successful project switch', async ({
   await page.getByTestId('project-switcher').click()
   await page.getByRole('menuitemradio', { name: current.name }).click()
   await expect(page.locator('.elves-card--prose').first()).toBeVisible()
+  await expect.poll(async () => (await serverCardIds(request, projectId)).length).toBe(1)
 })
 
 test('a transient initialization failure can be retried', async ({ page }) => {
