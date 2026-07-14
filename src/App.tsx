@@ -26,7 +26,7 @@ import {
   renameProject,
   type Project,
 } from './client/persistence'
-import { uploadAsset, setAssetProject } from './client/assets'
+import { uploadAsset, useAssetProject } from './client/assets'
 import { applyChangeSet } from './apply/applyChangeSet'
 import type { ChangeSet } from './model/changeset'
 import { isSummaryOp } from './model/changeset'
@@ -184,10 +184,11 @@ export default function App() {
   const canvasPaneRef = useRef<HTMLDivElement>(null)
   const dividerDragRef = useRef<PointerDragManager | null>(null)
 
-  // Keep the refs + the asset base in sync during render so they are correct the
-  // instant tldraw's onMount fires and whenever a card image renders.
+  // The realtime callbacks need the latest project synchronously while rendering.
+  // Asset routing is different: bind it after commit so aborted renders cannot
+  // retarget mounted images; its tldraw atom invalidates tracked card renderers.
   projectIdRef.current = currentProjectId
-  setAssetProject(currentProjectId)
+  useAssetProject(currentProjectId)
 
   // Load the project list once; open the last-used project (or the first).
   useEffect(() => {
