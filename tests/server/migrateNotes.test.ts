@@ -5,6 +5,16 @@ import { tmpdir } from 'node:os'
 import { migrateSourceCardsToNotes } from '../../server/migrateNotes'
 import { createProject, canvasPathFor, renameProject } from '../../server/projects'
 import { withProjectLock } from '../../server/projectLock'
+import {
+  SERVER_CANVAS_METADATA_KEY,
+  addPendingChangeSet,
+  canvasRevision,
+  ensureCanvasMetadata,
+  nextChangeSetToken,
+  pendingChangeSetsForClient,
+} from '../../server/canvasMetadata'
+import { changeSetDigest } from '../../server/changeSetIdentity'
+import type { ChangeSet } from '../../src/model/changeset'
 
 const lockProbe = vi.hoisted(() => {
   type Entry = { kind: 'project' | 'multi'; dataRoot: string; ids: string[] }
@@ -133,6 +143,7 @@ test('note migration waits for the project lock and transforms the current canva
     noteKind: 'quote',
   })
   expect(migrated.document.store['shape:a'].props).not.toHaveProperty('sourceKind')
+  expect(canvasRevision(migrated)).toBe(1)
 })
 
 test('note migration queued before rename transforms the canvas that is moved', async () => {
@@ -206,6 +217,52 @@ test('a completed note migration is byte-stable on rerun', async () => {
   const path = await seedSourceCanvas(d)
   await migrateSourceCardsToNotes(d)
   const once = await fs.readFile(path, 'utf8')
+  const backupOnce = await fs.readFile(`${path}.bak`, 'utf8')
   await migrateSourceCardsToNotes(d)
   expect(await fs.readFile(path, 'utf8')).toBe(once)
+  expect(await fs.readFile(`${path}.bak`, 'utf8')).toBe(backupOnce)
+  expect(canvasRevision(JSON.parse(once))).toBe(1)
+})
+
+test('note migration preserves epoch, sequence, and pending state while incrementing once', async () => {
+  const d = await root()
+  const path = await seedSourceCanvas(d)
+  let current = ensureCanvasMetadata(JSON.parse(await fs.readFile(path, 'utf8'))).snapshot
+  const pending: ChangeSet = {
+    id: 'pending-create', author: 'claude',
+    ops: [{ kind: 'create_note_card', text: 'Pending', x: 0, y: 0 }],
+  }
+  const added = addPendingChangeSet(current, pending, changeSetDigest(pending))
+  expect(added.status).toBe('added')
+  if (added.status !== 'added') return
+  current = added.snapshot
+  await fs.writeFile(path, JSON.stringify(current), 'utf8')
+  const beforeToken = nextChangeSetToken(current)
+  const beforeRevision = canvasRevision(current)
+
+  await migrateSourceCardsToNotes(d)
+
+  const migrated = JSON.parse(await fs.readFile(path, 'utf8'))
+  expect(canvasRevision(migrated)).toBe(beforeRevision + 1)
+  expect(nextChangeSetToken(migrated)).toEqual(beforeToken)
+  expect(pendingChangeSetsForClient(migrated)).toEqual([{
+    token: { epoch: beforeToken.epoch, sequence: 0 }, changeSet: pending,
+  }])
+})
+
+test('revision-exhausted note migration persists neither record changes nor a backup', async () => {
+  const d = await root()
+  const path = await seedSourceCanvas(d)
+  const current = ensureCanvasMetadata(JSON.parse(await fs.readFile(path, 'utf8'))).snapshot as any
+  current[SERVER_CANVAS_METADATA_KEY].revision = Number.MAX_SAFE_INTEGER
+  await fs.writeFile(path, JSON.stringify(current), 'utf8')
+  const before = await fs.readFile(path)
+  const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+  await migrateSourceCardsToNotes(d)
+
+  expect(logged).toHaveBeenCalled()
+  expect(await fs.readFile(path)).toEqual(before)
+  await expect(fs.access(`${path}.bak`)).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(JSON.parse(before.toString()).document.store['shape:a'].props.kind).toBe('source')
 })

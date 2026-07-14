@@ -9,6 +9,7 @@ import {
   worthBackingUp,
   hasDocument,
   clearCanvas,
+  replaceCanvasWithTombstone,
   EmptyCanvasOverwriteError,
   ProjectGoneError,
 } from '../../server/store'
@@ -148,6 +149,42 @@ test('clearCanvas on a missing canvas is a no-op', async () => {
   const path = join(d, 'canvas.json')
   await expect(clearCanvas(path)).resolves.toBeUndefined()
   expect(await exists(path)).toBe(false)
+})
+
+test('replaceCanvasWithTombstone backs up a document and atomically persists the tombstone', async () => {
+  const d = await tmpDir()
+  const path = join(d, 'canvas.json')
+  const tombstone = {
+    document: null,
+    session: null,
+    __elves: { revision: 7, epoch: 'new-epoch', nextSequence: 0 },
+  }
+  await writeCanvas(path, DOC1)
+  await expect(replaceCanvasWithTombstone(path, async (current) => {
+    expect(current).toEqual(DOC1)
+    return tombstone
+  })).resolves.toEqual(tombstone)
+  expect(await exists(path)).toBe(true)
+  expect(await readCanvas(path)).toEqual(tombstone)
+  expect(await readCanvas(`${path}.bak`)).toEqual(DOC1)
+  expect((await fs.readdir(d)).filter((entry) => entry.endsWith('.tmp'))).toEqual([])
+})
+
+test('a failed tombstone computation leaves canvas and backup byte-identical', async () => {
+  const d = await tmpDir()
+  const path = join(d, 'canvas.json')
+  await writeCanvas(path, DOC1)
+  await writeCanvas(path, DOC2)
+  const beforeCanvas = await fs.readFile(path)
+  const beforeBackup = await fs.readFile(`${path}.bak`)
+
+  await expect(replaceCanvasWithTombstone(path, async () => {
+    throw new Error('compute failed')
+  })).rejects.toThrow('compute failed')
+
+  expect(await fs.readFile(path)).toEqual(beforeCanvas)
+  expect(await fs.readFile(`${path}.bak`)).toEqual(beforeBackup)
+  expect((await fs.readdir(d)).filter((entry) => entry.endsWith('.tmp'))).toEqual([])
 })
 
 // --- stillValid guard (#36): a write must never resurrect a directory whose

@@ -439,15 +439,23 @@ body {
   left: 50%;
   transform: translateX(-50%);
   z-index: 400;
+  box-sizing: border-box;
+  max-width: calc(100% - 16px);
   display: flex;
   gap: 2px;
-  padding: 3px;
+  padding: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-padding-inline: 4px;
+  scrollbar-width: none;
   border-radius: 11px;
   background: var(--elves-surface);
   border: 1px solid var(--elves-border);
   box-shadow: var(--elves-shadow-md), var(--elves-highlight);
 }
+.elves-toolbar::-webkit-scrollbar { display: none; }
 .elves-toolbar button {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   gap: 5px;

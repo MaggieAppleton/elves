@@ -132,15 +132,210 @@ export async function postChangeSet(
   baseUrl: string,
   projectId: string,
   cs: ChangeSet,
+  fetchImpl: typeof fetch = globalThis.fetch,
+  attemptTimeoutMs = 8_000,
 ): Promise<void> {
-  const res = await fetch(`${baseUrl}/projects/${encodeURIComponent(projectId)}/changeset`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(cs),
-  })
-  if (res.status === 404) throw new Error(`unknown project '${projectId}' — call list_projects to see valid ids`)
-  if (!res.ok) {
-    const body = await res.text().catch(() => '')
-    throw new Error(`change-set rejected: ${res.status} ${body}`.trim())
+  const capturedChangeSetJson = JSON.stringify(cs)
+  const projectUrl = `${baseUrl}/projects/${encodeURIComponent(projectId)}`
+  const tokenUrl = `${projectUrl}/changeset-token`
+  const changeSetUrl = `${projectUrl}/changeset?protocol=2`
+  const refreshableCodes = new Set([
+    'sequence-payload-mismatch',
+    'epoch-mismatch',
+    'sequence-ahead',
+  ])
+  const maxAttempts = 3
+  const maxTokenRefreshes = 3
+
+  type ChangeSetToken = { epoch: string; sequence: number }
+
+  const isToken = (value: unknown): value is ChangeSetToken => {
+    if (typeof value !== 'object' || value === null) return false
+    const candidate = value as Record<string, unknown>
+    return typeof candidate.epoch === 'string'
+      && candidate.epoch.length > 0
+      && Number.isSafeInteger(candidate.sequence)
+      && (candidate.sequence as number) >= 0
+  }
+  const errorDetail = (error: unknown): string =>
+    error instanceof Error ? error.message : String(error)
+  class AttemptFailure extends Error {
+    constructor(message: string, readonly response?: Response) {
+      super(message)
+      this.name = 'AttemptFailure'
+    }
+  }
+  const fetchAttempt = async (
+    url: string,
+    init?: RequestInit,
+  ): Promise<{ response: Response; body: string }> => {
+    const controller = new AbortController()
+    const abort = () => {
+      try { controller.abort() } catch { /* best effort */ }
+    }
+    let receivedResponse: Response | undefined
+    const operation = (async () => {
+      receivedResponse = await fetchImpl(url, { ...init, signal: controller.signal })
+      try {
+        const body = await receivedResponse.text()
+        return { response: receivedResponse, body }
+      } catch (error) {
+        abort()
+        throw new AttemptFailure(`response body unavailable: ${errorDetail(error)}`, receivedResponse)
+      }
+    })()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        abort()
+        reject(new AttemptFailure(
+          receivedResponse
+            ? `response body unavailable: attempt timed out after ${attemptTimeoutMs}ms`
+            : `attempt timed out after ${attemptTimeoutMs}ms`,
+          receivedResponse,
+        ))
+      }, attemptTimeoutMs)
+      const unref = (timer as { unref?: () => void }).unref
+      if (typeof unref === 'function') unref.call(timer)
+    })
+    try {
+      return await Promise.race([operation, timeout])
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }
+  const responseCode = (body: string): string | undefined => {
+    try {
+      const parsed = JSON.parse(body) as unknown
+      return typeof parsed === 'object'
+        && parsed !== null
+        && typeof (parsed as Record<string, unknown>).code === 'string'
+        ? (parsed as Record<string, string>).code
+        : undefined
+    } catch {
+      return undefined
+    }
+  }
+  const attemptErrorDetail = (error: unknown): string =>
+    error instanceof AttemptFailure && error.response
+      ? `${error.response.status} ${error.message}`
+      : errorDetail(error)
+  const unknownProjectError = (body: string): Error =>
+    new Error(
+      `unknown project '${projectId}' — call list_projects to see valid ids${body ? `: ${body}` : ''}`,
+    )
+  const isRetryableServerStatus = (status: number): boolean =>
+    status >= 500 && status <= 599 && status !== 507
+  const isRetryableTokenBodyFailure = (response: Response): boolean =>
+    response.ok || isRetryableServerStatus(response.status)
+  const isAmbiguousPostBodyFailure = (response: Response): boolean =>
+    response.status === 200 || response.status === 202 || isRetryableServerStatus(response.status)
+
+  const acquireToken = async (): Promise<ChangeSetToken> => {
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      let res: Response
+      let body: string
+      try {
+        const result = await fetchAttempt(tokenUrl)
+        res = result.response
+        body = result.body
+      } catch (error) {
+        if (error instanceof AttemptFailure && error.response &&
+          !isRetryableTokenBodyFailure(error.response)) {
+          const detail = attemptErrorDetail(error)
+          if (error.response.status === 404) throw unknownProjectError(detail)
+          throw new Error(`change-set token failed: ${detail}`)
+        }
+        if (attempt === maxAttempts) {
+          throw new Error(
+            `change-set token failed after ${maxAttempts} attempts: ${attemptErrorDetail(error)}`,
+          )
+        }
+        continue
+      }
+
+      if (res.ok) {
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(body)
+        } catch {
+          throw new Error(`change-set token failed: invalid response ${body}`.trim())
+        }
+        const token = typeof parsed === 'object' && parsed !== null
+          ? (parsed as Record<string, unknown>).token
+          : undefined
+        if (!isToken(token)) {
+          throw new Error(`change-set token failed: invalid response ${body}`.trim())
+        }
+        return token
+      }
+
+      if (res.status === 404) throw unknownProjectError(body)
+      if (res.status >= 500 && res.status <= 599 && res.status !== 507 && attempt < maxAttempts) continue
+      if (res.status >= 500 && res.status <= 599 && res.status !== 507) {
+        throw new Error(
+          `change-set token failed after ${maxAttempts} attempts: ${res.status} ${body}`.trim(),
+        )
+      }
+      throw new Error(`change-set token failed: ${res.status} ${body}`.trim())
+    }
+    throw new Error('change-set token failed')
+  }
+
+  let token = await acquireToken()
+  let tokenRefreshes = 0
+  while (true) {
+    const requestBody = `{"token":${JSON.stringify(token)},"changeSet":${capturedChangeSetJson}}`
+    let response: Response | undefined
+    let body = ''
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const result = await fetchAttempt(changeSetUrl, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: requestBody,
+        })
+        response = result.response
+        body = result.body
+      } catch (error) {
+        if (error instanceof AttemptFailure && error.response &&
+          !isAmbiguousPostBodyFailure(error.response)) {
+          const detail = attemptErrorDetail(error)
+          if (error.response.status === 404) throw unknownProjectError(detail)
+          throw new Error(`change-set rejected: ${detail}`)
+        }
+        if (attempt === maxAttempts) {
+          throw new Error(
+            `change-set post failed after ${maxAttempts} attempts: ${attemptErrorDetail(error)}`,
+          )
+        }
+        continue
+      }
+
+      if (!isRetryableServerStatus(response.status)) break
+      if (attempt === maxAttempts) {
+        throw new Error(
+          `change-set post failed after ${maxAttempts} attempts: ${response.status} ${body}`.trim(),
+        )
+      }
+    }
+
+    if (!response) throw new Error('change-set post failed')
+    if (response.status === 200 || response.status === 202) return
+
+    if (response.status === 404) throw unknownProjectError(body)
+    const code = responseCode(body)
+    if (response.status === 409 && code && refreshableCodes.has(code)) {
+      if (tokenRefreshes === maxTokenRefreshes) {
+        throw new Error(
+          `change-set token refresh limit reached after ${maxTokenRefreshes} refreshes: ${response.status} ${body}`.trim(),
+        )
+      }
+      tokenRefreshes += 1
+      token = await acquireToken()
+      continue
+    }
+    throw new Error(`change-set rejected: ${response.status} ${body}`.trim())
   }
 }

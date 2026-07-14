@@ -1,5 +1,5 @@
 import { Editor, createShapeId, TLShapeId } from 'tldraw'
-import { ChangeSet, Op, planMerge } from '../model/changeset'
+import { CHANGE_SET_STAMP_META_KEY, ChangeSet, Op, planMerge } from '../model/changeset'
 import { CardShape } from '../shapes/CardShapeUtil'
 import { SectionShape } from '../shapes/SectionShapeUtil'
 import { QuestionShape } from '../shapes/QuestionShapeUtil'
@@ -90,20 +90,31 @@ function applyCreateNoteCard(
   editor: Editor,
   op: Extract<Op, { kind: 'create_note_card' }>,
   author: string,
+  acceptedTokenStamp?: string,
 ): TLShapeId[] {
   // Stamp the change-set's author onto the card so its authorship mark shows.
   const props = makeNoteCardProps(op.text, 'transcribed', author)
   const at = clearCardPosition(editor, { x: op.x, y: op.y, w: props.w, h: props.h })
   const id = createShapeId()
-  editor.createShape<CardShape>({ id, type: 'card', x: at.x, y: at.y, props })
+  editor.createShape<CardShape>({
+    id, type: 'card', x: at.x, y: at.y, props,
+    meta: acceptedTokenStamp ? { [CHANGE_SET_STAMP_META_KEY]: acceptedTokenStamp } : {},
+  })
   return [id]
 }
 
-function applyCreateReference(editor: Editor, op: Extract<Op, { kind: 'create_reference' }>): TLShapeId[] {
+function applyCreateReference(
+  editor: Editor,
+  op: Extract<Op, { kind: 'create_reference' }>,
+  acceptedTokenStamp?: string,
+): TLShapeId[] {
   const props = makeReferenceCardProps(op.reference)
   const at = clearCardPosition(editor, { x: op.x, y: op.y, w: props.w, h: props.h })
   const id = createShapeId()
-  editor.createShape<CardShape>({ id, type: 'card', x: at.x, y: at.y, props })
+  editor.createShape<CardShape>({
+    id, type: 'card', x: at.x, y: at.y, props,
+    meta: acceptedTokenStamp ? { [CHANGE_SET_STAMP_META_KEY]: acceptedTokenStamp } : {},
+  })
   return [id]
 }
 
@@ -111,13 +122,17 @@ function applyCreateFigureCard(
   editor: Editor,
   op: Extract<Op, { kind: 'create_figure_card' }>,
   author: string,
+  acceptedTokenStamp?: string,
 ): TLShapeId[] {
   // Stamp the change-set's author onto the figure so an agent-suggested one
   // carries its authorship mark ("its suggestion, my call").
   const props = makeFigureCardProps(op.title, op.description, author)
   const at = clearCardPosition(editor, { x: op.x, y: op.y, w: props.w, h: props.h })
   const id = createShapeId()
-  editor.createShape<CardShape>({ id, type: 'card', x: at.x, y: at.y, props })
+  editor.createShape<CardShape>({
+    id, type: 'card', x: at.x, y: at.y, props,
+    meta: acceptedTokenStamp ? { [CHANGE_SET_STAMP_META_KEY]: acceptedTokenStamp } : {},
+  })
   return [id]
 }
 
@@ -155,6 +170,7 @@ function applyCreateSection(
   editor: Editor,
   op: Extract<Op, { kind: 'create_section' }>,
   author: string,
+  acceptedTokenStamp?: string,
 ): TLShapeId[] {
   const id = createShapeId()
   editor.createShape<SectionShape>({
@@ -163,6 +179,7 @@ function applyCreateSection(
     x: op.x,
     y: op.y,
     props: makeSectionProps(op.text, author),
+    meta: acceptedTokenStamp ? { [CHANGE_SET_STAMP_META_KEY]: acceptedTokenStamp } : {},
   })
   return [id]
 }
@@ -197,6 +214,7 @@ function applyCreateQuestion(
   editor: Editor,
   op: Extract<Op, { kind: 'create_question' }>,
   author: string,
+  acceptedTokenStamp?: string,
 ): TLShapeId[] {
   const props = makeQuestionProps(op.text, author)
   const at = placeBelowObstacles(
@@ -210,6 +228,7 @@ function applyCreateQuestion(
     x: at.x,
     y: at.y,
     props,
+    meta: acceptedTokenStamp ? { [CHANGE_SET_STAMP_META_KEY]: acceptedTokenStamp } : {},
   })
   return [id]
 }
@@ -287,7 +306,7 @@ function applySetQuestionSummary(
   return [shape.id]
 }
 
-function applyOp(editor: Editor, op: Op, author: string): TLShapeId[] {
+function applyOp(editor: Editor, op: Op, author: string, acceptedTokenStamp?: string): TLShapeId[] {
   switch (op.kind) {
     case 'add_comment':
       return applyAddComment(editor, op, author)
@@ -296,23 +315,23 @@ function applyOp(editor: Editor, op: Op, author: string): TLShapeId[] {
     case 'move_cards':
       return applyMove(editor, op)
     case 'create_note_card':
-      return applyCreateNoteCard(editor, op, author)
+      return applyCreateNoteCard(editor, op, author, acceptedTokenStamp)
     case 'create_reference':
-      return applyCreateReference(editor, op)
+      return applyCreateReference(editor, op, acceptedTokenStamp)
     case 'create_figure_card':
-      return applyCreateFigureCard(editor, op, author)
+      return applyCreateFigureCard(editor, op, author, acceptedTokenStamp)
     case 'edit_card':
       return applyEditCard(editor, op, author)
     case 'delete_card':
       return applyDeleteCard(editor, op)
     case 'create_section':
-      return applyCreateSection(editor, op, author)
+      return applyCreateSection(editor, op, author, acceptedTokenStamp)
     case 'move_sections':
       return applyMoveSections(editor, op)
     case 'edit_section_text':
       return applyEditSectionText(editor, op, author)
     case 'create_question':
-      return applyCreateQuestion(editor, op, author)
+      return applyCreateQuestion(editor, op, author, acceptedTokenStamp)
     case 'group_cards':
       return applyGroupCards(editor, op)
     case 'ungroup_cards':
@@ -332,11 +351,15 @@ function applyOp(editor: Editor, op: Op, author: string): TLShapeId[] {
  * step (mark + squash); the returned ids feed a store OUTSIDE tldraw's document,
  * so presence never enters history.
  */
-export function applyChangeSet(editor: Editor, cs: ChangeSet): TLShapeId[] {
+export function applyChangeSet(
+  editor: Editor,
+  cs: ChangeSet,
+  acceptedTokenStamp?: string,
+): TLShapeId[] {
   const markId = editor.markHistoryStoppingPoint(`${cs.author}:${cs.id}`)
   const affected = new Set<TLShapeId>()
   for (const op of cs.ops) {
-    for (const id of applyOp(editor, op, cs.author)) affected.add(id)
+    for (const id of applyOp(editor, op, cs.author, acceptedTokenStamp)) affected.add(id)
   }
   editor.squashToMark(markId)
   return [...affected]

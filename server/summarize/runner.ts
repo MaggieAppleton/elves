@@ -1,4 +1,4 @@
-import type { ChangeSet } from '../../src/model/changeset'
+import type { ChangeSet, Op } from '../../src/model/changeset'
 import { readCanvas, withCanvasLock } from '../store'
 import {
   snapshotToSummarizableCards, snapshotToSummarizableComments, snapshotToSummarizableQuestions,
@@ -9,6 +9,159 @@ import type { Summarizer } from './summarizer'
 import { summaryState, commentSummaryState } from '../../src/model/summary'
 import { canvasPathFor, getProject } from '../projects'
 import { withProjectLock } from '../projectLock'
+import { incrementCanvasRevision } from '../canvasMetadata'
+import { globalStoreIdentity } from '../storeIdentity'
+
+type SummaryOp = Extract<Op,
+  | { kind: 'set_summary' }
+  | { kind: 'set_comment_summary' }
+  | { kind: 'set_question_summary' }
+>
+
+type CardCandidate = ReturnType<typeof snapshotToSummarizableCards>[number]
+type CommentCandidate = ReturnType<typeof snapshotToSummarizableComments>[number]
+type QuestionCandidate = ReturnType<typeof snapshotToSummarizableQuestions>[number]
+
+function groupUniqueByKey<T>(items: T[], keyOf: (item: T) => string): {
+  uniqueByKey: Map<string, T>
+  ambiguousKeys: Set<string>
+} {
+  const groups = new Map<string, T[]>()
+  for (const item of items) {
+    const key = keyOf(item)
+    const group = groups.get(key)
+    if (group) group.push(item)
+    else groups.set(key, [item])
+  }
+  const uniqueByKey = new Map<string, T>()
+  const ambiguousKeys = new Set<string>()
+  for (const [key, group] of groups) {
+    if (group.length === 1) uniqueByKey.set(key, group[0])
+    else ambiguousKeys.add(key)
+  }
+  return { uniqueByKey, ambiguousKeys }
+}
+
+interface SummaryCandidates {
+  cards: CardCandidate[]
+  comments: CommentCandidate[]
+  questions: QuestionCandidate[]
+  commentById: Map<string, CommentCandidate>
+  ambiguousCommentIds: Set<string>
+  unaddressableRecordIds: Set<string>
+}
+
+function commentKey(comment: Pick<CommentCandidate, 'cardId' | 'commentId'>): string {
+  return `${comment.cardId}\0${comment.commentId}`
+}
+
+function summaryCandidates(snapshot: Parameters<typeof snapshotToSummarizableCards>[0]): SummaryCandidates {
+  const identity = globalStoreIdentity(snapshot)
+  const cards = snapshotToSummarizableCards(snapshot)
+    .filter((card) => identity.addressableById.has(card.id))
+  const commentGroups = groupUniqueByKey(snapshotToSummarizableComments(snapshot), commentKey)
+  const questions = snapshotToSummarizableQuestions(snapshot)
+    .filter((question) => identity.addressableById.has(question.questionId))
+  const ambiguousCommentIds = new Set(commentGroups.ambiguousKeys)
+  const commentById = new Map<string, CommentCandidate>()
+  for (const [key, comment] of commentGroups.uniqueByKey) {
+    if (identity.addressableById.has(comment.cardId)) commentById.set(key, comment)
+    else if (identity.unaddressableIds.has(comment.cardId)) ambiguousCommentIds.add(key)
+  }
+  return {
+    cards,
+    comments: [...commentById.values()],
+    questions,
+    commentById,
+    ambiguousCommentIds,
+    unaddressableRecordIds: identity.unaddressableIds,
+  }
+}
+
+function sameCardCandidate(
+  left: CardCandidate,
+  right: CardCandidate,
+): boolean {
+  return left.id === right.id && left.kind === right.kind && left.noteKind === right.noteKind &&
+    left.text === right.text && left.summary === right.summary &&
+    left.summaryOfHash === right.summaryOfHash
+}
+
+function sameCommentCandidate(
+  left: CommentCandidate,
+  right: CommentCandidate,
+): boolean {
+  return left.cardId === right.cardId && left.commentId === right.commentId &&
+    left.text === right.text && left.summary === right.summary &&
+    left.summaryOfHash === right.summaryOfHash
+}
+
+function sameQuestionCandidate(
+  left: QuestionCandidate,
+  right: QuestionCandidate,
+): boolean {
+  return left.questionId === right.questionId && left.text === right.text &&
+    left.summary === right.summary && left.summaryOfHash === right.summaryOfHash
+}
+
+function validSummaryOpsForSnapshot(
+  ops: SummaryOp[],
+  original: SummaryCandidates,
+  fresh: Parameters<typeof snapshotToSummarizableCards>[0],
+): { validOps: SummaryOp[]; retryDiscarded: boolean } {
+  const current = summaryCandidates(fresh)
+  const validOps: SummaryOp[] = []
+  let retryDiscarded = false
+  for (const op of ops) {
+    if (op.kind === 'set_summary') {
+      if (current.unaddressableRecordIds.has(op.cardId)) continue
+      const originalCard = original.cards.find((card) => card.id === op.cardId)
+      const currentCard = current.cards.find((card) => card.id === op.cardId)
+      if (!originalCard || !currentCard || !sameCardCandidate(originalCard, currentCard)) {
+        retryDiscarded = true
+        continue
+      }
+      const expectedState = op.summary === null ? 'clear' : 'generate'
+      if (summaryState(originalCard) === expectedState &&
+        summaryState(currentCard) === expectedState) validOps.push(op)
+      else retryDiscarded = true
+      continue
+    } else if (op.kind === 'set_comment_summary') {
+      const key = commentKey(op)
+      if (current.unaddressableRecordIds.has(op.cardId) ||
+        current.ambiguousCommentIds.has(key)) continue
+      const originalComment = original.commentById.get(key)
+      const currentComment = current.commentById.get(key)
+      if (!originalComment || !currentComment ||
+        !sameCommentCandidate(originalComment, currentComment)) {
+        retryDiscarded = true
+        continue
+      }
+      const expectedState = op.summary === null ? 'clear' : 'generate'
+      if (commentSummaryState(originalComment) === expectedState &&
+        commentSummaryState(currentComment) === expectedState) validOps.push(op)
+      else retryDiscarded = true
+      continue
+    }
+    if (current.unaddressableRecordIds.has(op.questionId)) continue
+    const originalQuestion = original.questions.find(
+      (question) => question.questionId === op.questionId,
+    )
+    const currentQuestion = current.questions.find(
+      (question) => question.questionId === op.questionId,
+    )
+    if (!originalQuestion || !currentQuestion ||
+      !sameQuestionCandidate(originalQuestion, currentQuestion)) {
+      retryDiscarded = true
+      continue
+    }
+    const expectedState = op.summary === null ? 'clear' : 'generate'
+    if (commentSummaryState(originalQuestion) === expectedState &&
+      commentSummaryState(currentQuestion) === expectedState) validOps.push(op)
+    else retryDiscarded = true
+  }
+  return { validOps, retryDiscarded }
+}
 
 /**
  * Read a project's canvas, generate any needed summary updates (for cards,
@@ -19,10 +172,9 @@ import { withProjectLock } from '../projectLock'
  * lock; applying the result is done inside withCanvasLock, so the
  * apply-against-the-latest-snapshot and the write happen as one atomic step
  * relative to any concurrent save or change-set — a slow summarizer run can't
- * clobber a user save that landed in the meantime. The
- * set_summary/set_comment_summary/set_question_summary ops only touch summary
- * fields, and any text that changed under them will fail the hash check and be
- * regenerated on the next pass.
+ * clobber a user save that landed in the meantime. Each candidate's source and
+ * summary decision state are revalidated against that fresh snapshot; stale
+ * model results are discarded and reported pending for regeneration.
  *
  * `pending` reports whether generate-state work remains unfilled — the
  * summarizer returns null for both "unreachable" and "nothing to do", so we
@@ -41,9 +193,8 @@ export async function reconcileCanvasFile(
   const canvasPath = canvasPathFor(dataRoot, projectId)
   if (!canvasPath) return { changeSet: null, pending: false }
   const canvas = await readCanvas(canvasPath)
-  const cards = snapshotToSummarizableCards(canvas)
-  const comments = snapshotToSummarizableComments(canvas)
-  const questions = snapshotToSummarizableQuestions(canvas)
+  const candidates = summaryCandidates(canvas)
+  const { cards, comments, questions } = candidates
 
   const generateCount =
     cards.filter((c) => summaryState(c) === 'generate').length +
@@ -53,7 +204,11 @@ export async function reconcileCanvasFile(
   const cardCs = await reconcileSummaries(cards, summarizer, now)
   const commentCs = await reconcileCommentSummaries(comments, summarizer, now)
   const questionCs = await reconcileQuestionSummaries(questions, summarizer, now)
-  const ops = [...(cardCs?.ops ?? []), ...(commentCs?.ops ?? []), ...(questionCs?.ops ?? [])]
+  const ops = [
+    ...(cardCs?.ops ?? []),
+    ...(commentCs?.ops ?? []),
+    ...(questionCs?.ops ?? []),
+  ] as SummaryOp[]
 
   const filledCount = ops.filter((o) => 'summary' in o && o.summary !== null).length
   const pending = filledCount < generateCount
@@ -64,7 +219,22 @@ export async function reconcileCanvasFile(
     if (!(await getProject(dataRoot, projectId))) return { changeSet: null, pending }
     const currentCanvasPath = canvasPathFor(dataRoot, projectId)
     if (!currentCanvasPath) return { changeSet: null, pending }
-    await withCanvasLock(currentCanvasPath, (fresh) => applyChangeSetToSnapshot(fresh, cs))
-    return { changeSet: cs, pending }
+    let appliedChangeSet: ChangeSet | null = null
+    let discarded = false
+    await withCanvasLock(currentCanvasPath, (fresh) => {
+      const validated = validSummaryOpsForSnapshot(ops, candidates, fresh)
+      const { validOps } = validated
+      discarded = validated.retryDiscarded
+      if (validOps.length === 0) return null
+      const filtered: ChangeSet = { ...cs, ops: validOps }
+      const applied = applyChangeSetToSnapshot(fresh, filtered)
+      if (!applied || JSON.stringify(applied) === JSON.stringify(fresh)) {
+        discarded = true
+        return null
+      }
+      appliedChangeSet = filtered
+      return incrementCanvasRevision(applied)
+    })
+    return { changeSet: appliedChangeSet, pending: pending || discarded }
   })
 }

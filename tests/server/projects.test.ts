@@ -1,12 +1,13 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
   createProject,
   listProjects,
   getProject,
   renameProject,
+  ProjectRenameRollbackError,
   resyncProjectIds,
   isValidId,
   slugify,
@@ -174,6 +175,79 @@ test('rename preserves the project folder contents through the move', async () =
   await renameProject(d, 'draft', 'Final')
   const moved = await fs.readFile(join(d, 'projects', 'final', 'canvas.json'), 'utf8')
   expect(JSON.parse(moved)).toEqual({ kept: true })
+})
+
+test('post-move metadata commit failure restores the old project exactly', async () => {
+  const d = await root()
+  await createProject(d, 'Draft', '2026-07-02T10:00:00.000Z')
+  const oldDir = join(d, 'projects', 'draft')
+  const newDir = join(d, 'projects', 'final')
+  const originalMetadata = await fs.readFile(join(oldDir, 'project.json'), 'utf8')
+  await fs.writeFile(join(oldDir, 'canvas.json'), '{"kept":true}', 'utf8')
+  const commitFailure = new Error('metadata commit failed')
+  let moved = false
+  const rename = vi.fn(async (from: string, to: string) => {
+    if (from === oldDir && to === newDir) moved = true
+    if (basename(from).startsWith('.project.json.') && basename(to) === 'project.json') {
+      throw commitFailure
+    }
+    await fs.rename(from, to)
+  })
+
+  await expect(renameProject(d, 'draft', 'Final', { rename })).rejects.toBe(commitFailure)
+
+  expect(moved).toBe(true)
+  await expect(fs.access(newDir)).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(await fs.readFile(join(oldDir, 'project.json'), 'utf8')).toBe(originalMetadata)
+  expect(await fs.readFile(join(oldDir, 'canvas.json'), 'utf8')).toBe('{"kept":true}')
+  expect((await fs.readdir(oldDir)).filter((entry) => entry.includes('.tmp'))).toEqual([])
+})
+
+test('same-id metadata commit failure preserves the original project', async () => {
+  const d = await root()
+  await createProject(d, 'Draft', '2026-07-02T10:00:00.000Z')
+  const dir = join(d, 'projects', 'draft')
+  const originalMetadata = await fs.readFile(join(dir, 'project.json'), 'utf8')
+  const commitFailure = new Error('metadata commit failed')
+  const rename = vi.fn(async (from: string, to: string) => {
+    if (basename(from).startsWith('.project.json.') && basename(to) === 'project.json') {
+      throw commitFailure
+    }
+    await fs.rename(from, to)
+  })
+
+  await expect(renameProject(d, 'draft', 'Draft!', { rename })).rejects.toBe(commitFailure)
+
+  expect(await fs.readFile(join(dir, 'project.json'), 'utf8')).toBe(originalMetadata)
+  expect((await fs.readdir(dir)).filter((entry) => entry.includes('.tmp'))).toEqual([])
+})
+
+test('rollback failure surfaces both errors and leaves one diagnosable directory', async () => {
+  const d = await root()
+  await createProject(d, 'Draft', '2026-07-02T10:00:00.000Z')
+  const oldDir = join(d, 'projects', 'draft')
+  const newDir = join(d, 'projects', 'final')
+  const originalMetadata = await fs.readFile(join(oldDir, 'project.json'), 'utf8')
+  await fs.writeFile(join(oldDir, 'canvas.json'), '{"kept":true}', 'utf8')
+  const commitFailure = new Error('metadata commit failed')
+  const rollbackFailure = new Error('directory rollback failed')
+  const rename = vi.fn(async (from: string, to: string) => {
+    if (basename(from).startsWith('.project.json.') && basename(to) === 'project.json') {
+      throw commitFailure
+    }
+    if (from === newDir && to === oldDir) throw rollbackFailure
+    await fs.rename(from, to)
+  })
+
+  const error = await renameProject(d, 'draft', 'Final', { rename })
+    .catch((caught: unknown) => caught)
+
+  expect(error).toBeInstanceOf(ProjectRenameRollbackError)
+  expect(error).toMatchObject({ commitError: commitFailure, rollbackError: rollbackFailure })
+  expect(await fs.readdir(join(d, 'projects'))).toEqual(['final'])
+  expect(await fs.readFile(join(newDir, 'project.json'), 'utf8')).toBe(originalMetadata)
+  expect(await fs.readFile(join(newDir, 'canvas.json'), 'utf8')).toBe('{"kept":true}')
+  expect((await fs.readdir(newDir)).filter((entry) => entry.includes('.tmp'))).toEqual([])
 })
 
 test('rename waits for an active old-project mutation and moves its result', async () => {
