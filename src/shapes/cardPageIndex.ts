@@ -1,4 +1,4 @@
-import { computed, type Computed, type Editor, type TLShape } from 'tldraw'
+import { computed, type Editor, type TLShape } from 'tldraw'
 import type { CardShape } from './CardShapeUtil'
 
 type CardId = CardShape['id']
@@ -28,6 +28,12 @@ export interface ExpandedCardFanInfo {
 interface CardPageIndexes {
   getCardInfo(cardId: CardId): CardPageInfo
   getExpandedFanInfo(cardId: CardId): ExpandedCardFanInfo
+  enableDiagnostics(): CardPageIndexDiagnostics
+}
+
+export interface CardPageIndexDiagnostics {
+  pageScans: number
+  cardNumberLookups: number
 }
 
 const EMPTY_MEMBER_IDS: readonly CardId[] = Object.freeze([])
@@ -53,11 +59,12 @@ function cardInfoEqual(a: CardPageInfo, b: CardPageInfo): boolean {
     arraysEqual(a.memberIds, b.memberIds)
 }
 
-function fanInfoEqual(a: ExpandedCardFanInfo, b: ExpandedCardFanInfo): boolean {
-  return a.layoutKey === b.layoutKey && arraysEqual(a.members, b.members)
-}
-
 function createCardPageIndexes(editor: Editor): CardPageIndexes {
+  const diagnostics = {
+    enabled: false,
+    pageScans: 0,
+    cardNumberLookups: 0,
+  }
   const structureByShape = editor.store.createComputedCache<CardStructure | null, TLShape>(
     'card page structure record',
     (shape) => shape.type === 'card'
@@ -77,6 +84,7 @@ function createCardPageIndexes(editor: Editor): CardPageIndexes {
   const pageIndex = computed<CardPageIndex>(
     'card page index',
     () => {
+      if (diagnostics.enabled) diagnostics.pageScans += 1
       const cardIds: CardId[] = []
       const membersByRepresentative = new Map<string, CardId[]>()
       for (const shapeId of editor.getCurrentPageShapeIds()) {
@@ -96,25 +104,26 @@ function createCardPageIndexes(editor: Editor): CardPageIndexes {
     { isEqual: pageIndexesEqual },
   )
 
-  const infoByCard = new Map<CardId, Computed<CardPageInfo>>()
-  const getCardInfoSignal = (cardId: CardId): Computed<CardPageInfo> => {
-    let info = infoByCard.get(cardId)
-    if (!info) {
-      info = computed<CardPageInfo>(
-        `card page info ${cardId}`,
-        () => {
-          const index = pageIndex.get()
-          return {
-            cardNumber: index.cardNumbers.get(cardId) ?? 0,
-            cardCount: index.cardIds.length,
-            memberIds: index.membersByRepresentative.get(cardId) ?? EMPTY_MEMBER_IDS,
-          }
-        },
-        { isEqual: cardInfoEqual },
-      )
-      infoByCard.set(cardId, info)
-    }
-    return info
+  const infoByCard = editor.store.createCache<CardPageInfo, CardShape>((cardId) =>
+    computed<CardPageInfo>(
+      `card page info ${cardId}`,
+      () => {
+        const index = pageIndex.get()
+        if (diagnostics.enabled) diagnostics.cardNumberLookups += 1
+        return {
+          cardNumber: index.cardNumbers.get(cardId) ?? 0,
+          cardCount: index.cardIds.length,
+          memberIds: index.membersByRepresentative.get(cardId) ?? EMPTY_MEMBER_IDS,
+        }
+      },
+      { isEqual: cardInfoEqual },
+    ),
+  )
+
+  const getCardInfo = (cardId: CardId): CardPageInfo => infoByCard.get(cardId) ?? {
+    cardNumber: 0,
+    cardCount: pageIndex.get().cardIds.length,
+    memberIds: EMPTY_MEMBER_IDS,
   }
 
   const layoutByShape = editor.store.createComputedCache<string, TLShape>(
@@ -133,29 +142,21 @@ function createCardPageIndexes(editor: Editor): CardPageIndexes {
     ).join('|'),
   )
 
-  const fanInfoByCard = new Map<CardId, Computed<ExpandedCardFanInfo>>()
-  const getExpandedFanInfoSignal = (cardId: CardId): Computed<ExpandedCardFanInfo> => {
-    let fanInfo = fanInfoByCard.get(cardId)
-    if (!fanInfo) {
-      fanInfo = computed<ExpandedCardFanInfo>(
-        `expanded card fan info ${cardId}`,
-        () => {
-          const memberIds = getCardInfoSignal(cardId).get().memberIds
-          const members = memberIds
-            .map((memberId) => editor.getShape<CardShape>(memberId))
-            .filter((member): member is CardShape => !!member && member.type === 'card')
-          return { layoutKey: fanLayoutKey.get(), members }
-        },
-        { isEqual: fanInfoEqual },
-      )
-      fanInfoByCard.set(cardId, fanInfo)
-    }
-    return fanInfo
+  const getExpandedFanInfo = (cardId: CardId): ExpandedCardFanInfo => {
+    const memberIds = getCardInfo(cardId).memberIds
+    const members = memberIds
+      .map((memberId) => editor.getShape<CardShape>(memberId))
+      .filter((member): member is CardShape => !!member && member.type === 'card')
+    return { layoutKey: fanLayoutKey.get(), members }
   }
 
   return {
-    getCardInfo: (cardId) => getCardInfoSignal(cardId).get(),
-    getExpandedFanInfo: (cardId) => getExpandedFanInfoSignal(cardId).get(),
+    getCardInfo,
+    getExpandedFanInfo,
+    enableDiagnostics: () => {
+      diagnostics.enabled = true
+      return diagnostics
+    },
   }
 }
 
@@ -175,4 +176,9 @@ export function cardPageInfo(editor: Editor, cardId: CardId): CardPageInfo {
 /** Read only for an expanded card; this activates the shared page-layout graph. */
 export function expandedCardFanInfo(editor: Editor, cardId: CardId): ExpandedCardFanInfo {
   return indexesFor(editor).getExpandedFanInfo(cardId)
+}
+
+/** @internal Test-only counters for guarding the page-index performance contract. */
+export function __cardPageIndexDiagnosticsForTests(editor: Editor): CardPageIndexDiagnostics {
+  return indexesFor(editor).enableDiagnostics()
 }

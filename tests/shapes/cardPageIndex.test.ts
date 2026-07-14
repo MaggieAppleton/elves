@@ -2,8 +2,9 @@ import {
   atom, computed, react,
   type Computed, type Editor, type TLParentId, type TLShape, type TLShapeId,
 } from 'tldraw'
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
+  __cardPageIndexDiagnosticsForTests,
   cardPageInfo,
   expandedCardFanInfo,
 } from '../../src/shapes/cardPageIndex'
@@ -12,6 +13,12 @@ interface ReactiveEditorHarness {
   editor: Editor
   pageIdReads: () => number
   cacheRuns: (name: string) => number
+  cacheEntries: (name: string) => number
+  cacheCreates: (name: string) => number
+  liveRecordCount: () => number
+  addShape: (shape: TLShape, onCurrentPage?: boolean) => void
+  deleteShape: (id: TLShapeId) => void
+  setCurrentPage: (ids: TLShapeId[]) => void
   updateShape: (id: TLShapeId, update: Partial<TLShape> & { props?: Record<string, unknown> }) => void
 }
 
@@ -19,6 +26,7 @@ const stops: Array<() => void> = []
 
 afterEach(() => {
   while (stops.length) stops.pop()?.()
+  vi.restoreAllMocks()
 })
 
 function card(
@@ -58,9 +66,30 @@ function reactiveEditor(shapes: TLShape[]): ReactiveEditorHarness {
     atom<TLShape>(`test record ${shape.id}`, shape),
   ]))
   const runs = new Map<string, number>()
+  const cacheCreates = new Map<string, number>()
+  const recordCaches: Array<Map<object, Computed<unknown>>> = []
   let idReads = 0
 
   const store = {
+    createCache(
+      create: (id: TLShapeId, record: Computed<TLShape>) => Computed<unknown>,
+    ) {
+      const values = new Map<object, Computed<unknown>>()
+      recordCaches.push(values)
+      return {
+        get(id: TLShapeId) {
+          const record = records.get(id)
+          if (!record) return undefined
+          let value = values.get(record)
+          if (!value) {
+            value = create(id, record as unknown as Computed<TLShape>)
+            values.set(record, value)
+            cacheCreates.set(value.name, (cacheCreates.get(value.name) ?? 0) + 1)
+          }
+          return value.get()
+        },
+      }
+    },
     createComputedCache(
       name: string,
       derive: (record: TLShape) => unknown,
@@ -106,6 +135,27 @@ function reactiveEditor(shapes: TLShape[]): ReactiveEditorHarness {
     editor,
     pageIdReads: () => idReads,
     cacheRuns: (name) => runs.get(name) ?? 0,
+    cacheEntries: (name) => recordCaches.reduce(
+      (count, cache) => count + [...cache.values()].filter((value) => value.name.startsWith(name)).length,
+      0,
+    ),
+    cacheCreates: (name) => [...cacheCreates.entries()].reduce(
+      (count, [signalName, creates]) => count + (signalName.startsWith(name) ? creates : 0),
+      0,
+    ),
+    liveRecordCount: () => records.size,
+    addShape(shape, onCurrentPage = false) {
+      records.set(shape.id, atom<TLShape>(`test record ${shape.id}`, shape))
+      if (onCurrentPage) ids.set(new Set([...ids.get(), shape.id]))
+    },
+    deleteShape(id) {
+      const record = records.get(id)
+      if (!record) return
+      records.delete(id)
+      for (const cache of recordCaches) cache.delete(record)
+      if (ids.get().has(id)) ids.set(new Set([...ids.get()].filter((shapeId) => shapeId !== id)))
+    },
+    setCurrentPage: (currentIds) => ids.set(new Set(currentIds)),
     updateShape(id, update) {
       const record = records.get(id)
       if (!record) throw new Error(`missing test shape ${id}`)
@@ -125,6 +175,17 @@ describe('cardPageInfo', () => {
       card(`shape:card-${String(index).padStart(3, '0')}`),
     )
     const harness = reactiveEditor(shapes)
+    const diagnostics = __cardPageIndexDiagnosticsForTests(harness.editor)
+    const originalIndexOf = Array.prototype.indexOf
+    let linearNumberScans = 0
+    vi.spyOn(Array.prototype, 'indexOf').mockImplementation(function (
+      this: unknown[],
+      searchElement: unknown,
+      fromIndex?: number,
+    ) {
+      if (this.length === shapes.length && this[0] === shapes[0].id) linearNumberScans += 1
+      return originalIndexOf.call(this, searchElement, fromIndex)
+    })
     const consumerRuns = new Map<TLShapeId, number>()
     for (const shape of shapes) {
       stops.push(react(`test consumer ${shape.id}`, () => {
@@ -134,6 +195,9 @@ describe('cardPageInfo', () => {
     }
 
     expect(harness.pageIdReads()).toBe(1)
+    expect(diagnostics.pageScans).toBe(1)
+    expect(diagnostics.cardNumberLookups).toBe(100)
+    expect(linearNumberScans).toBe(0)
     harness.updateShape(shapes[50].id, { x: 900, y: 400 })
 
     expect(harness.pageIdReads()).toBe(1)
@@ -181,6 +245,39 @@ describe('cardPageInfo', () => {
       memberIds: ['shape:member-2', 'shape:member-1'],
     })
   })
+
+  test('selector cache follows live records through page switches, retyping, and delete churn', () => {
+    const first = card('shape:first')
+    const second = card('shape:second')
+    const harness = reactiveEditor([first, second])
+
+    harness.setCurrentPage([first.id])
+    const firstInfo = cardPageInfo(harness.editor, first.id as TLShapeId)
+    expect(harness.cacheEntries('card page info')).toBe(1)
+
+    harness.setCurrentPage([second.id])
+    cardPageInfo(harness.editor, second.id as TLShapeId)
+    harness.setCurrentPage([first.id])
+    expect(cardPageInfo(harness.editor, first.id as TLShapeId)).toBe(firstInfo)
+    expect(harness.cacheCreates('card page info')).toBe(2)
+
+    harness.updateShape(first.id, { type: 'question', props: { mergedInto: null } })
+    harness.setCurrentPage([second.id])
+    harness.updateShape(first.id, { type: 'card', props: { mergedInto: null } })
+    harness.setCurrentPage([first.id])
+    cardPageInfo(harness.editor, first.id as TLShapeId)
+    expect(harness.cacheCreates('card page info')).toBe(2)
+
+    for (let index = 0; index < 20; index += 1) {
+      const temporary = card(`shape:temporary-${index}`)
+      harness.addShape(temporary)
+      harness.setCurrentPage([temporary.id])
+      cardPageInfo(harness.editor, temporary.id as TLShapeId)
+      harness.deleteShape(temporary.id)
+      expect(harness.cacheEntries('card page info')).toBeLessThanOrEqual(harness.liveRecordCount())
+    }
+    expect(harness.cacheEntries('card page info')).toBe(2)
+  })
 })
 
 describe('expandedCardFanInfo', () => {
@@ -225,5 +322,21 @@ describe('expandedCardFanInfo', () => {
       'shape:a:10:20:page:page|shape:b:30:40:page:page',
     )
     expect(fan.members).toEqual([member])
+  })
+
+  test('collapsed fans retain no selector result or deleted full member record', () => {
+    const representative = card('shape:a')
+    const member = card('shape:b', { mergedInto: representative.id, text: 'deleted member body' })
+    const harness = reactiveEditor([representative, member])
+    let fan!: ReturnType<typeof expandedCardFanInfo>
+    const collapse = react('test fan consumer', () => {
+      fan = expandedCardFanInfo(harness.editor, representative.id as TLShapeId)
+    })
+    expect(fan.members).toEqual([member])
+    collapse()
+    expect(expandedCardFanInfo(harness.editor, representative.id as TLShapeId)).not.toBe(fan)
+    harness.deleteShape(member.id)
+
+    expect(expandedCardFanInfo(harness.editor, representative.id as TLShapeId).members).toEqual([])
   })
 })
