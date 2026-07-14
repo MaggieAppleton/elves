@@ -10,6 +10,7 @@ import {
 } from './canvasMergeComments'
 import { validateBoundary } from './canvasMergeBoundary'
 import { requiresCanvasParentGraph, validateCanvasParentGraph } from './canvasMergeGraph'
+import { repairCanvasSiblingIndices } from './canvasMergeIndex'
 import { finalizeRecordSummaries } from './canvasMergeSummaries'
 import { detectCanvasStructureOverlaps } from './canvasMergeStructure'
 import type {
@@ -282,7 +283,7 @@ export function mergeCanvasRecords(input: CanvasMergeInput): CanvasMergeResult {
   const structureConflicts = detectCanvasStructureOverlaps(input, requireGraphValidation)
   if (structureConflicts.length > 0) return { ok: false, conflicts: structureConflicts }
   const graphConflicts = validateCanvasParentGraph(document, requireGraphValidation)
-  return graphConflicts.length > 0
-    ? { ok: false, conflicts: graphConflicts }
-    : { ok: true, document }
+  if (graphConflicts.length > 0) return { ok: false, conflicts: graphConflicts }
+  repairCanvasSiblingIndices(document, input, requireGraphValidation)
+  return { ok: true, document }
 }
