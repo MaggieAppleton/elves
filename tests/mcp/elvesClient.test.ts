@@ -538,10 +538,10 @@ test('a live applied success with an unreadable body times out and retries as a 
     if (init?.method !== 'POST' || !url.endsWith('/changeset?protocol=2')) {
       return realFetch(input, init)
     }
-    postBodies.push(String(init.body))
+    const attempt = postBodies.push(String(init.body))
     postSignals.push(init.signal as AbortSignal)
     const response = await realFetch(input, init)
-    if (postBodies.length === 1) {
+    if (attempt === 1) {
       postResponses.push(JSON.parse(await response.text()))
       return responseWithHangingBody(response.status)
     }
@@ -551,8 +551,8 @@ test('a live applied success with an unreadable body times out and retries as a 
   }
 
   await settleWithin(
-    postChangeSet(baseUrl, 'essay', original, unreadableFetch as typeof fetch, 10),
-    500,
+    postChangeSet(baseUrl, 'essay', original, unreadableFetch as typeof fetch, 100),
+    1_000,
   )
 
   expect(postBodies).toEqual([
