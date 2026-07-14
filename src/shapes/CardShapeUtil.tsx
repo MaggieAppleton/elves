@@ -16,7 +16,8 @@ import { visibleComments, resolveComment } from '../model/comments'
 import { assetUrl } from '../client/assets'
 import { measuredCardHeight, measuredReferenceHeight, measuredFigureHeight, fittedGistFontSize, PROSE_TEXT_MIN } from './autosize'
 import { shouldShowGist, gistFontSize } from './summaryView'
-import { mergedMembers, isExpanded, toggleExpanded } from './mergeView'
+import { isExpanded, toggleExpanded } from './mergeView'
+import { cardPageInfo, expandedCardFanInfo } from './cardPageIndex'
 import { ReferenceCardFace } from './ReferenceCardFace'
 import { presenceMode } from '../client/presence'
 import { canvasObstacles, reflowCardLane } from '../client/canvasLayout'
@@ -397,15 +398,14 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     // App's getShapeVisibility (rendering AND hit-testing), so this component
     // never runs for them — no invisible "ghost" shape. The representative shows
     // them instead: a stack underneath, and a fan-out on demand.
-    const pageShapes = this.editor.getCurrentPageShapes()
-    const members = mergedMembers(pageShapes, shape.id)
-    const mergedCount = members.length
+    const pageInfo = cardPageInfo(this.editor, shape.id)
+    const mergedCount = pageInfo.memberIds.length
     const expanded = mergedCount > 0 && isExpanded(shape.id)
+    const fanInfo = expanded ? expandedCardFanInfo(this.editor, shape.id) : null
+    const members = fanInfo?.members ?? []
     const fanRef = useRef<HTMLDivElement>(null)
     const [fanOffset, setFanOffset] = useState({ x: shape.props.w + CANVAS_GAP, y: 0 })
-    const fanLayoutKey = pageShapes
-      .map((candidate) => `${candidate.id}:${candidate.x}:${candidate.y}:${candidate.parentId}`)
-      .join('|')
+    const fanLayoutKey = fanInfo?.layoutKey ?? ''
     const fanContentKey = members.map((member) => `${member.id}:${member.props.text}`).join('|')
     useLayoutEffect(() => {
       if (!expanded) return
@@ -494,10 +494,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
         observer?.disconnect()
       }
     }, [this.editor, shape.id, shape.props.w, commentLayoutKey, comments.length])
-    const pageCards = this.editor.getCurrentPageShapes()
-      .filter((candidate) => candidate.type === 'card')
-      .sort((a, b) => a.id.localeCompare(b.id))
-    const cardNumber = pageCards.findIndex((candidate) => candidate.id === shape.id) + 1
+    const { cardNumber, cardCount } = pageInfo
     // Ephemeral agent presence: a soft orange glow when the agent is looking at
     // (read_cards) or has just acted on this card. Reading the atom here is
     // reactive (this component is tldraw-`track`ed, same as the zoom read above),
@@ -838,7 +835,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
                     className="elves-comment__resolve"
                     data-testid="comment-resolve"
                     title="Resolve"
-                    aria-label={`Resolve comment ${index + 1} of ${comments.length} on card ${cardNumber} of ${pageCards.length}: ${mechanicalGist(c.text, 80) || 'empty text'}`}
+                    aria-label={`Resolve comment ${index + 1} of ${comments.length} on card ${cardNumber} of ${cardCount}: ${mechanicalGist(c.text, 80) || 'empty text'}`}
                     onClick={() =>
                       this.editor.updateShape<CardShape>({
                         id: shape.id, type: 'card',
