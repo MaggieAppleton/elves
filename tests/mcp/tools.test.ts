@@ -32,18 +32,23 @@ import { createSelectionStore } from '../../server/selection'
 
 let servers: http.Server[] = []
 let dirs: string[] = []
-async function liveElves(): Promise<{ base: string }> {
+type RecordedRequest = { method: string | undefined; url: string | undefined }
+async function liveElves(): Promise<{ base: string; requests: RecordedRequest[] }> {
   const dataRoot = await fs.mkdtemp(join(tmpdir(), 'elves-mcp-'))
   dirs.push(dataRoot)
   await createProject(dataRoot, 'Essay', '2026-07-02T10:00:00.000Z') // id: 'essay'
   const httpServer = http.createServer()
   const { broadcast } = attachRealtime(httpServer)
   const app = createServer(dataRoot, broadcast)
-  httpServer.on('request', app)
+  const requests: RecordedRequest[] = []
+  httpServer.on('request', (req, res) => {
+    requests.push({ method: req.method, url: req.url })
+    app(req, res)
+  })
   await new Promise<void>((r) => httpServer.listen(0, r))
   servers.push(httpServer)
   const { port } = httpServer.address() as import('node:net').AddressInfo
-  return { base: `http://localhost:${port}` }
+  return { base: `http://localhost:${port}`, requests }
 }
 afterEach(async () => {
   await Promise.all(servers.map((s) => new Promise<void>((r) => s.close(() => r()))))
@@ -250,6 +255,37 @@ test('createNoteCardTool posts a create_note_card change-set', async () => {
   expect(projectId).toBe('essay')
   expect(changeSet.ops).toEqual([{ kind: 'create_note_card', text: 'typed handwriting', x: 5, y: 6 }])
   ws.close()
+})
+
+// Every canvas mutation tool delegates to postChangeSet; this create-only call
+// proves that shared boundary because only protocol 2 can queue without a canvas.
+test('a tool mutation gets a token and queues through the shared protocol-2 client', async () => {
+  const { base, requests } = await liveElves()
+
+  const result = await createNoteCardTool(base, 'essay', {
+    text: 'queued before the canvas opens', x: 5, y: 6,
+  })
+
+  expect(result).toBeUndefined()
+  expect(requests).toEqual([
+    { method: 'GET', url: '/projects/essay/changeset-token' },
+    { method: 'POST', url: '/projects/essay/changeset?protocol=2' },
+  ])
+  const protocol = await fetch(`${base}/projects/essay/canvas?protocol=2`)
+  expect(protocol.status).toBe(200)
+  const state = await protocol.json() as any
+  expect(state).toMatchObject({
+    revision: 1,
+    nextChangeSetToken: { sequence: 1 },
+    pendingChangeSets: [{
+      token: { sequence: 0 },
+      changeSet: {
+        id: expect.any(String),
+        author: 'claude',
+        ops: [{ kind: 'create_note_card', text: 'queued before the canvas opens', x: 5, y: 6 }],
+      },
+    }],
+  })
 })
 
 test('createFigureCardTool posts a create_figure_card change-set', async () => {
