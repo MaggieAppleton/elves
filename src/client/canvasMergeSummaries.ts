@@ -20,7 +20,9 @@ function setOwn(target: Record<string, unknown>, key: string, value: unknown): v
 
 function finalizeSummary(value: Record<string, unknown>): void {
   if (!SUMMARY_KEYS.some((key) => Object.prototype.hasOwnProperty.call(value, key))) return
-  if (typeof value.text === 'string' && value.summaryOfHash === summaryHash(value.text)) return
+  const isComplete = SUMMARY_KEYS.every((key) => Object.prototype.hasOwnProperty.call(value, key))
+  if (isComplete && typeof value.text === 'string' &&
+    value.summaryOfHash === summaryHash(value.text)) return
   for (const key of SUMMARY_KEYS) setOwn(value, key, null)
 }
 

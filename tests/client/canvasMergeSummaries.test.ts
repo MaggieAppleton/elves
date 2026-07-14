@@ -215,6 +215,26 @@ test.each([
   expectCleared(propsOf(document, 'card').comments[0])
 })
 
+test('matching hashes without complete quartets clear on card, question, and comment', () => {
+  const cardText = 'card text'
+  const questionText = 'question text'
+  const commentText = 'comment text'
+  const partialComment = {
+    id: 'cmt-a', type: null, text: commentText, resolved: false, author: 'claude', reviewId: null,
+    summaryOfHash: summaryHash(commentText),
+  }
+  const card = shape('card', cardText, { summaryOfHash: summaryHash(cardText) }, [partialComment])
+  const question = shape('question', questionText, {
+    summaryOfHash: summaryHash(questionText),
+  })
+  const unchanged = records(card, question)
+  const document = mergedDocument({ base: unchanged, local: unchanged, remote: unchanged })
+
+  expect.soft(propsOf(document, 'card')).toMatchObject(NULL_SUMMARY)
+  expect.soft(propsOf(document, 'question')).toMatchObject(NULL_SUMMARY)
+  expect.soft(propsOf(document, 'card').comments[0]).toMatchObject(NULL_SUMMARY)
+})
+
 test('matching card, question, and comment summary quartets survive', () => {
   const matchingComment = comment('cmt-a', 'comment text', summaryFor('comment text', 'comment'))
   const card = shape('card', 'card text', summaryFor('card text', 'card'), [matchingComment])
