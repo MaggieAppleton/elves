@@ -42,6 +42,7 @@ test('an MCP create_figure_card call renders a Claude-suggested figure with the 
   const projectId = await resetProject(request)
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await expect(page.getByTestId('new-prose')).toBeEnabled()
 
   await createFigureCardTool(BASE, projectId, {
     title: 'Release timeline',

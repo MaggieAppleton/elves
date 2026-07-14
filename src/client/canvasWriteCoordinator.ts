@@ -351,8 +351,27 @@ export function createCanvasWriteCoordinator(
           assertCurrent(expected, expectedProjectId)
 
           if (loaded.pendingChangeSets.length === 0) {
-            base = editor.captureDocument()
-            revision = loaded.revision
+            const initialDocument = editor.captureDocument()
+            if (loaded.snapshot.document === null) {
+              try {
+                revision = await transport.save(
+                  expectedProjectId,
+                  editor.captureSnapshot(),
+                  loaded.revision,
+                )
+                assertCurrent(expected, expectedProjectId)
+              } catch (error) {
+                if (error instanceof CanvasRevisionConflictError &&
+                  conflictRetries < MAX_INITIALIZATION_CONFLICT_RETRIES) {
+                  conflictRetries += 1
+                  continue
+                }
+                throw error
+              }
+            } else {
+              revision = loaded.revision
+            }
+            base = initialDocument
             break
           }
           for (const entry of loaded.pendingChangeSets) {

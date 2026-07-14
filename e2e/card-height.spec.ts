@@ -54,6 +54,7 @@ test('question card is default card width and grows to fit long text (no clip)',
   // Prove the canvas is loaded so the MCP create isn't dropped (issue #9).
   await page.getByTestId('new-prose').click()
   await expect.poll(async () => (await serverCardIds(request, projectId)).length).toBe(1)
+  await page.keyboard.press('Escape')
 
   await createQuestionTool(BASE, projectId, { text: LONG, x: 400, y: 200 })
   const question = page.locator('.elves-question').first()

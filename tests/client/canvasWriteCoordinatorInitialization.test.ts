@@ -42,7 +42,7 @@ test('owns read-only state synchronously and unlocks after loading the full init
   )
 })
 
-test('a null canvas keeps the editor bootstrap document and performs no initialization save', async () => {
+test('a null canvas materializes the editor bootstrap document before unlocking', async () => {
   const bootstrap = document('local bootstrap')
   const h = initHarness({ bootstrap, load: async () => state(null, 3) })
 
@@ -51,7 +51,9 @@ test('a null canvas keeps the editor bootstrap document and performs no initiali
   expect(h.loadInitialSnapshot).toHaveBeenCalledWith(state(null, 3).snapshot)
   expect(h.document).toEqual(bootstrap)
   expect(h.session).toEqual({ camera: 3 })
-  expect(h.save).not.toHaveBeenCalled()
+  expect(h.save).toHaveBeenCalledWith(
+    'essay', { document: bootstrap, session: { camera: 3 } }, 3,
+  )
   expect(h.readOnly.mock.calls).toEqual([[true], [false]])
 })
 

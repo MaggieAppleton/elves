@@ -11,6 +11,7 @@ test.beforeEach(async ({ request }) => {
 test('a create_reference tool call renders a type-adaptive reference card live', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await expect(page.getByTestId('new-prose')).toBeEnabled()
 
   // Point the unfurl at the server's own JSON endpoint (non-HTML → graceful
   // minimal reference), then let Claude's researched fields fill the face.

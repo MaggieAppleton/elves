@@ -43,6 +43,7 @@ test('an MCP create_section tool call renders in the Claude accent color', async
   const projectId = await resetProject(request)
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await expect(page.getByTestId('new-prose')).toBeEnabled()
 
   await createSectionTool(BASE, projectId, { text: 'The turn', x: 200, y: 200 })
 
