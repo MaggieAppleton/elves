@@ -23,9 +23,11 @@ import './draft.css'
  */
 export function DraftPane({
   editor,
+  readOnly = false,
   onSelectCard,
 }: {
   editor: Editor | null
+  readOnly?: boolean
   /** Entering edit on a paragraph → select/centre its card on the canvas. */
   onSelectCard: (cardId: string) => void
 }) {
@@ -64,6 +66,10 @@ export function DraftPane({
   // The paragraph currently open as a textarea (one at a time). Cleared on blur.
   const [editingId, setEditingId] = useState<string | null>(null)
 
+  useEffect(() => {
+    if (readOnly) setEditingId(null)
+  }, [readOnly])
+
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle')
   const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const copyAttemptRef = useRef(0)
@@ -101,6 +107,7 @@ export function DraftPane({
   }
 
   const startEditing = (cardId: string) => {
+    if (readOnly) return
     onSelectCard(cardId)
     setEditingId(cardId)
   }
@@ -141,7 +148,7 @@ export function DraftPane({
                   </h2>
                 )}
                 {block.cards.map((card) =>
-                  editor && editingId === card.id ? (
+                  !readOnly && editor && editingId === card.id ? (
                     <ProseEditor
                       key={card.id}
                       editor={editor}
@@ -155,8 +162,9 @@ export function DraftPane({
                       className={`elves-draft__para${card.text.trim() ? '' : ' elves-draft__para--empty'}`}
                       data-testid="draft-para"
                       role="button"
-                      tabIndex={0}
-                      title="Click to edit — updates the card on the canvas"
+                      aria-disabled={readOnly}
+                      tabIndex={readOnly ? -1 : 0}
+                      title={readOnly ? 'Draft editing is temporarily unavailable' : 'Click to edit — updates the card on the canvas'}
                       onClick={() => startEditing(card.id)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' || e.key === ' ') {

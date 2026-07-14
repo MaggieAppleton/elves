@@ -44,6 +44,8 @@ export interface ReviewPersonality {
 
 export interface Review {
   id: string
+  /** Stable id for the currently admitted in-app runner attempt. */
+  attemptId?: string | null
   personality: PersonalityId
   status: ReviewStatus
   /** Optional user scope note ("just the opening section"), from the summon UI. */
@@ -177,6 +179,7 @@ export function isReview(v: unknown): v is Review {
   const strOrNull = (x: unknown) => x === null || typeof x === 'string'
   return (
     typeof r.id === 'string' && r.id.length > 0 &&
+    (r.attemptId === undefined || strOrNull(r.attemptId)) &&
     isPersonalityId(r.personality) &&
     isReviewStatus(r.status) &&
     strOrNull(r.focus) &&
@@ -223,9 +226,9 @@ export function makeReview(
  *
  * `failed` is the in-app runner's own exit: a spawned agent that crashes,
  * can't start, or exits without completing lands the pass here instead of
- * leaving it stuck `pending`/`in-progress` forever. `failed → in-progress` is
- * what makes Retry work — the re-spawned agent's start_review claim is just
- * another claim, legal from `failed` the same way it's legal from `pending`.
+ * leaving it stuck `pending`/`in-progress` forever. Retry first reserves the
+ * pass through `failed → pending`, then the re-spawned agent's
+ * start_review claim advances it to `in-progress`.
  */
 export function canTransition(from: ReviewStatus, to: ReviewStatus): boolean {
   if (from === to) return false
@@ -235,7 +238,7 @@ export function canTransition(from: ReviewStatus, to: ReviewStatus): boolean {
     case 'in-progress':
       return to === 'done' || to === 'dismissed' || to === 'failed'
     case 'failed':
-      return to === 'in-progress' || to === 'dismissed'
+      return to === 'pending' || to === 'in-progress' || to === 'dismissed'
     case 'done':
       return to === 'dismissed'
     case 'dismissed':

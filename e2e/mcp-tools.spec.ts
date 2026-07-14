@@ -16,6 +16,7 @@ test('an MCP add_comment tool call lands as a comment in the open app', async ({
   // Wait until the card is persisted so the tool's cross-check is satisfied.
   await expect.poll(async () => (await serverCardIds(request, projectId)).length).toBe(1)
   const [cardId] = await serverCardIds(request, projectId)
+  await page.keyboard.press('Escape')
 
   await addCommentTool(BASE, projectId, { cardId, text: 'MCP says: no source', type: 'needs-evidence' })
 
@@ -27,6 +28,7 @@ test('an MCP add_comment tool call lands as a comment in the open app', async ({
 test('a note card Claude creates via the MCP shows its authorship mark in the top-right corner', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await expect(page.getByTestId('new-prose')).toBeEnabled()
 
   // Claude authors a note through the MCP (default agent id 'claude').
   await createNoteCardTool(BASE, projectId, { text: 'a note Claude wrote', x: 120, y: 120 })

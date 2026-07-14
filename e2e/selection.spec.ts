@@ -48,7 +48,7 @@ test('deselecting (clicking empty canvas) reports an empty selection', async ({ 
 
   // Escape leaves edit mode, then a click on empty canvas clears the selection.
   await page.keyboard.press('Escape')
-  await page.locator('.tl-canvas').click({ position: { x: 8, y: 8 } })
+  await page.mouse.click(60, 300)
 
   await expect
     .poll(async () => (await readSelectionTool(BASE)).selection.length, { timeout: 15000 })

@@ -30,6 +30,7 @@ test('unmount cancels the active run and disposes its callbacks without reacting
   const requestCancel = vi.fn(async () => {})
   const handle: AgentRunHandle = {
     runId: 'run-1',
+    suppressCallbacks: vi.fn(),
     dispose,
     requestCancel,
     done: new Promise<void>(() => {}),

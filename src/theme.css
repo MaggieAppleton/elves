@@ -430,7 +430,9 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  pointer-events: none;
 }
+.elves-topbar > * { pointer-events: auto; }
 /* Absolutely positioned within the canvas pane (top-center). The pane's
    overflow:hidden clips it, so it never overlaps the draft pane beside it. */
 .elves-toolbar {
@@ -487,6 +489,11 @@ body {
   outline: none;
   box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring);
 }
+.elves-toolbar button:disabled,
+.elves-tools-toggle:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
 
 @media (prefers-reduced-motion: reduce) {
   .elves-tools-toggle,
@@ -511,6 +518,43 @@ body {
 .elves-realtime-status[data-status='disconnected'] {
   background: #d9534f;
   animation: elves-status-pulse 1.4s ease-in-out infinite;
+}
+
+/* Canvas persistence is distinct from WebSocket connectivity: the first dot
+   reports write ownership/progress, the second reports transport reachability. */
+.elves-canvas-write-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--elves-ink-soft);
+  font: 500 11px/1 var(--elves-card-font);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.elves-canvas-write-status::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #4a9e5c;
+}
+.elves-canvas-write-status[data-write-status='loading']::before,
+.elves-canvas-write-status[data-write-status='saving']::before,
+.elves-canvas-write-status[data-write-status='renaming']::before { background: #d9a441; }
+.elves-canvas-write-status[data-write-status='unsaved']::before { background: #b8843e; }
+.elves-canvas-write-status[data-write-status='syncing']::before { background: #527da8; }
+.elves-canvas-write-status[data-write-status='conflict']::before,
+.elves-canvas-write-status[data-write-status='error']::before { background: #d9534f; }
+.elves-canvas-write-status[data-write-status='rename-ambiguous']::before { background: #8b62a8; }
+.elves-status-action {
+  border: 1px solid var(--elves-border);
+  border-radius: 7px;
+  background: var(--elves-surface);
+  color: var(--elves-ink);
+  padding: 5px 8px;
+  font: 500 12px/1 var(--elves-card-font);
+  cursor: pointer;
 }
 
 /* Compositor-only pulse (opacity + scale) so the frame loop never triggers
@@ -638,7 +682,12 @@ body {
   .elves-topbar {
     top: 72px;
     right: 8px;
+    width: calc(100vw - 16px);
+    max-width: calc(100vw - 16px);
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
+  .elves-canvas-write-status { white-space: normal; }
   .elves-switcher__button { min-height: 44px; }
   .elves-switcher__menu {
     width: min(300px, calc(100vw - 16px));

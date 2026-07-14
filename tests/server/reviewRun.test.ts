@@ -1,12 +1,30 @@
-import { afterEach, expect, test } from 'vitest'
+import { afterEach, expect, test, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import request from 'supertest'
 import { createServer } from '../../server/app'
 import type {
-  AgentRunner, AgentCancelResult, AgentEvent, AgentRunInput,
+  AgentRunner, AgentCancelResult, AgentEvent, AgentRunInput, AgentRunReservation,
 } from '../../server/agentRun'
+import type { Review } from '../../src/model/reviews'
+
+const reviewReadFailure = vi.hoisted(() => ({ failTerminalReadOnce: false }))
+vi.mock('../../server/reviews', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../server/reviews')>()
+  return {
+    ...actual,
+    async readReviews(path: string) {
+      const reviews = await actual.readReviews(path)
+      if (reviewReadFailure.failTerminalReadOnce &&
+        reviews.some((review) => review.status === 'failed')) {
+        reviewReadFailure.failTerminalReadOnce = false
+        throw new Error('post-transition read failed')
+      }
+      return reviews
+    },
+  }
+})
 
 /**
  * These tests exercise `launchReviewRun` (server/app.ts) — the fire-and-forget
@@ -19,6 +37,7 @@ import type {
 
 let dirs: string[] = []
 afterEach(async () => {
+  reviewReadFailure.failTerminalReadOnce = false
   await Promise.all(dirs.map((d) => fs.rm(d, { recursive: true, force: true })))
   dirs = []
 })
@@ -27,43 +46,100 @@ afterEach(async () => {
 // drives it via `emit` (mid-run events, e.g. a captured error) and `finish`
 // (the child "exits", resolving the run's promise). `cancel` resolves the run
 // immediately, mirroring a killed child's eventual 'close'.
-function makeFakeRunner(cancelResult: AgentCancelResult = { status: 'accepted' }) {
+function makeFakeRunner(
+  cancelResult: AgentCancelResult = { status: 'accepted' },
+  onRun: () => void = () => {},
+  options: { runGate?: Promise<void>; cancelReturnGate?: Promise<void>; onReserve?: () => void } = {},
+) {
   const active = new Set<string>()
-  const controls = new Map<string, { onEvent: (e: AgentEvent) => void; resolve: () => void }>()
+  const controls = new Map<string, {
+    onEvent: (e: AgentEvent) => void
+    resolve: () => void
+    stopped: Promise<void>
+  }>()
+  const reservations = new Set<AgentRunReservation>()
+  const tombstones = new Set<string>()
   const calls: { key: string; input: AgentRunInput }[] = []
+  const lastCall = (key: string) => [...calls].reverse().find((call) => call.key === key)
   const cancelled: string[] = []
   const runner: AgentRunner = {
     isRunning: (key) => active.has(key),
+    isProjectRunning: (projectId) =>
+      calls.some((call) => active.has(call.key) && call.input.projectId === projectId),
+    tryLockProject: (projectId) =>
+      calls.some((call) => active.has(call.key) && call.input.projectId === projectId) ||
+        [...reservations].some((reservation) => reservation.projectId === projectId)
+        ? null
+        : () => {},
+    reserveProjectRun(projectId, key, runId) {
+      if (key && (active.has(key) || [...reservations].some((entry) => (entry as any).key === key))) return null
+      const reservation = { projectId, key, runId }
+      reservations.add(reservation)
+      options.onReserve?.()
+      return reservation
+    },
+    isRunAdmitted(key, runId) {
+      if (active.has(key) && lastCall(key)?.input.runId === runId) return true
+      return [...reservations].some((entry) =>
+        (entry as any).key === key && (entry as any).runId === runId)
+    },
+    prepare: () => ({ status: 'accepted' }),
+    claimPrepared: (_key, input) => ({ projectId: input.projectId }),
+    runPrepared: (key, input, onEvent) => runner.run(key, input, onEvent),
+    releaseProjectRun(reservation) {
+      reservations.delete(reservation)
+    },
+    async runReserved(_reservation, key, input, onEvent) {
+      if (options.runGate) await options.runGate
+      if (tombstones.has(`${key}\0${input.runId}`)) return
+      return start(key, input, onEvent)
+    },
+    abandon: () => ({ status: 'prevented' }),
+    async cancelAndWait(key, runId) {
+      tombstones.add(`${key}\0${runId}`)
+      const control = controls.get(key)
+      const result = runner.cancel(key, runId)
+      if (result.status === 'accepted' && control) await control.stopped
+      if (options.cancelReturnGate) await options.cancelReturnGate
+      return result
+    },
     cancel(key, runId) {
       cancelled.push(key)
       const c = controls.get(key)
       if (!c) return { status: 'not-running' }
-      if (runId !== key.slice('review:'.length)) return { status: 'run-mismatch' }
+      const call = lastCall(key)
+      if (runId !== call?.input.runId) return { status: 'run-mismatch' }
       if (cancelResult.status !== 'accepted') return cancelResult
-      controls.delete(key)
-      active.delete(key)
-      c.resolve()
       return { status: 'accepted' }
     },
     run(key, input, onEvent) {
+      return start(key, input, onEvent)
+    },
+  }
+  function start(key: string, input: AgentRunInput, onEvent: (e: AgentEvent) => void) {
+      onRun()
       calls.push({ key, input })
       active.add(key)
+      let stop!: () => void
+      const stopped = new Promise<void>((resolve) => { stop = resolve })
       return new Promise<void>((resolve) => {
         controls.set(key, {
           onEvent,
+          stopped,
           resolve: () => {
             active.delete(key)
             controls.delete(key)
+            stop()
             resolve()
           },
         })
       })
-    },
   }
   return {
     runner,
     calls,
     cancelled,
+    reservations,
     emit(key: string, e: AgentEvent) {
       controls.get(key)?.onEvent(e)
     },
@@ -79,12 +155,29 @@ async function tmpRoot() {
   return d
 }
 
-async function appWithRunner(agent?: AgentRunner) {
+async function appWithRunner(
+  agent?: AgentRunner,
+  onReviews?: (projectId: string, reviews: Review[]) => void,
+  settlement?: {
+    retryDelayMs?: number
+    beforePersist?: (kind: 'launch' | 'dismiss', projectId: string, reviewId: string) => void | Promise<void>
+  },
+) {
   const d = await tmpRoot()
-  const app = createServer(d, undefined, undefined, undefined, undefined, agent)
+  const app = createServer(d, undefined, undefined, undefined, undefined, agent, onReviews, settlement)
   await request(app).post('/projects').send({ name: 'Essay' }) // id: essay
   return app
 }
+
+test('summon records the active run before awaiting its review broadcast', async () => {
+  const order: string[] = []
+  const fake = makeFakeRunner({ status: 'accepted' }, () => order.push('run'))
+  const app = await appWithRunner(fake.runner, () => order.push('broadcast'))
+
+  await request(app).post('/projects/essay/reviews').send({ personality: 'trimmer' })
+
+  expect(order.slice(0, 2)).toEqual(['run', 'broadcast'])
+})
 
 // Poll GET /reviews until `predicate` matches the single review, or time out —
 // launchReviewRun's completion handler runs a couple of ticks (and real fs
@@ -121,6 +214,36 @@ test('summoning fires a run keyed review:<id> with the review prompt', async () 
   expect(fake.calls[0].input.prompt).toContain('complete_review')
 })
 
+test('summon is idempotent for a stable client review id', async () => {
+  const fake = makeFakeRunner()
+  const app = await appWithRunner(fake.runner)
+  const body = { reviewId: 'rev-client-a', personality: 'trimmer' }
+
+  const first = await request(app).post('/projects/essay/reviews').send(body)
+  const duplicate = await request(app).post('/projects/essay/reviews').send(body)
+
+  expect(first.body.review.id).toBe('rev-client-a')
+  expect(duplicate.body.review).toEqual(first.body.review)
+  expect(fake.calls).toHaveLength(1)
+})
+
+test('summon reserves the project before metadata work so concurrent rename is refused', async () => {
+  let observeReserve!: () => void
+  const reserved = new Promise<void>((resolve) => { observeReserve = resolve })
+  const fake = makeFakeRunner({ status: 'accepted' }, () => {}, { onReserve: observeReserve })
+  const app = await appWithRunner(fake.runner)
+
+  const summoning = request(app).post('/projects/essay/reviews').send({
+    reviewId: 'rev-client-a', personality: 'trimmer',
+  })
+  void summoning.then(() => {})
+  await reserved
+  const rename = await request(app).patch('/projects/essay').send({ name: 'Renamed' })
+
+  expect(rename.status).toBe(409)
+  expect((await summoning).status).toBe(200)
+})
+
 test('a run that errors marks the review failed with the captured message', async () => {
   const fake = makeFakeRunner()
   const app = await appWithRunner(fake.runner)
@@ -134,6 +257,47 @@ test('a run that errors marks the review failed with the captured message', asyn
   const failed = await waitForReview(app, (r) => r.status === 'failed')
   expect(failed.id).toBe(reviewId)
   expect(failed.error).toBe('`claude` is not installed')
+})
+
+test('launch broadcasts its durable failure when a post-transition read fails', async () => {
+  const broadcasts: Review[][] = []
+  const fake = makeFakeRunner()
+  const app = await appWithRunner(fake.runner, (_projectId, reviews) => broadcasts.push(reviews))
+  const created = await request(app).post('/projects/essay/reviews').send({ personality: 'trimmer' })
+  const reviewId = created.body.review.id
+  broadcasts.length = 0
+  reviewReadFailure.failTerminalReadOnce = true
+
+  fake.finish(`review:${reviewId}`)
+
+  await vi.waitFor(() => expect(broadcasts.some((reviews) =>
+    reviews.some((review) => review.id === reviewId && review.status === 'failed'))).toBe(true))
+})
+
+test('launch settlement retains its lease across a transient persistence failure', async () => {
+  const fake = makeFakeRunner()
+  let attempts = 0
+  const app = await appWithRunner(fake.runner, undefined, {
+    retryDelayMs: 25,
+    beforePersist(kind) {
+      if (kind !== 'launch') return
+      attempts += 1
+      if (attempts === 1) throw new Error('transient persistence failure')
+    },
+  })
+  const created = await request(app).post('/projects/essay/reviews').send({ personality: 'trimmer' })
+  const key = `review:${created.body.review.id}`
+
+  fake.finish(key)
+  for (let wait = 0; wait < 20 && attempts === 0; wait++) {
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+
+  expect(attempts).toBe(1)
+  expect((await request(app).patch('/projects/essay').send({ name: 'Too Soon' })).status).toBe(409)
+  await waitForReview(app, (review) => review.status === 'failed')
+  expect(attempts).toBe(2)
+  expect((await request(app).patch('/projects/essay').send({ name: 'Settled' })).status).toBe(200)
 })
 
 test('a run that exits with no captured error still fails the review, with a generic message', async () => {
@@ -168,23 +332,136 @@ test('a run that completes (claims + finishes via the status route) leaves the r
 })
 
 test('dismissing mid-run cancels the child and the review stays dismissed', async () => {
-  const fake = makeFakeRunner()
+  let releaseCancellation!: () => void
+  const cancelReturnGate = new Promise<void>((resolve) => { releaseCancellation = resolve })
+  const fake = makeFakeRunner({ status: 'accepted' }, () => {}, { cancelReturnGate })
   const app = await appWithRunner(fake.runner)
   const created = await request(app).post('/projects/essay/reviews').send({ personality: 'trimmer' })
   const reviewId = created.body.review.id
   const key = `review:${reviewId}`
   expect(fake.calls).toHaveLength(1) // the summon already launched a run
 
-  const dismissed = await request(app).post(`/projects/essay/reviews/${reviewId}/status`).send({ status: 'dismissed' })
+  let settled = false
+  const dismissing = request(app)
+    .post(`/projects/essay/reviews/${reviewId}/status`)
+    .send({ status: 'dismissed', mutationId: 'dismiss-a' })
+    .then((response) => {
+      settled = true
+      return response
+    })
+  for (let attempt = 0; attempt < 20 && fake.cancelled.length === 0; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+
+  expect(fake.cancelled).toEqual([key])
+  expect(settled).toBe(false)
+  fake.finish(key)
+  for (let attempt = 0; attempt < 20 && fake.reservations.size > 0; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  const rename = await request(app).patch('/projects/essay').send({ name: 'Too Soon' })
+  releaseCancellation()
+
+  const dismissed = await dismissing
+  expect(rename.status).toBe(409)
   expect(dismissed.status).toBe(200)
   expect(dismissed.body.review.status).toBe('dismissed')
-  expect(fake.cancelled).toEqual([key])
 
   // Give launchReviewRun's completion handler a moment to see the (now
   // resolved, via cancel) run and confirm it did NOT clobber dismissed → failed.
   await new Promise((r) => setTimeout(r, 50))
   const res = await request(app).get('/projects/essay/reviews')
   expect(res.body.reviews[0].status).toBe('dismissed')
+})
+
+test('dismiss is idempotent after a lost successful response', async () => {
+  const app = await appWithRunner(undefined)
+  const created = await request(app).post('/projects/essay/reviews').send({
+    reviewId: 'rev-client-a', personality: 'trimmer',
+  })
+  const url = `/projects/essay/reviews/${created.body.review.id}/status`
+
+  const first = await request(app).post(url).send({ status: 'dismissed', mutationId: 'dismiss-a' })
+  const duplicate = await request(app).post(url).send({ status: 'dismissed', mutationId: 'dismiss-a' })
+
+  expect(first.status).toBe(200)
+  expect(duplicate.status).toBe(200)
+  expect(duplicate.body.review).toEqual(first.body.review)
+})
+
+test('dismiss settlement retains its lease across a transient persistence failure', async () => {
+  const fake = makeFakeRunner()
+  let attempts = 0
+  const app = await appWithRunner(fake.runner, undefined, {
+    retryDelayMs: 25,
+    beforePersist(kind) {
+      if (kind !== 'dismiss') return
+      attempts += 1
+      if (attempts === 1) throw new Error('transient persistence failure')
+    },
+  })
+  const created = await request(app).post('/projects/essay/reviews').send({ personality: 'trimmer' })
+  const key = `review:${created.body.review.id}`
+  const dismissing = request(app)
+    .post(`/projects/essay/reviews/${created.body.review.id}/status`)
+    .send({ status: 'dismissed', mutationId: 'dismiss-a' })
+  void dismissing.then(() => {})
+  for (let wait = 0; wait < 20 && fake.cancelled.length === 0; wait++) {
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  fake.finish(key)
+  for (let wait = 0; wait < 20 && attempts === 0; wait++) {
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+
+  expect(attempts).toBe(1)
+  expect((await request(app).patch('/projects/essay').send({ name: 'Too Soon' })).status).toBe(409)
+  expect((await dismissing).status).toBe(200)
+  expect(attempts).toBe(2)
+  expect((await request(app).patch('/projects/essay').send({ name: 'Settled' })).status).toBe(200)
+})
+
+test('a broadcast failure after durable dismiss does not block response or rename', async () => {
+  const fake = makeFakeRunner()
+  let throwBroadcast = false
+  const app = await appWithRunner(fake.runner, () => {
+    if (throwBroadcast) throw new Error('socket broadcast failed')
+  })
+  const created = await request(app).post('/projects/essay/reviews').send({ personality: 'trimmer' })
+  const key = `review:${created.body.review.id}`
+  throwBroadcast = true
+  const dismissing = request(app)
+    .post(`/projects/essay/reviews/${created.body.review.id}/status`)
+    .send({ status: 'dismissed', mutationId: 'dismiss-a' })
+  void dismissing.then(() => {})
+  for (let wait = 0; wait < 20 && fake.cancelled.length === 0; wait++) {
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  fake.finish(key)
+
+  expect((await dismissing).status).toBe(200)
+  expect((await request(app).patch('/projects/essay').send({ name: 'Settled' })).status).toBe(200)
+})
+
+test('dismiss before child admission tombstones the attempt so it never starts late', async () => {
+  let releaseRun!: () => void
+  const runGate = new Promise<void>((resolve) => { releaseRun = resolve })
+  const fake = makeFakeRunner({ status: 'accepted' }, () => {}, { runGate })
+  const app = await appWithRunner(fake.runner)
+  const created = await request(app).post('/projects/essay/reviews').send({
+    reviewId: 'rev-client-a', personality: 'trimmer',
+  })
+
+  const dismissed = await request(app)
+    .post('/projects/essay/reviews/rev-client-a/status')
+    .send({ status: 'dismissed', mutationId: 'dismiss-a' })
+  releaseRun()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  expect(dismissed.status).toBe(200)
+  expect(created.body.review.attemptId).toBe('rev-client-a')
+  expect(fake.calls).toHaveLength(0)
+  expect((await request(app).get('/projects/essay/reviews')).body.reviews[0].status).toBe('dismissed')
 })
 
 test('a failed cancel leaves the live review visible and reports the failure', async () => {
@@ -208,8 +485,9 @@ test('a failed cancel leaves the live review visible and reports the failure', a
 })
 
 test('POST /reviews/:id/run retries a failed review', async () => {
-  const fake = makeFakeRunner()
-  const app = await appWithRunner(fake.runner)
+  const order: string[] = []
+  const fake = makeFakeRunner({ status: 'accepted' }, () => order.push('run'))
+  const app = await appWithRunner(fake.runner, () => order.push('broadcast'))
   const created = await request(app).post('/projects/essay/reviews').send({ personality: 'trimmer' })
   const reviewId = created.body.review.id
   const key = `review:${reviewId}`
@@ -217,12 +495,22 @@ test('POST /reviews/:id/run retries a failed review', async () => {
   fake.emit(key, { type: 'error', message: 'boom' })
   fake.finish(key)
   await waitForReview(app, (r) => r.status === 'failed')
+  await vi.waitFor(() => expect(order.filter((event) => event === 'broadcast')).toHaveLength(2))
   expect(fake.calls).toHaveLength(1)
+  order.length = 0
 
-  const retry = await request(app).post(`/projects/essay/reviews/${reviewId}/run`)
+  const retry = await request(app).post(`/projects/essay/reviews/${reviewId}/run`).send({ attemptId: 'attempt-a' })
   expect(retry.status).toBe(202)
+  expect(retry.body.review).toMatchObject({ id: reviewId, status: 'pending', error: null, attemptId: 'attempt-a' })
   expect(fake.calls).toHaveLength(2) // a fresh run was launched under the SAME key
   expect(fake.calls[1].key).toBe(key)
+  expect(order.slice(0, 2)).toEqual(['run', 'broadcast'])
+
+  const duplicate = await request(app)
+    .post(`/projects/essay/reviews/${reviewId}/run`)
+    .send({ attemptId: 'attempt-a' })
+  expect(duplicate.body.review.attemptId).toBe('attempt-a')
+  expect(fake.calls).toHaveLength(2)
 
   // Let the retry's spawned agent succeed this time.
   await request(app).post(`/projects/essay/reviews/${reviewId}/status`).send({ status: 'in-progress', agent: 'claude' })
@@ -232,6 +520,27 @@ test('POST /reviews/:id/run retries a failed review', async () => {
   await new Promise((r) => setTimeout(r, 50))
   const res = await request(app).get('/projects/essay/reviews')
   expect(res.body.reviews[0]).toMatchObject({ status: 'done', error: null })
+})
+
+test('concurrent distinct retry attempts admit only one child', async () => {
+  const fake = makeFakeRunner()
+  const app = await appWithRunner(fake.runner)
+  const created = await request(app).post('/projects/essay/reviews').send({ personality: 'trimmer' })
+  const reviewId = created.body.review.id
+  const key = `review:${reviewId}`
+  fake.emit(key, { type: 'error', message: 'boom' })
+  fake.finish(key)
+  await waitForReview(app, (review) => review.status === 'failed')
+
+  const [a, b] = await Promise.all([
+    request(app).post(`/projects/essay/reviews/${reviewId}/run`).send({ attemptId: 'attempt-a' }),
+    request(app).post(`/projects/essay/reviews/${reviewId}/run`).send({ attemptId: 'attempt-b' }),
+  ])
+
+  expect([a.status, b.status].sort()).toEqual([202, 409])
+  expect(fake.calls).toHaveLength(2)
+  const acceptedAttempt = a.status === 202 ? 'attempt-a' : 'attempt-b'
+  expect(fake.calls[1].input.runId).toBe(acceptedAttempt)
 })
 
 test('POST /reviews/:id/run on an unknown review → 404', async () => {

@@ -65,6 +65,36 @@ test('readReviews returns [] for a project with no reviews.json yet', async () =
   expect(await readReviews(path)).toEqual([])
 })
 
+test('createReview is idempotent for a stable client review and attempt id', async () => {
+  const d = await tmpRoot()
+  const path = reviewsPathFor(d, 'essay')!
+  const args = {
+    id: 'rev-client-a',
+    attemptId: 'attempt-a',
+    personality: 'trimmer' as const,
+    focus: 'opening',
+  }
+
+  const first = await createReview(path, args, '2026-07-08T00:00:00.000Z')
+  const duplicate = await createReview(path, args, '2026-07-08T00:01:00.000Z')
+
+  expect(duplicate).toEqual(first)
+  expect(first).toMatchObject({ id: 'rev-client-a', attemptId: 'attempt-a' })
+  expect(await readReviews(path)).toHaveLength(1)
+})
+
+test('createReview rejects reuse of a stable id with different input', async () => {
+  const d = await tmpRoot()
+  const path = reviewsPathFor(d, 'essay')!
+  await createReview(path, {
+    id: 'rev-client-a', attemptId: 'attempt-a', personality: 'trimmer', focus: null,
+  }, '2026-07-08T00:00:00.000Z')
+
+  await expect(createReview(path, {
+    id: 'rev-client-a', attemptId: 'attempt-a', personality: 'architect', focus: null,
+  }, '2026-07-08T00:01:00.000Z')).rejects.toMatchObject({ status: 409 })
+})
+
 test('readReviews sorts newest-first by requestedAt', async () => {
   const d = await tmpRoot()
   const path = reviewsPathFor(d, 'essay')!
@@ -165,6 +195,17 @@ test('transitionReview: failed → in-progress (retry) is legal and clears the e
   expect(retried.status).toBe('in-progress')
   expect(retried.error).toBeNull()
   expect(retried.agent).toBe('claude')
+})
+
+test('transitionReview: failed → pending reserves an accepted retry before it is claimed', async () => {
+  const d = await tmpRoot()
+  const path = reviewsPathFor(d, 'essay')!
+  const review = await createReview(path, { personality: 'trimmer', agent: 'claude' }, '2026-07-08T00:00:00.000Z')
+  await transitionReview(path, review.id, { status: 'failed', error: 'boom' }, '2026-07-08T00:01:00.000Z')
+
+  const retried = await transitionReview(path, review.id, { status: 'pending' }, '2026-07-08T00:02:00.000Z')
+
+  expect(retried).toMatchObject({ status: 'pending', error: null, agent: null, startedAt: null })
 })
 
 test('transitionReview: failed → dismissed is legal and clears the error', async () => {

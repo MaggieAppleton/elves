@@ -16,6 +16,7 @@ test.beforeEach(async ({ request }) => {
 test('a card the agent creates glows as "doing" presence', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await expect(page.getByTestId('new-prose')).toBeEnabled()
 
   // Claude creates a note through the MCP; the open tab applies the change-set
   // and glows the freshly-minted card.

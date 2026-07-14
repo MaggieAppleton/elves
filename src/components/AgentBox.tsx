@@ -12,6 +12,8 @@ interface Props {
   /** How many shapes are selected right now — drives the scope chip and whether
    * the agent is told to read_selection (scope to these) or read_map (whole canvas). */
   selectedCount: number
+  disabled?: boolean
+  onRunningChange?: (running: boolean) => void
   onClose: () => void
 }
 
@@ -52,7 +54,14 @@ function appendEvent(prev: Entry[], e: AgentEvent): Entry[] {
  * Kept mounted and hidden (returns null) rather than unmounted, so an in-flight
  * run and its transcript survive closing and reopening the box.
  */
-export function AgentBox({ open, projectId, selectedCount, onClose }: Props) {
+export function AgentBox({
+  open,
+  projectId,
+  selectedCount,
+  disabled = false,
+  onRunningChange = () => {},
+  onClose,
+}: Props) {
   const claude = agentInfo('claude')
   const hasSelection = selectedCount > 0
   const scopeLabel = hasSelection
@@ -134,13 +143,14 @@ export function AgentBox({ open, projectId, selectedCount, onClose }: Props) {
 
   const submit = () => {
     const text = prompt.trim()
-    if (!text || running || !projectId) return
+    if (!text || running || !projectId || disabled) return
     setCollapsed(false)
     setPrompt('')
     // Seed the transcript with the user's message so it stays pinned above the
     // tool calls and replies that follow.
     setEntries([{ kind: 'user', text }])
     setRunPhase('running')
+    onRunningChange(true)
     const handle = runAgent({ prompt: text, projectId, hasSelection }, (e) => {
       setEntries((prev) => appendEvent(prev, e))
     })
@@ -149,6 +159,7 @@ export function AgentBox({ open, projectId, selectedCount, onClose }: Props) {
       if (handleRef.current !== handle) return
       handleRef.current = null
       setRunPhase('idle')
+      onRunningChange(false)
     })
   }
 
@@ -171,7 +182,7 @@ export function AgentBox({ open, projectId, selectedCount, onClose }: Props) {
   // input, then close — unlike plain close, which preserves the chat.
   const closeAndClear = () => {
     const handle = handleRef.current
-    handle?.dispose()
+    handle?.suppressCallbacks()
     if (handle) {
       setRunPhase('cancelling')
       void handle.requestCancel().catch((err) => {
@@ -303,7 +314,7 @@ export function AgentBox({ open, projectId, selectedCount, onClose }: Props) {
           placeholder="Ask the agent to critique, dedupe, reorganise…"
           data-testid="agent-input"
           value={prompt}
-          disabled={runPhase === 'cancelling'}
+          disabled={runPhase === 'cancelling' || disabled}
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={(e) => {
             // Enter sends; Shift+Enter is a newline.
@@ -329,7 +340,7 @@ export function AgentBox({ open, projectId, selectedCount, onClose }: Props) {
             className="elves-agentbox__btn elves-agentbox__btn--send"
             data-testid="agent-send"
             onClick={submit}
-            disabled={!prompt.trim() || !projectId}
+            disabled={!prompt.trim() || !projectId || disabled}
             title="Send (Enter)"
             aria-label="Send"
           >

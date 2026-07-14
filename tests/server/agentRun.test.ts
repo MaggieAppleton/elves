@@ -237,6 +237,248 @@ test('different keys run concurrently — a review run does not refuse a chat ru
   expect(runner.isRunning('review:rev-1')).toBe(false)
 })
 
+test('run activity is matched by run id and attributed to its project', async () => {
+  const child = new FakeChild()
+  const runner = createAgentRunner(deps(() => child))
+  const run = runner.run('chat', input('run-a'), () => {})
+
+  expect(runner.isRunning('chat', 'run-a')).toBe(true)
+  expect(runner.isRunning('chat', 'run-b')).toBe(false)
+  expect(runner.isProjectRunning('p')).toBe(true)
+  expect(runner.isProjectRunning('other')).toBe(false)
+
+  child.emitClose(0)
+  await run
+  expect(runner.isRunning('chat', 'run-a')).toBe(false)
+  expect(runner.isProjectRunning('p')).toBe(false)
+})
+
+test('a project transition excludes new runs and cannot begin while a run is active', async () => {
+  const children = [new FakeChild(), new FakeChild()]
+  let spawned = 0
+  const runner = createAgentRunner(deps(() => children[spawned++]))
+  const first = runner.run('chat', input('run-a'), () => {})
+
+  expect(runner.tryLockProject('p')).toBeNull()
+  children[0].emitClose(0)
+  await first
+
+  const unlock = runner.tryLockProject('p')
+  expect(unlock).toEqual(expect.any(Function))
+  const blocked: AgentEvent[] = []
+  await runner.run('review:rev-1', input('run-b'), (event) => blocked.push(event))
+  expect(blocked).toEqual([{ type: 'error', message: expect.stringContaining('project is changing') }])
+  expect(spawned).toBe(1)
+
+  unlock!()
+  const second = runner.run('review:rev-1', input('run-b'), () => {})
+  expect(spawned).toBe(2)
+  children[1].emitClose(0)
+  await second
+})
+
+test('abandon atomically cancels a run that won admission first', async () => {
+  const child = new FakeChild()
+  const runner = createAgentRunner(deps(() => child))
+  const run = runner.run('chat', input('run-a'), () => {})
+
+  expect(runner.abandon('chat', 'run-a')).toEqual({ status: 'accepted' })
+  expect(child.killed).toBe('SIGTERM')
+  expect(runner.isRunning('chat', 'run-a')).toBe(true)
+
+  child.emitClose(null)
+  await run
+  expect(runner.isRunning('chat', 'run-a')).toBe(false)
+})
+
+test('a project run reservation excludes rename through child-close bookkeeping', async () => {
+  const child = new FakeChild()
+  const runner = createAgentRunner(deps(() => child))
+  const reservation = runner.reserveProjectRun('p')
+  expect(reservation).not.toBeNull()
+  expect(runner.tryLockProject('p')).toBeNull()
+
+  const run = runner.runReserved(reservation!, 'review:rev-1', input('attempt-a'), () => {})
+  expect(runner.isRunning('review:rev-1', 'attempt-a')).toBe(true)
+  child.emitClose(1)
+  await run
+
+  expect(runner.isRunning('review:rev-1', 'attempt-a')).toBe(false)
+  expect(runner.tryLockProject('p')).toBeNull()
+  runner.releaseProjectRun(reservation!)
+  expect(runner.tryLockProject('p')).toEqual(expect.any(Function))
+})
+
+test('an active child still excludes rename if its caller releases the reservation early', async () => {
+  const child = new FakeChild()
+  const runner = createAgentRunner(deps(() => child))
+  const reservation = runner.reserveProjectRun('p')!
+  const run = runner.runReserved(reservation, 'review:rev-1', input('attempt-a'), () => {})
+
+  runner.releaseProjectRun(reservation)
+
+  expect(runner.tryLockProject('p')).toBeNull()
+  child.emitClose(0)
+  await run
+  expect(runner.tryLockProject('p')).toEqual(expect.any(Function))
+})
+
+test('cancelAndWait does not settle until the child closes', async () => {
+  const child = new FakeChild()
+  const runner = createAgentRunner(deps(() => child))
+  const run = runner.run('review:rev-1', input('attempt-a'), () => {})
+  let settled = false
+
+  const cancellation = runner.cancelAndWait('review:rev-1', 'attempt-a')
+  void cancellation.then(() => { settled = true })
+  await Promise.resolve()
+
+  expect(child.killed).toBe('SIGTERM')
+  expect(settled).toBe(false)
+  expect(runner.isRunning('review:rev-1', 'attempt-a')).toBe(true)
+
+  child.emitClose(null)
+  await expect(cancellation).resolves.toEqual({ status: 'accepted' })
+  await run
+  expect(settled).toBe(true)
+})
+
+test('cancelAndWait escalates an ignored SIGTERM to SIGKILL', async () => {
+  const child = new FakeChild()
+  const runner = createAgentRunner({ ...deps(() => child), cancelGraceMs: 1 })
+  const run = runner.run('review:rev-1', input('attempt-a'), () => {})
+  const cancellation = runner.cancelAndWait('review:rev-1', 'attempt-a')
+
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  expect(child.killed).toBe('SIGKILL')
+
+  child.emitClose(null)
+  await cancellation
+  await run
+})
+
+test.each([
+  ['cancel', (runner: ReturnType<typeof createAgentRunner>) => runner.cancel('chat', 'run-a')],
+  ['abandon', (runner: ReturnType<typeof createAgentRunner>) => runner.abandon('chat', 'run-a')],
+] as const)('%s escalates an ignored SIGTERM to SIGKILL', async (_label, cancel) => {
+  const child = new FakeChild()
+  const runner = createAgentRunner({ ...deps(() => child), cancelGraceMs: 1 })
+  const run = runner.run('chat', input('run-a'), () => {})
+
+  expect(cancel(runner)).toEqual({ status: 'accepted' })
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  expect(child.killed).toBe('SIGKILL')
+
+  child.emitClose(null)
+  await run
+})
+
+test('cancelAndWait cancels a reserved not-yet-active run before reporting not-running', async () => {
+  let spawned = 0
+  const child = new FakeChild()
+  const runner = createAgentRunner(deps(() => {
+    spawned += 1
+    return child
+  }))
+  const reservation = runner.reserveProjectRun('p', 'review:rev-1', 'attempt-a')!
+
+  await expect(runner.cancelAndWait('review:rev-1', 'attempt-a')).resolves.toEqual({ status: 'not-running' })
+  const lateRun = runner.runReserved(reservation, 'review:rev-1', input('attempt-a'), () => {})
+  await Promise.resolve()
+
+  expect(spawned).toBe(0)
+  if (spawned) child.emitClose(0)
+  await lateRun
+})
+
+test('project reservations uniquely admit one key and run id', () => {
+  const runner = createAgentRunner(deps(() => new FakeChild()))
+  const reservation = runner.reserveProjectRun('p', 'review:rev-1', 'attempt-a')
+
+  expect(reservation).not.toBeNull()
+  expect(runner.isRunAdmitted('review:rev-1', 'attempt-a')).toBe(true)
+  expect(runner.reserveProjectRun('p', 'review:rev-1', 'attempt-a')).toBeNull()
+  expect(runner.reserveProjectRun('p', 'review:rev-1', 'attempt-b')).toBeNull()
+
+  runner.releaseProjectRun(reservation!)
+  expect(runner.isRunAdmitted('review:rev-1', 'attempt-a')).toBe(false)
+  expect(runner.reserveProjectRun('p', 'review:rev-1', 'attempt-b')).not.toBeNull()
+})
+
+test('prepared chat admission is required and consumed exactly once', async () => {
+  const children = [new FakeChild(), new FakeChild()]
+  let spawned = 0
+  const runner = createAgentRunner(deps(() => children[spawned++]))
+
+  expect(runner.runPrepared('chat', input('run-a'), () => {})).toBeNull()
+  expect(spawned).toBe(0)
+  expect(runner.prepare('chat', 'run-a', 'p')).toEqual({ status: 'accepted' })
+  expect(runner.prepare('chat', 'run-a', 'p')).toEqual({ status: 'duplicate' })
+
+  const run = runner.runPrepared('chat', input('run-a'), () => {})
+  expect(run).not.toBeNull()
+  expect(spawned).toBe(1)
+  expect(runner.runPrepared('chat', input('run-a'), () => {})).toBeNull()
+
+  children[0].emitClose(0)
+  await run
+})
+
+test.each([
+  ['run-b', 'run-a'],
+  ['run-a', 'run-b'],
+] as const)('late %s preparation cannot clobber prepared %s', async (lateId, firstId) => {
+  const child = new FakeChild()
+  const runner = createAgentRunner(deps(() => child))
+  expect(runner.prepare('chat', firstId, 'p')).toEqual({ status: 'accepted' })
+  expect(runner.prepare('chat', lateId, 'p')).toEqual({ status: 'accepted' })
+
+  const unlock = runner.tryLockProject('p')
+  expect(unlock).not.toBeNull()
+  unlock?.()
+  const run = runner.runPrepared('chat', input(firstId), () => {})
+  expect(run).not.toBeNull()
+  expect(runner.runPrepared('chat', input(lateId), () => {})).toBeNull()
+
+  child.emitClose(0)
+  await run
+})
+
+test('abandon removes prepared admission so a delayed run cannot spawn', () => {
+  let spawned = 0
+  const runner = createAgentRunner(deps(() => {
+    spawned += 1
+    return new FakeChild()
+  }))
+  runner.prepare('chat', 'run-a', 'p')
+
+  expect(runner.abandon('chat', 'run-a')).toEqual({ status: 'prevented' })
+  expect(runner.runPrepared('chat', input('run-a'), () => {})).toBeNull()
+  expect(spawned).toBe(0)
+})
+
+test('expired and over-capacity preparation rejects instead of evicting into spawn', () => {
+  let now = 0
+  let spawned = 0
+  const runner = createAgentRunner({
+    ...deps(() => {
+      spawned += 1
+      return new FakeChild()
+    }),
+    nowMs: () => now,
+    preparedTtlMs: 10,
+    preparedLimit: 1,
+  })
+
+  expect(runner.prepare('chat', 'run-a', 'p')).toEqual({ status: 'accepted' })
+  expect(runner.prepare('chat', 'run-c', 'p')).toEqual({ status: 'capacity' })
+  expect(runner.prepare('other', 'run-b', 'p')).toEqual({ status: 'capacity' })
+  now = 11
+  expect(runner.runPrepared('chat', input('run-a'), () => {})).toBeNull()
+  expect(spawned).toBe(0)
+  expect(runner.prepare('other', 'run-b', 'p')).toEqual({ status: 'accepted' })
+})
+
 test('cancel(key) kills only that key\'s child', async () => {
   const chatChild = new FakeChild()
   const reviewChild = new FakeChild()

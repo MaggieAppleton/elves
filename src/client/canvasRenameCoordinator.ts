@@ -75,6 +75,7 @@ export interface CanvasRenameControllerOptions {
   queuePostRebindSync(): void
   settleBarriers(error: unknown): void
   emitStatus(status: 'renaming' | 'rename-ambiguous' | 'idle' | 'error'): void
+  setReadOnly(readOnly: boolean): void
   isDisposed(): boolean
   isDisposedError(error: unknown): boolean
 }
@@ -96,6 +97,7 @@ export function createCanvasRenameController(
     const error = new CanvasRenameAmbiguousError(reason, { cause })
     ambiguous = { requestedName, original, originalError, error }
     exclusive = true
+    options.setReadOnly(true)
     options.settleBarriers(error)
     options.emitStatus('rename-ambiguous')
     throw error
@@ -130,6 +132,8 @@ export function createCanvasRenameController(
     } catch (error) {
       if (options.isDisposedError(error)) throw error
       throw new CanvasRenameCommittedDrainError(next, error)
+    } finally {
+      if (!options.isDisposed()) options.setReadOnly(false)
     }
     options.assertCurrent(reboundLifecycle, next.id)
     return next
@@ -153,6 +157,8 @@ export function createCanvasRenameController(
       } catch (error) {
         if (options.isDisposedError(error)) throw error
         throw new CanvasRenameRollbackDrainError(outcome.project, originalError, error)
+      } finally {
+        if (!options.isDisposed()) options.setReadOnly(false)
       }
       options.assertCurrent(expected, outcome.project.id)
       throw originalError
@@ -199,6 +205,7 @@ export function createCanvasRenameController(
       }
       options.emitStatus('renaming')
       exclusive = true
+      options.setReadOnly(true)
       const preRenameFlush = options.beginPreRenameFlush()
       await preRenameFlush
       options.assertCurrent(expected, original.id)
@@ -228,6 +235,7 @@ export function createCanvasRenameController(
       if (renameJob?.promise === promise) renameJob = null
       if (!ambiguous) exclusive = false
       if (!options.isDisposed()) {
+        if (!ambiguous) options.setReadOnly(false)
         if (succeeded) options.emitStatus('idle')
         else if (!ambiguous) options.emitStatus('error')
       }

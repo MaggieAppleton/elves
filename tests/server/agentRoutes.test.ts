@@ -1,6 +1,8 @@
-import { afterEach, expect, test } from 'vitest'
+import { afterAll, afterEach, beforeAll, expect, test } from 'vitest'
 import http from 'node:http'
 import { tmpdir } from 'node:os'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { join } from 'node:path'
 import request from 'supertest'
 import { createServer } from '../../server/app'
 import type { AgentRunner, AgentEvent, AgentCancelResult } from '../../server/agentRun'
@@ -13,10 +15,34 @@ function fakeAgent(
   events: AgentEvent[] = [],
   running = false,
   cancelResult: AgentCancelResult = { status: 'accepted' },
-): AgentRunner & { cancelled: { key: string; runId: string }[] } {
+): AgentRunner & {
+  cancelled: { key: string; runId: string }[]
+  abandoned: { key: string; runId: string }[]
+} {
   const impl = {
     cancelled: [] as { key: string; runId: string }[],
-    isRunning: (_key: string) => running,
+    abandoned: [] as { key: string; runId: string }[],
+    isRunning: (_key: string, runId?: string) => running && (!runId || runId === 'run-a'),
+    isProjectRunning: (projectId: string) => running && projectId === 'essay',
+    reserveProjectRun: (projectId: string) => ({ projectId }),
+    isRunAdmitted: () => false,
+    prepare: () => running ? { status: 'conflict' as const } : { status: 'accepted' as const },
+    claimPrepared: (key: string, input: any) => running ? null : ({ projectId: input.projectId, key }),
+    releaseProjectRun: () => {},
+    abandon(key: string, runId: string) {
+      impl.abandoned.push({ key, runId })
+      return { status: running ? 'accepted' as const : 'prevented' as const }
+    },
+    async cancelAndWait(key: string, runId: string) {
+      return impl.cancel(key, runId)
+    },
+    async runReserved(_reservation: unknown, key: string, input: unknown, onEvent: (e: AgentEvent) => void) {
+      return impl.run(key, input, onEvent)
+    },
+    runPrepared(key: string, input: unknown, onEvent: (e: AgentEvent) => void) {
+      return running ? null : impl.run(key, input, onEvent)
+    },
+    tryLockProject: (_projectId: string) => running ? null : () => {},
     cancel(key: string, runId: string) {
       impl.cancelled.push({ key, runId })
       return cancelResult
@@ -28,8 +54,15 @@ function fakeAgent(
   return impl
 }
 
-// The agent routes never touch disk (no requireProject), so a bogus data root is fine.
-const app = (agent?: AgentRunner) => createServer(tmpdir(), undefined, undefined, undefined, undefined, agent)
+let agentRoot: string
+beforeAll(async () => {
+  agentRoot = await mkdtemp(join(tmpdir(), 'elves-agent-routes-'))
+  await request(createServer(agentRoot)).post('/projects').send({ name: 'Essay' }).expect(200)
+})
+afterAll(async () => {
+  await rm(agentRoot, { recursive: true, force: true })
+})
+const app = (agent?: AgentRunner) => createServer(agentRoot, undefined, undefined, undefined, undefined, agent)
 
 // SSE responses don't resolve cleanly under supertest/superagent, so the
 // streaming case runs against a real listening server and reads the raw body.
@@ -87,6 +120,34 @@ test('POST /agent/run streams SSE events then an end marker', async () => {
   expect(res.text).toContain('event: end')
 })
 
+test('POST /agent/prepare acknowledges a bounded run admission', async () => {
+  const res = await request(app(fakeAgent())).post('/agent/prepare').send({
+    projectId: 'essay', runId: 'run-a',
+  })
+
+  expect(res.status).toBe(200)
+  expect(res.body).toEqual({ ok: true, status: 'accepted' })
+})
+
+test('POST /agent/run refuses an absent or expired preparation before streaming', async () => {
+  const agent = fakeAgent()
+  agent.claimPrepared = () => null
+  const res = await request(app(agent)).post('/agent/run').send({
+    prompt: 'hi', projectId: 'essay', runId: 'run-a',
+  })
+
+  expect(res.status).toBe(409)
+  expect(res.headers['content-type']).toContain('application/json')
+})
+
+test('POST /agent/run validates the project after claiming its preparation', async () => {
+  const res = await request(app(fakeAgent())).post('/agent/run').send({
+    prompt: 'hi', projectId: 'definitely-missing-project', runId: 'run-a',
+  })
+
+  expect(res.status).toBe(404)
+})
+
 test('POST /agent/run rejects a missing prompt', async () => {
   const res = await request(app(fakeAgent())).post('/agent/run').send({ projectId: 'essay', runId: 'run-a' })
   expect(res.status).toBe(400)
@@ -117,6 +178,40 @@ test('POST /agent/run returns 501 when no runner is configured', async () => {
   expect(res.status).toBe(501)
 })
 
+test('GET /agent/runs/:runId reports authoritative matching-run activity', async () => {
+  const active = await request(app(fakeAgent([], true))).get('/agent/runs/run-a')
+  expect(active.body).toEqual({ active: true })
+  expect(active.headers['cache-control']).toBe('no-store')
+  expect((await request(app(fakeAgent([], true))).get('/agent/runs/run-b')).body).toEqual({ active: false })
+})
+
+test('POST /agent/abandon atomically acknowledges the ambiguous run id', async () => {
+  const agent = fakeAgent()
+  const response = await request(app(agent)).post('/agent/abandon').send({ runId: 'run-late' })
+
+  expect(response.status).toBe(200)
+  expect(response.body).toEqual({ ok: true, status: 'prevented' })
+  expect(agent.abandoned).toEqual([{ key: 'chat', runId: 'run-late' }])
+})
+
+test('PATCH /projects/:id refuses rename while that project has an active agent', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'elves-agent-rename-'))
+  try {
+    const server = createServer(root, undefined, undefined, undefined, undefined, fakeAgent([], true))
+    await request(server).post('/projects').send({ name: 'Essay' }).expect(200)
+
+    const res = await request(server).patch('/projects/essay').send({ name: 'Renamed' })
+
+    expect(res.status).toBe(409)
+    expect(res.body).toMatchObject({ code: 'project-agent-active' })
+    expect((await request(server).get('/projects')).body).toEqual([
+      expect.objectContaining({ id: 'essay', name: 'Essay' }),
+    ])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('POST /agent/cancel cancels only the requested run', async () => {
   const agent = fakeAgent()
   const res = await request(app(agent)).post('/agent/cancel').send({ runId: 'run-a' })
@@ -129,6 +224,19 @@ test('POST /agent/cancel cancels only the requested run', async () => {
 test('a review run in progress does not 409 a chat run', async () => {
   const agent: AgentRunner = {
     isRunning: (key) => key === 'review:rev-1',
+    isProjectRunning: () => false,
+    reserveProjectRun: (projectId) => ({ projectId }),
+    isRunAdmitted: () => false,
+    prepare: () => ({ status: 'accepted' }),
+    claimPrepared: (_key, input) => ({ projectId: input.projectId }),
+    releaseProjectRun: () => {},
+    abandon: () => ({ status: 'prevented' }),
+    cancelAndWait: async () => ({ status: 'not-running' }),
+    runReserved: async (_reservation, key, input, onEvent) => {
+      await agent.run(key, input, onEvent)
+    },
+    runPrepared: (_key, input, onEvent) => agent.run('chat', input, onEvent),
+    tryLockProject: () => () => {},
     cancel: () => ({ status: 'not-running' }),
     async run(_key, _input, onEvent) {
       onEvent({ type: 'started' })
