@@ -296,6 +296,13 @@ function summaryQuestion(id: string, text: string) {
   }
 }
 
+function summaryComment(id: string, text: string) {
+  return {
+    id, type: null, text, resolved: false, author: 'claude',
+    summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+  }
+}
+
 test('reconcileCanvasFile reports pending when the summarizer is unreachable', async () => {
   const { dataRoot, canvasPath } = await seedCanvasWithLongCard()
   const down = new FakeSummarizer(() => null)
@@ -433,6 +440,126 @@ test('a no-document reconcile is byte-stable and produces no change-set', async 
   expect(result).toEqual({ changeSet: null, pending: false })
   expect(await fs.readFile(canvasPath)).toEqual(before)
   await expect(fs.access(`${canvasPath}.bak`)).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+test.each([
+  {
+    label: 'comments',
+    store: {
+      'shape:a': summaryCard('shape:a', '', [
+        summaryComment('cmt-duplicate', `${LONG} first`),
+        summaryComment('cmt-duplicate', `${LONG} second`),
+      ]),
+    },
+  },
+  {
+    label: 'cards',
+    store: {
+      'record:a': summaryCard('shape:duplicate', `${LONG} first`),
+      'record:b': summaryCard('shape:duplicate', `${LONG} second`),
+    },
+  },
+  {
+    label: 'questions',
+    store: {
+      'record:q1': summaryQuestion('shape:duplicate', `${LONG} first`),
+      'record:q2': summaryQuestion('shape:duplicate', `${LONG} second`),
+    },
+  },
+])('ambiguous duplicate $label never call the model, write, or become pending', async ({ store }) => {
+  const { dataRoot, canvasPath } = await seedSummaryCanvas(store)
+  const summarizer = new FakeSummarizer()
+  const before = await fs.readFile(canvasPath)
+
+  const first = await reconcileCanvasFile(dataRoot, 'essay', summarizer, () => 'T')
+  const second = await reconcileCanvasFile(dataRoot, 'essay', summarizer, () => 'T')
+
+  expect(first).toEqual({ changeSet: null, pending: false })
+  expect(second).toEqual({ changeSet: null, pending: false })
+  expect(summarizer.calls).toEqual([])
+  expect(await fs.readFile(canvasPath)).toEqual(before)
+  expect(canvasRevision(JSON.parse(before.toString()))).toBe(0)
+  await expect(fs.access(`${canvasPath}.bak`)).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+test('a mixed canvas summarizes only unique targets and leaves duplicates inert', async () => {
+  const duplicateOne = `${LONG} duplicate one`
+  const duplicateTwo = `${LONG} duplicate two`
+  const uniqueText = `${LONG} unique`
+  const { dataRoot, canvasPath } = await seedSummaryCanvas({
+    'shape:a': summaryCard('shape:a', '', [
+      summaryComment('cmt-duplicate', duplicateOne),
+      summaryComment('cmt-duplicate', duplicateTwo),
+      summaryComment('cmt-unique', uniqueText),
+    ]),
+  })
+  const summarizer = new FakeSummarizer((text) => `gist for ${text.slice(-6)}`)
+
+  const result = await reconcileCanvasFile(dataRoot, 'essay', summarizer, () => 'T')
+  const stored = JSON.parse(await fs.readFile(canvasPath, 'utf8'))
+
+  expect(summarizer.calls).toEqual([uniqueText])
+  expect(result.pending).toBe(false)
+  expect(result.changeSet?.ops).toEqual([
+    expect.objectContaining({
+      kind: 'set_comment_summary', cardId: 'shape:a', commentId: 'cmt-unique',
+    }),
+  ])
+  expect(stored.document.store['shape:a'].props.comments
+    .filter((entry: any) => entry.id === 'cmt-duplicate')
+    .map((entry: any) => entry.summary)).toEqual([null, null])
+  expect(stored.document.store['shape:a'].props.comments
+    .find((entry: any) => entry.id === 'cmt-unique').summary).toBe('gist for unique')
+  expect(canvasRevision(stored)).toBe(1)
+})
+
+test('repairing duplicate comment ids allows a later run to summarize once', async () => {
+  const repairedText = `${LONG} repaired`
+  const { dataRoot, canvasPath } = await seedSummaryCanvas({
+    'shape:a': summaryCard('shape:a', '', [
+      summaryComment('cmt-duplicate', repairedText),
+      summaryComment('cmt-duplicate', `${LONG} remove me`),
+    ]),
+  })
+  const summarizer = new FakeSummarizer()
+  expect(await reconcileCanvasFile(dataRoot, 'essay', summarizer, () => 'T'))
+    .toEqual({ changeSet: null, pending: false })
+  expect(summarizer.calls).toEqual([])
+
+  await acceptedCanvasMutation(dataRoot, (snapshot) => {
+    snapshot.document.store['shape:a'].props.comments.splice(1, 1)
+  })
+  const repaired = await reconcileCanvasFile(dataRoot, 'essay', summarizer, () => 'T')
+  const stored = JSON.parse(await fs.readFile(canvasPath, 'utf8'))
+
+  expect(summarizer.calls).toEqual([repairedText])
+  expect(repaired.pending).toBe(false)
+  expect(repaired.changeSet?.ops).toHaveLength(1)
+  expect(stored.document.store['shape:a'].props.comments[0].summary).toBe('a gist')
+  expect(canvasRevision(stored)).toBe(2)
+})
+
+test('a target duplicated during model work is discarded without retry churn', async () => {
+  const text = `${LONG} initially unique`
+  const { dataRoot, canvasPath } = await seedSummaryCanvas({
+    'shape:a': summaryCard('shape:a', '', [summaryComment('cmt-1', text)]),
+  })
+  const delayed = delayedSummary()
+  const run = reconcileCanvasFile(dataRoot, 'essay', delayed.summarizer, () => 'T')
+  await delayed.didStart
+  await acceptedCanvasMutation(dataRoot, (snapshot) => {
+    snapshot.document.store['shape:a'].props.comments.push(summaryComment('cmt-1', text))
+  })
+  const afterDuplicate = await fs.readFile(canvasPath)
+  const backupAfterDuplicate = await fs.readFile(`${canvasPath}.bak`)
+
+  delayed.release('ambiguous gist')
+  const result = await run
+
+  expect(result).toEqual({ changeSet: null, pending: false })
+  expect(await fs.readFile(canvasPath)).toEqual(afterDuplicate)
+  expect(await fs.readFile(`${canvasPath}.bak`)).toEqual(backupAfterDuplicate)
+  expect(canvasRevision(JSON.parse(afterDuplicate.toString()))).toBe(1)
 })
 
 test('summary apply does not recreate a project renamed during model work', async () => {

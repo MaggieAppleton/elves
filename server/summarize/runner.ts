@@ -17,9 +17,75 @@ type SummaryOp = Extract<Op,
   | { kind: 'set_question_summary' }
 >
 
+type CardCandidate = ReturnType<typeof snapshotToSummarizableCards>[number]
+type CommentCandidate = ReturnType<typeof snapshotToSummarizableComments>[number]
+type QuestionCandidate = ReturnType<typeof snapshotToSummarizableQuestions>[number]
+
+function groupUniqueByKey<T>(items: T[], keyOf: (item: T) => string): {
+  uniqueByKey: Map<string, T>
+  ambiguousKeys: Set<string>
+} {
+  const groups = new Map<string, T[]>()
+  for (const item of items) {
+    const key = keyOf(item)
+    const group = groups.get(key)
+    if (group) group.push(item)
+    else groups.set(key, [item])
+  }
+  const uniqueByKey = new Map<string, T>()
+  const ambiguousKeys = new Set<string>()
+  for (const [key, group] of groups) {
+    if (group.length === 1) uniqueByKey.set(key, group[0])
+    else ambiguousKeys.add(key)
+  }
+  return { uniqueByKey, ambiguousKeys }
+}
+
+interface SummaryCandidates {
+  cards: CardCandidate[]
+  comments: CommentCandidate[]
+  questions: QuestionCandidate[]
+  cardById: Map<string, CardCandidate>
+  commentById: Map<string, CommentCandidate>
+  questionById: Map<string, QuestionCandidate>
+  ambiguousCardIds: Set<string>
+  ambiguousCommentIds: Set<string>
+  ambiguousQuestionIds: Set<string>
+}
+
+function commentKey(comment: Pick<CommentCandidate, 'cardId' | 'commentId'>): string {
+  return `${comment.cardId}\0${comment.commentId}`
+}
+
+function summaryCandidates(snapshot: Parameters<typeof snapshotToSummarizableCards>[0]): SummaryCandidates {
+  const cardGroups = groupUniqueByKey(snapshotToSummarizableCards(snapshot), (card) => card.id)
+  const commentGroups = groupUniqueByKey(snapshotToSummarizableComments(snapshot), commentKey)
+  const questionGroups = groupUniqueByKey(
+    snapshotToSummarizableQuestions(snapshot),
+    (question) => question.questionId,
+  )
+  const ambiguousCommentIds = new Set(commentGroups.ambiguousKeys)
+  const commentById = new Map<string, CommentCandidate>()
+  for (const [key, comment] of commentGroups.uniqueByKey) {
+    if (cardGroups.uniqueByKey.has(comment.cardId)) commentById.set(key, comment)
+    else if (cardGroups.ambiguousKeys.has(comment.cardId)) ambiguousCommentIds.add(key)
+  }
+  return {
+    cards: [...cardGroups.uniqueByKey.values()],
+    comments: [...commentById.values()],
+    questions: [...questionGroups.uniqueByKey.values()],
+    cardById: cardGroups.uniqueByKey,
+    commentById,
+    questionById: questionGroups.uniqueByKey,
+    ambiguousCardIds: cardGroups.ambiguousKeys,
+    ambiguousCommentIds,
+    ambiguousQuestionIds: questionGroups.ambiguousKeys,
+  }
+}
+
 function sameCardCandidate(
-  left: ReturnType<typeof snapshotToSummarizableCards>[number],
-  right: ReturnType<typeof snapshotToSummarizableCards>[number],
+  left: CardCandidate,
+  right: CardCandidate,
 ): boolean {
   return left.id === right.id && left.kind === right.kind && left.noteKind === right.noteKind &&
     left.text === right.text && left.summary === right.summary &&
@@ -27,8 +93,8 @@ function sameCardCandidate(
 }
 
 function sameCommentCandidate(
-  left: ReturnType<typeof snapshotToSummarizableComments>[number],
-  right: ReturnType<typeof snapshotToSummarizableComments>[number],
+  left: CommentCandidate,
+  right: CommentCandidate,
 ): boolean {
   return left.cardId === right.cardId && left.commentId === right.commentId &&
     left.text === right.text && left.summary === right.summary &&
@@ -36,8 +102,8 @@ function sameCommentCandidate(
 }
 
 function sameQuestionCandidate(
-  left: ReturnType<typeof snapshotToSummarizableQuestions>[number],
-  right: ReturnType<typeof snapshotToSummarizableQuestions>[number],
+  left: QuestionCandidate,
+  right: QuestionCandidate,
 ): boolean {
   return left.questionId === right.questionId && left.text === right.text &&
     left.summary === right.summary && left.summaryOfHash === right.summaryOfHash
@@ -45,46 +111,56 @@ function sameQuestionCandidate(
 
 function validSummaryOpsForSnapshot(
   ops: SummaryOp[],
-  originalCards: ReturnType<typeof snapshotToSummarizableCards>,
-  originalComments: ReturnType<typeof snapshotToSummarizableComments>,
-  originalQuestions: ReturnType<typeof snapshotToSummarizableQuestions>,
+  original: SummaryCandidates,
   fresh: Parameters<typeof snapshotToSummarizableCards>[0],
-): SummaryOp[] {
-  const freshCards = new Map(snapshotToSummarizableCards(fresh).map((card) => [card.id, card]))
-  const freshComments = new Map(snapshotToSummarizableComments(fresh)
-    .map((comment) => [`${comment.cardId}\0${comment.commentId}`, comment]))
-  const freshQuestions = new Map(snapshotToSummarizableQuestions(fresh)
-    .map((question) => [question.questionId, question]))
-  const originalCardById = new Map(originalCards.map((card) => [card.id, card]))
-  const originalCommentById = new Map(originalComments
-    .map((comment) => [`${comment.cardId}\0${comment.commentId}`, comment]))
-  const originalQuestionById = new Map(originalQuestions
-    .map((question) => [question.questionId, question]))
-
-  return ops.filter((op) => {
+): { validOps: SummaryOp[]; retryDiscarded: boolean } {
+  const current = summaryCandidates(fresh)
+  const validOps: SummaryOp[] = []
+  let retryDiscarded = false
+  for (const op of ops) {
     if (op.kind === 'set_summary') {
-      const original = originalCardById.get(op.cardId)
-      const current = freshCards.get(op.cardId)
-      if (!original || !current || !sameCardCandidate(original, current)) return false
+      if (current.ambiguousCardIds.has(op.cardId)) continue
+      const originalCard = original.cardById.get(op.cardId)
+      const currentCard = current.cardById.get(op.cardId)
+      if (!originalCard || !currentCard || !sameCardCandidate(originalCard, currentCard)) {
+        retryDiscarded = true
+        continue
+      }
       const expectedState = op.summary === null ? 'clear' : 'generate'
-      return summaryState(original) === expectedState && summaryState(current) === expectedState
-    }
-    if (op.kind === 'set_comment_summary') {
-      const key = `${op.cardId}\0${op.commentId}`
-      const original = originalCommentById.get(key)
-      const current = freshComments.get(key)
-      if (!original || !current || !sameCommentCandidate(original, current)) return false
+      if (summaryState(originalCard) === expectedState &&
+        summaryState(currentCard) === expectedState) validOps.push(op)
+      else retryDiscarded = true
+      continue
+    } else if (op.kind === 'set_comment_summary') {
+      const key = commentKey(op)
+      if (current.ambiguousCardIds.has(op.cardId) || current.ambiguousCommentIds.has(key)) continue
+      const originalComment = original.commentById.get(key)
+      const currentComment = current.commentById.get(key)
+      if (!originalComment || !currentComment ||
+        !sameCommentCandidate(originalComment, currentComment)) {
+        retryDiscarded = true
+        continue
+      }
       const expectedState = op.summary === null ? 'clear' : 'generate'
-      return commentSummaryState(original) === expectedState &&
-        commentSummaryState(current) === expectedState
+      if (commentSummaryState(originalComment) === expectedState &&
+        commentSummaryState(currentComment) === expectedState) validOps.push(op)
+      else retryDiscarded = true
+      continue
     }
-    const original = originalQuestionById.get(op.questionId)
-    const current = freshQuestions.get(op.questionId)
-    if (!original || !current || !sameQuestionCandidate(original, current)) return false
+    if (current.ambiguousQuestionIds.has(op.questionId)) continue
+    const originalQuestion = original.questionById.get(op.questionId)
+    const currentQuestion = current.questionById.get(op.questionId)
+    if (!originalQuestion || !currentQuestion ||
+      !sameQuestionCandidate(originalQuestion, currentQuestion)) {
+      retryDiscarded = true
+      continue
+    }
     const expectedState = op.summary === null ? 'clear' : 'generate'
-    return commentSummaryState(original) === expectedState &&
-      commentSummaryState(current) === expectedState
-  })
+    if (commentSummaryState(originalQuestion) === expectedState &&
+      commentSummaryState(currentQuestion) === expectedState) validOps.push(op)
+    else retryDiscarded = true
+  }
+  return { validOps, retryDiscarded }
 }
 
 /**
@@ -117,9 +193,8 @@ export async function reconcileCanvasFile(
   const canvasPath = canvasPathFor(dataRoot, projectId)
   if (!canvasPath) return { changeSet: null, pending: false }
   const canvas = await readCanvas(canvasPath)
-  const cards = snapshotToSummarizableCards(canvas)
-  const comments = snapshotToSummarizableComments(canvas)
-  const questions = snapshotToSummarizableQuestions(canvas)
+  const candidates = summaryCandidates(canvas)
+  const { cards, comments, questions } = candidates
 
   const generateCount =
     cards.filter((c) => summaryState(c) === 'generate').length +
@@ -147,8 +222,9 @@ export async function reconcileCanvasFile(
     let appliedChangeSet: ChangeSet | null = null
     let discarded = false
     await withCanvasLock(currentCanvasPath, (fresh) => {
-      const validOps = validSummaryOpsForSnapshot(ops, cards, comments, questions, fresh)
-      discarded = validOps.length !== ops.length
+      const validated = validSummaryOpsForSnapshot(ops, candidates, fresh)
+      const { validOps } = validated
+      discarded = validated.retryDiscarded
       if (validOps.length === 0) return null
       const filtered: ChangeSet = { ...cs, ops: validOps }
       const applied = applyChangeSetToSnapshot(fresh, filtered)
