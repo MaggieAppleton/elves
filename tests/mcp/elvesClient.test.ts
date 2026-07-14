@@ -76,6 +76,15 @@ function responseWithHangingBody(status: number): Response {
   return response
 }
 
+type BodyFailure = 'hanging' | 'rejecting'
+
+function responseWithFailedBody(status: number, failure: BodyFailure): Response {
+  if (failure === 'hanging') return responseWithHangingBody(status)
+  const response = json(status, { ignored: true })
+  vi.spyOn(response, 'text').mockRejectedValue(new Error('body read failed'))
+  return response
+}
+
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
@@ -261,6 +270,54 @@ test('a token success with a non-cooperative body times out and retries three ti
   expect(signals.every((signal) => signal.aborted)).toBe(true)
 })
 
+test.each(
+  (['hanging', 'rejecting'] as const).flatMap((failure) =>
+    [404, 418, 507].map((status) => ({ failure, status }))),
+)('token GET $status with a $failure body fails once from the definitive status', async ({
+  failure,
+  status,
+}) => {
+  const signals: AbortSignal[] = []
+  let calls = 0
+  const fetcher: FetchLike = async (_input, init) => {
+    calls += 1
+    signals.push(init?.signal as AbortSignal)
+    return responseWithFailedBody(status, failure)
+  }
+
+  const error = await settleWithin(runWith(fetcher, changeSet(), 5)).then(
+    () => null,
+    (caught: Error) => caught,
+  )
+
+  expect(error).toBeInstanceOf(Error)
+  expect(error?.message).toContain(String(status))
+  expect(error?.message).toMatch(/body.*(?:unavailable|failed|timed out)/)
+  if (status === 404) expect(error?.message).toMatch(/unknown project.*list_projects/)
+  else expect(error?.message).toMatch(/change-set token failed/)
+  expect(calls).toBe(1)
+  expect(signals).toHaveLength(1)
+  expect(signals[0].aborted).toBe(true)
+})
+
+test.each([200, 503])('token GET %i with a rejected body remains safely retryable', async (status) => {
+  let tokenCalls = 0
+  const signals: AbortSignal[] = []
+  const fetcher: FetchLike = async (input, init) => {
+    if (String(input).endsWith('/changeset-token')) {
+      tokenCalls += 1
+      signals.push(init?.signal as AbortSignal)
+      return tokenCalls === 1 ? responseWithFailedBody(status, 'rejecting') : tokenResponse()
+    }
+    return json(200, { ok: true })
+  }
+
+  await runWith(fetcher, changeSet(), 50)
+
+  expect(tokenCalls).toBe(2)
+  expect(signals[0].aborted).toBe(true)
+})
+
 test('an ambiguous POST fetch timeout retries the exact token and body', async () => {
   const postBodies: string[] = []
   const postSignals: AbortSignal[] = []
@@ -299,6 +356,61 @@ test('three non-cooperative POST 5xx bodies time out with one exact request body
   expect(postBodies).toHaveLength(3)
   expect(new Set(postBodies)).toHaveLength(1)
   expect(postSignals.every((signal) => signal.aborted)).toBe(true)
+})
+
+test.each(
+  (['hanging', 'rejecting'] as const).flatMap((failure) =>
+    [400, 404, 409, 507].map((status) => ({ failure, status }))),
+)('POST $status with a $failure body fails once without token refresh', async ({
+  failure,
+  status,
+}) => {
+  let tokenGets = 0
+  const postBodies: string[] = []
+  const postSignals: AbortSignal[] = []
+  const fetcher: FetchLike = async (input, init) => {
+    if (String(input).endsWith('/changeset-token')) {
+      tokenGets += 1
+      return tokenResponse()
+    }
+    postBodies.push(String(init?.body))
+    postSignals.push(init?.signal as AbortSignal)
+    return responseWithFailedBody(status, failure)
+  }
+
+  const error = await settleWithin(runWith(fetcher, changeSet(), 5)).then(
+    () => null,
+    (caught: Error) => caught,
+  )
+
+  expect(error).toBeInstanceOf(Error)
+  expect(error?.message).toContain(String(status))
+  expect(error?.message).toMatch(/body.*(?:unavailable|failed|timed out)/)
+  if (status === 404) expect(error?.message).toMatch(/unknown project.*list_projects/)
+  else expect(error?.message).toMatch(/change-set rejected/)
+  expect(tokenGets).toBe(1)
+  expect(postBodies).toHaveLength(1)
+  expect(JSON.parse(postBodies[0]).changeSet.id).toBe('cs-fixed')
+  expect(postSignals[0].aborted).toBe(true)
+})
+
+test.each([200, 202])('POST %i with a rejected body remains ambiguous and retries exactly', async (status) => {
+  const postBodies: string[] = []
+  const postSignals: AbortSignal[] = []
+  const fetcher: FetchLike = async (input, init) => {
+    if (String(input).endsWith('/changeset-token')) return tokenResponse()
+    postBodies.push(String(init?.body))
+    postSignals.push(init?.signal as AbortSignal)
+    return postBodies.length === 1
+      ? responseWithFailedBody(status, 'rejecting')
+      : json(200, { ok: true })
+  }
+
+  await runWith(fetcher, changeSet(), 50)
+
+  expect(postBodies).toHaveLength(2)
+  expect(postBodies[1]).toBe(postBodies[0])
+  expect(postSignals[0].aborted).toBe(true)
 })
 
 test('successful attempts consume both bodies and clear unrefed timers', async () => {

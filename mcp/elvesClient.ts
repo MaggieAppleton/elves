@@ -157,21 +157,43 @@ export async function postChangeSet(
       && Number.isSafeInteger(candidate.sequence)
       && (candidate.sequence as number) >= 0
   }
+  const errorDetail = (error: unknown): string =>
+    error instanceof Error ? error.message : String(error)
+  class AttemptFailure extends Error {
+    constructor(message: string, readonly response?: Response) {
+      super(message)
+      this.name = 'AttemptFailure'
+    }
+  }
   const fetchAttempt = async (
     url: string,
     init?: RequestInit,
   ): Promise<{ response: Response; body: string }> => {
     const controller = new AbortController()
+    const abort = () => {
+      try { controller.abort() } catch { /* best effort */ }
+    }
+    let receivedResponse: Response | undefined
     const operation = (async () => {
-      const response = await fetchImpl(url, { ...init, signal: controller.signal })
-      const body = await response.text()
-      return { response, body }
+      receivedResponse = await fetchImpl(url, { ...init, signal: controller.signal })
+      try {
+        const body = await receivedResponse.text()
+        return { response: receivedResponse, body }
+      } catch (error) {
+        abort()
+        throw new AttemptFailure(`response body unavailable: ${errorDetail(error)}`, receivedResponse)
+      }
     })()
     let timer: ReturnType<typeof setTimeout> | undefined
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
-        controller.abort()
-        reject(new Error(`attempt timed out after ${attemptTimeoutMs}ms`))
+        abort()
+        reject(new AttemptFailure(
+          receivedResponse
+            ? `response body unavailable: attempt timed out after ${attemptTimeoutMs}ms`
+            : `attempt timed out after ${attemptTimeoutMs}ms`,
+          receivedResponse,
+        ))
       }, attemptTimeoutMs)
       const unref = (timer as { unref?: () => void }).unref
       if (typeof unref === 'function') unref.call(timer)
@@ -194,14 +216,20 @@ export async function postChangeSet(
       return undefined
     }
   }
-  const errorDetail = (error: unknown): string =>
-    error instanceof Error ? error.message : String(error)
+  const attemptErrorDetail = (error: unknown): string =>
+    error instanceof AttemptFailure && error.response
+      ? `${error.response.status} ${error.message}`
+      : errorDetail(error)
   const unknownProjectError = (body: string): Error =>
     new Error(
       `unknown project '${projectId}' — call list_projects to see valid ids${body ? `: ${body}` : ''}`,
     )
-  const isAmbiguousPostStatus = (status: number): boolean =>
+  const isRetryableServerStatus = (status: number): boolean =>
     status >= 500 && status <= 599 && status !== 507
+  const isRetryableTokenBodyFailure = (response: Response): boolean =>
+    response.ok || isRetryableServerStatus(response.status)
+  const isAmbiguousPostBodyFailure = (response: Response): boolean =>
+    response.status === 200 || response.status === 202 || isRetryableServerStatus(response.status)
 
   const acquireToken = async (): Promise<ChangeSetToken> => {
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -212,9 +240,15 @@ export async function postChangeSet(
         res = result.response
         body = result.body
       } catch (error) {
+        if (error instanceof AttemptFailure && error.response &&
+          !isRetryableTokenBodyFailure(error.response)) {
+          const detail = attemptErrorDetail(error)
+          if (error.response.status === 404) throw unknownProjectError(detail)
+          throw new Error(`change-set token failed: ${detail}`)
+        }
         if (attempt === maxAttempts) {
           throw new Error(
-            `change-set token failed after ${maxAttempts} attempts: ${errorDetail(error)}`,
+            `change-set token failed after ${maxAttempts} attempts: ${attemptErrorDetail(error)}`,
           )
         }
         continue
@@ -265,15 +299,21 @@ export async function postChangeSet(
         response = result.response
         body = result.body
       } catch (error) {
+        if (error instanceof AttemptFailure && error.response &&
+          !isAmbiguousPostBodyFailure(error.response)) {
+          const detail = attemptErrorDetail(error)
+          if (error.response.status === 404) throw unknownProjectError(detail)
+          throw new Error(`change-set rejected: ${detail}`)
+        }
         if (attempt === maxAttempts) {
           throw new Error(
-            `change-set post failed after ${maxAttempts} attempts: ${errorDetail(error)}`,
+            `change-set post failed after ${maxAttempts} attempts: ${attemptErrorDetail(error)}`,
           )
         }
         continue
       }
 
-      if (!isAmbiguousPostStatus(response.status)) break
+      if (!isRetryableServerStatus(response.status)) break
       if (attempt === maxAttempts) {
         throw new Error(
           `change-set post failed after ${maxAttempts} attempts: ${response.status} ${body}`.trim(),
