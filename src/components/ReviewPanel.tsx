@@ -100,10 +100,6 @@ export function ReviewPanel({
     }
   }, [open])
 
-  useEffect(() => {
-    if (disabled) setOpen(false)
-  }, [disabled])
-
   const visible = reviews.filter((r) => r.status !== 'dismissed')
   // `failed` stays in the active group (not recentDone) so it's visible with
   // its Retry button until the user dismisses it — it isn't a finished pass.

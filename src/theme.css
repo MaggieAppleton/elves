@@ -430,7 +430,9 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  pointer-events: none;
 }
+.elves-topbar > * { pointer-events: auto; }
 /* Absolutely positioned within the canvas pane (top-center). The pane's
    overflow:hidden clips it, so it never overlaps the draft pane beside it. */
 .elves-toolbar {
