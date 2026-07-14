@@ -1,23 +1,18 @@
 import express, { Request, Response } from 'express'
 import cors from 'cors'
 import {
-  readCanvas, withCanvasLock, clearCanvas, EmptyCanvasOverwriteError, CanvasSnapshot,
+  readCanvas, withCanvasLock, clearCanvas, replaceCanvasWithTombstone,
+  EmptyCanvasOverwriteError, CanvasSnapshot,
 } from './store'
 import {
   isChangeSet,
   ChangeSet,
   changeSetWritesText,
-  referencedCardIds,
-  referencedSectionIds,
-  mergeRepresentativeIds,
-  referencedGroupIds,
 } from '../src/model/changeset'
 import type { PresenceMessage } from '../src/model/presence'
 import {
-  snapshotToCards, snapshotToSections, snapshotToCardMap, snapshotToCardsById, snapshotToDraft,
-  snapshotToGroupIds,
+  snapshotToCardMap, snapshotToCardsById, snapshotToDraft,
 } from './digest'
-import { applyChangeSetToSnapshot } from './applyChangeSet'
 import { enrichSelection, type SelectionStore } from './selection'
 import type { AgentRunner, AgentEvent } from './agentRun'
 import { reconcileCanvasFile, type Summarizer } from './summarize'
@@ -37,13 +32,54 @@ import {
 import { withProjectLock } from './projectLock'
 import { readReviews, createReview, transitionReview, reviewsPathFor, ReviewError } from './reviews'
 import { isPersonalityId, isReviewStatus, PERSONALITY_IDS, type Review } from '../src/model/reviews'
+import {
+  CanvasRevisionExhaustedError,
+  canvasRevision,
+  clearCanvasSnapshot,
+  ensureCanvasMetadata,
+  nextChangeSetToken,
+  pendingChangeSetsForClient,
+  publicCanvasSnapshot,
+  replaceCanvasSnapshot,
+  type ChangeSetToken,
+} from './canvasMetadata'
+import { changeSetDigest, validateChangeSetBounds } from './changeSetIdentity'
+import { admitLegacyChangeSet, admitTokenizedChangeSet } from './changeSetAdmission'
 
 const UNFURL_UA = 'ElvesBot/0.1 (+local-first writing studio; reference unfurl)'
 const FETCH_TIMEOUT_MS = 8000
 const MAX_HTML_BYTES = 2_000_000
 const MAX_IMAGE_BYTES = 5_000_000
+const CANVAS_REVISION_HEADER = 'x-elves-canvas-revision'
 
 type ProjectPaths = { canvasPath: string; assetsDir: string }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function parseCanvasRevisionHeader(value: string | undefined):
+  | { ok: true; revision: number }
+  | { ok: false; code: 'canvas-revision-required' | 'invalid-canvas-revision' } {
+  if (value === undefined) return { ok: false, code: 'canvas-revision-required' }
+  if (!/^(0|[1-9]\d*)$/.test(value)) return { ok: false, code: 'invalid-canvas-revision' }
+  const revision = Number(value)
+  return Number.isSafeInteger(revision)
+    ? { ok: true, revision }
+    : { ok: false, code: 'invalid-canvas-revision' }
+}
+
+function parseChangeSetToken(value: unknown): ChangeSetToken | null {
+  if (!isRecord(value) || typeof value.epoch !== 'string' || value.epoch.length === 0 ||
+    !Number.isSafeInteger(value.sequence) || (value.sequence as number) < 0) return null
+  return { epoch: value.epoch, sequence: value.sequence as number }
+}
+
+class CanvasRevisionConflictError extends Error {
+  constructor(readonly revision: number) {
+    super('canvas revision conflict')
+  }
+}
 
 class BodyTooLargeError extends Error {
   constructor(limit: number) {
@@ -314,6 +350,16 @@ export function createServer(
     })
   }
 
+  async function ensureStoredCanvasMetadata(path: string): Promise<CanvasSnapshot> {
+    let snapshot: CanvasSnapshot | undefined
+    await withCanvasLock(path, (current) => {
+      const ensured = ensureCanvasMetadata(current)
+      snapshot = ensured.snapshot
+      return ensured.created ? ensured.snapshot : null
+    })
+    return snapshot!
+  }
+
   // --- Project management ---------------------------------------------------
 
   app.get(
@@ -362,31 +408,81 @@ export function createServer(
   app.get(
     '/projects/:id/canvas',
     wrap(async (req, res) => {
+      if (req.query.protocol === '2') {
+        const canvas = await withProjectMutation(req.params.id, res, async (paths) =>
+          ensureStoredCanvasMetadata(paths.canvasPath))
+        if (canvas === null) return
+        res.json({
+          snapshot: publicCanvasSnapshot(canvas),
+          revision: canvasRevision(canvas),
+          pendingChangeSets: pendingChangeSetsForClient(canvas),
+          nextChangeSetToken: nextChangeSetToken(canvas),
+        })
+        return
+      }
       const paths = await requireProject(req.params.id, res)
       if (!paths) return
-      res.json(await readCanvas(paths.canvasPath))
+      res.json(publicCanvasSnapshot(await readCanvas(paths.canvasPath)))
+    }),
+  )
+
+  app.get(
+    '/projects/:id/changeset-token',
+    wrap(async (req, res) => {
+      const canvas = await withProjectMutation(req.params.id, res, async (paths) =>
+        ensureStoredCanvasMetadata(paths.canvasPath))
+      if (canvas === null) return
+      res.json({ revision: canvasRevision(canvas), token: nextChangeSetToken(canvas) })
     }),
   )
 
   app.post(
     '/projects/:id/canvas',
     wrap(async (req, res) => {
+      const preflight = await requireProject(req.params.id, res)
+      if (!preflight) return
+      const body = req.body
+      if (!isRecord(body)) {
+        res.status(400).json({ error: 'canvas must be a JSON object' })
+        return
+      }
+      const versioned = req.query.protocol === '2'
+      const parsedRevision = versioned
+        ? parseCanvasRevisionHeader(req.get(CANVAS_REVISION_HEADER))
+        : null
+      if (parsedRevision && !parsedRevision.ok) {
+        res.status(400).json({
+          code: parsedRevision.code,
+          error: parsedRevision.code === 'canvas-revision-required'
+            ? 'canvas revision header required'
+            : 'invalid canvas revision',
+        })
+        return
+      }
+      let observedRevision = 0
+      let savedRevision: number | null = null
       try {
         const saved = await withProjectMutation(
           req.params.id,
           res,
           async (paths) => {
-            const body = req.body
-            if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-              return false
-            }
-            await withCanvasLock(paths.canvasPath, () => body as CanvasSnapshot)
+            await withCanvasLock(paths.canvasPath, (current) => {
+              observedRevision = canvasRevision(current)
+              if (parsedRevision?.ok && parsedRevision.revision !== observedRevision) return null
+              const next = replaceCanvasSnapshot(current, body)
+              savedRevision = canvasRevision(next)
+              return next
+            })
             return true
           },
         )
         if (saved === null) return
-        if (!saved) {
-          res.status(400).json({ error: 'canvas must be a JSON object' })
+        if (parsedRevision?.ok && savedRevision === null) {
+          res.status(409).json({
+            code: 'canvas-revision-conflict',
+            error: 'canvas revision conflict',
+            revision: observedRevision,
+          })
           return
         }
       } catch (err) {
@@ -396,11 +492,19 @@ export function createServer(
           res.status(409).json({ error: 'refusing to blank a non-empty canvas; use DELETE to clear' })
           return
         }
+        if (err instanceof CanvasRevisionExhaustedError) {
+          res.status(507).json({
+            code: 'canvas-revision-exhausted',
+            error: err.message,
+            revision: observedRevision,
+          })
+          return
+        }
         throw err
       }
       // A canvas save is where user text edits land — reconcile summaries after.
       scheduleSummaries(req.params.id)
-      res.json({ ok: true })
+      res.json(versioned ? { ok: true, revision: savedRevision } : { ok: true })
     }),
   )
 
@@ -409,6 +513,52 @@ export function createServer(
   app.delete(
     '/projects/:id/canvas',
     wrap(async (req, res) => {
+      if (req.query.protocol === '2') {
+        const preflight = await requireProject(req.params.id, res)
+        if (!preflight) return
+        const parsed = parseCanvasRevisionHeader(req.get(CANVAS_REVISION_HEADER))
+        if (!parsed.ok) {
+          res.status(400).json({
+            code: parsed.code,
+            error: parsed.code === 'canvas-revision-required'
+              ? 'canvas revision header required'
+              : 'invalid canvas revision',
+          })
+          return
+        }
+        let observedRevision = 0
+        try {
+          const cleared = await withProjectMutation(req.params.id, res, async (paths) =>
+            replaceCanvasWithTombstone(paths.canvasPath, (current) => {
+              observedRevision = canvasRevision(current)
+              if (parsed.revision !== observedRevision) {
+                throw new CanvasRevisionConflictError(observedRevision)
+              }
+              return clearCanvasSnapshot(current)
+            }))
+          if (cleared === null) return
+          res.json({ ok: true, revision: canvasRevision(cleared) })
+        } catch (error) {
+          if (error instanceof CanvasRevisionConflictError) {
+            res.status(409).json({
+              code: 'canvas-revision-conflict',
+              error: error.message,
+              revision: error.revision,
+            })
+            return
+          }
+          if (error instanceof CanvasRevisionExhaustedError) {
+            res.status(507).json({
+              code: 'canvas-revision-exhausted',
+              error: error.message,
+              revision: observedRevision,
+            })
+            return
+          }
+          throw error
+        }
+        return
+      }
       const cleared = await withProjectMutation(req.params.id, res, async (paths) => {
         await clearCanvas(paths.canvasPath)
         return true
@@ -605,90 +755,144 @@ export function createServer(
   app.post(
     '/projects/:id/changeset',
     wrap(async (req, res) => {
-      // Validate and apply inside the SAME per-path lock as the read, so every
-      // cross-check runs against the exact snapshot that gets written — a
-      // whole-snapshot save (or another change-set) landing between the read
-      // and the write can no longer invalidate a check or get silently
-      // clobbered by this write (the lost-update race, #27). The 409 responses
-      // are raised outside the lock via flags set inside it, so the lock holds
-      // only the read/validate/apply, never the HTTP response.
-      const mutation = await withProjectMutation(req.params.id, res, async (paths) => {
-        if (!isChangeSet(req.body)) return { kind: 'invalid' as const }
-        if (changeSetWritesText(req.body)) return { kind: 'writes-text' as const }
-        const changeSet = req.body
-        let missing: string[] = []
-        let invalidMergeReps: string[] = []
-        let noCanvas = false
-        const applied = await withCanvasLock(
-          paths.canvasPath,
-          (canvas) => {
-            // Cross-check: every referenced existing card/section/group must
-            // live in THIS project, so a mistargeted operation fails loudly
-            // instead of silently landing nowhere.
-            const cards = snapshotToCards(canvas)
-            const cardIds = new Set(cards.map((c) => c.id))
-            const sectionIds = new Set(snapshotToSections(canvas).map((s) => s.id))
-            const groupIds = new Set(snapshotToGroupIds(canvas))
-            missing = [
-              ...referencedCardIds(changeSet).filter((cardId) => !cardIds.has(cardId)),
-              ...referencedSectionIds(changeSet).filter((sectionId) => !sectionIds.has(sectionId)),
-              ...referencedGroupIds(changeSet).filter((groupId) => !groupIds.has(groupId)),
-            ]
-            if (missing.length) return null
-            // merge_notes is "note cards only" — reject outright if the
-            // representative (the card the others merge under and that stays
-            // visible) is not itself a note, rather than silently letting a
-            // prose/figure/reference card become the visible head of a cluster.
-            const noteCardIds = new Set(cards.filter((c) => c.kind === 'note').map((c) => c.id))
-            invalidMergeReps = mergeRepresentativeIds(changeSet).filter((id) => !noteCardIds.has(id))
-            if (invalidMergeReps.length) return null
-            // Apply and persist here, on the server, rather than relying on some
-            // connected browser tab to have this project open and save it back —
-            // that dependency meant a change-set could report success while never
-            // landing on disk. A brand-new project with no canvas yet has no
-            // tldraw schema to write into, so nothing is persisted here.
-            const next = applyChangeSetToSnapshot(canvas, changeSet)
-            if (!next) {
-              noCanvas = true
-              return null
-            }
-            return next
-          },
-        )
-        return { kind: 'applied' as const, changeSet, missing, invalidMergeReps, noCanvas, applied }
-      })
-      if (mutation === null) return
-      if (mutation.kind === 'invalid') {
-        res.status(400).json({ error: 'invalid change-set' })
-        return
-      }
-      if (mutation.kind === 'writes-text') {
-        res.status(403).json({ error: 'change-set may not write card text' })
-        return
-      }
-      if (mutation.missing.length) {
-        res.status(409).json({ error: 'card not in project', missing: mutation.missing })
-        return
-      }
-      if (mutation.invalidMergeReps.length) {
-        res.status(409).json({
-          error: 'merge_notes representative must be a note card',
-          invalidMergeReps: mutation.invalidMergeReps,
+      // Preserve legacy unknown-project precedence while keeping all structural,
+      // semantic-bound, and digest work outside both mutation locks.
+      const preflight = await requireProject(req.params.id, res)
+      if (!preflight) return
+      const versioned = req.query.protocol === '2'
+      const token = versioned ? parseChangeSetToken(req.body?.token) : null
+      if (versioned && !token) {
+        res.status(400).json({
+          code: 'invalid-changeset-token',
+          error: 'invalid change-set token',
         })
         return
       }
-      if (mutation.noCanvas || !mutation.applied) {
+      const candidate = versioned ? req.body?.changeSet : req.body
+      if (!isChangeSet(candidate)) {
+        res.status(400).json({ code: 'invalid-change-set', error: 'invalid change-set' })
+        return
+      }
+      if (changeSetWritesText(candidate)) {
+        res.status(403).json({ error: 'change-set may not write card text' })
+        return
+      }
+      const bounds = validateChangeSetBounds(candidate)
+      if (!bounds.ok) {
+        res.status(413).json({ code: bounds.code, error: 'change-set exceeds semantic limits' })
+        return
+      }
+      const changeSet = candidate
+      const digest = changeSetDigest(changeSet)
+
+      let decision: ReturnType<typeof admitTokenizedChangeSet> | ReturnType<typeof admitLegacyChangeSet>
+        | undefined
+      let observedRevision = 0
+      const mutation = await withProjectMutation(req.params.id, res, async (paths) => {
+        await withCanvasLock(paths.canvasPath, (canvas) => {
+          observedRevision = canvasRevision(canvas)
+          decision = versioned
+            ? admitTokenizedChangeSet(canvas, token!, changeSet, digest)
+            : admitLegacyChangeSet(canvas, changeSet, digest)
+          return decision.kind === 'applied' || decision.kind === 'queued'
+            ? decision.snapshot
+            : null
+        })
+        return true
+      })
+      if (mutation === null || !decision) return
+
+      if (versioned) {
+        const result = decision as ReturnType<typeof admitTokenizedChangeSet>
+        const state = { revision: result.revision, nextChangeSetToken: result.nextToken }
+        if (result.kind === 'applied') {
+          onChangeSet?.(req.params.id, changeSet)
+          scheduleSummaries(req.params.id)
+          res.json({ ok: true, ...state })
+          return
+        }
+        if (result.kind === 'queued') {
+          res.status(202).json({ ok: true, pending: true, ...state })
+          return
+        }
+        if (result.kind === 'duplicate') {
+          res.json({
+            ok: true,
+            duplicate: true,
+            ...(result.payloadUnverified ? { payloadUnverified: true } : {}),
+            ...state,
+          })
+          return
+        }
+        if (result.kind === 'conflict') {
+          res.status(409).json({ code: result.code, error: result.code, ...state })
+          return
+        }
+        if (result.kind === 'exhausted') {
+          res.status(507).json({ code: result.code, error: result.code, ...state })
+          return
+        }
+        if (result.kind === 'invalid-target') {
+          res.status(409).json({
+            code: 'invalid-target',
+            error: result.invalidMergeReps.length
+              ? 'merge_notes representative must be a note card'
+              : 'target not in project',
+            missing: result.missing,
+            invalidMergeReps: result.invalidMergeReps,
+            ...state,
+          })
+          return
+        }
+        const unavailable = result as Extract<typeof result, { kind: 'unavailable' }>
+        res.status(unavailable.code === 'no-document' ? 409 : 507).json({
+          code: unavailable.code,
+          error: unavailable.code,
+          ...state,
+        })
+        return
+      }
+
+      const result = decision as ReturnType<typeof admitLegacyChangeSet>
+      if (result.kind === 'duplicate') {
+        res.json({ ok: true, duplicate: true })
+        return
+      }
+      if (result.kind === 'conflict') {
+        res.status(409).json({ code: result.code, error: 'change-set id reused with another payload' })
+        return
+      }
+      if (result.kind === 'invalid-target') {
+        if (result.invalidMergeReps.length) {
+          res.status(409).json({
+            error: 'merge_notes representative must be a note card',
+            invalidMergeReps: result.invalidMergeReps,
+          })
+        } else {
+          res.status(409).json({ error: 'card not in project', missing: result.missing })
+        }
+        return
+      }
+      if (result.kind === 'exhausted') {
+        res.status(507).json({
+          code: result.code,
+          error: 'canvas revision exhausted',
+          revision: observedRevision,
+        })
+        return
+      }
+      if (result.kind === 'unapplied') {
         // Still broadcast, so a browser tab that happens to have the project
         // open can self-heal via the live connection — but don't claim
         // success or schedule summaries for something that never landed.
-        onChangeSet?.(req.params.id, mutation.changeSet)
+        onChangeSet?.(req.params.id, changeSet)
         res.status(409).json({
           error: 'project has no canvas yet — open it once in the app to initialize the canvas',
           applied: false,
         })
         return
       }
-      onChangeSet?.(req.params.id, mutation.changeSet)
+      onChangeSet?.(req.params.id, changeSet)
       // A new note card (e.g. a long transcribed note) may need summarizing;
       // set_summary change-sets themselves settle to a no-op on the next pass.
       scheduleSummaries(req.params.id)
