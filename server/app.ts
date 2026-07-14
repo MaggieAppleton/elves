@@ -804,13 +804,16 @@ export function createServer(
       let observedRevision = 0
       const mutation = await withProjectMutation(req.params.id, res, async (paths) => {
         await withCanvasLock(paths.canvasPath, (canvas) => {
-          observedRevision = canvasRevision(canvas)
+          const base = versioned
+            ? ensureCanvasMetadata(canvas)
+            : { snapshot: canvas, created: false }
+          observedRevision = canvasRevision(base.snapshot)
           decision = versioned
-            ? admitTokenizedChangeSet(canvas, token!, changeSet, digest)
-            : admitLegacyChangeSet(canvas, changeSet, digest)
+            ? admitTokenizedChangeSet(base.snapshot, token!, changeSet, digest)
+            : admitLegacyChangeSet(base.snapshot, changeSet, digest)
           return decision.kind === 'applied' || decision.kind === 'queued'
             ? decision.snapshot
-            : null
+            : base.created ? base.snapshot : null
         })
         return true
       })

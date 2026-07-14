@@ -106,6 +106,66 @@ test('lightweight token read lazily persists one stable token without reserving 
   })
 })
 
+test('direct tokenized POST initializes one durable epoch and retry uses that exact token', async () => {
+  const { root, app } = await setup()
+  const path = await seed(root)
+  const changeSet = move('direct-init', 25)
+  const initialized = await tokenPost(app, { epoch: 'wrong', sequence: 0 }, changeSet)
+  expect(initialized.status).toBe(409)
+  expect(initialized.body).toMatchObject({
+    code: 'epoch-mismatch',
+    revision: 0,
+    nextChangeSetToken: { epoch: expect.stringMatching(/^[0-9a-f-]{36}$/), sequence: 0 },
+  })
+  const advertised = initialized.body.nextChangeSetToken
+  const stored = await readCanvas(path) as any
+  expect(stored[SERVER_CANVAS_METADATA_KEY]).toMatchObject({
+    revision: 0,
+    epoch: advertised.epoch,
+    nextSequence: 0,
+  })
+  expect(await bytes(`${path}.bak`)).not.toBeNull()
+
+  const initializedCanvas = await bytes(path)
+  const initializedBackup = await bytes(`${path}.bak`)
+  const repeatedConflict = await tokenPost(app, { epoch: 'still-wrong', sequence: 0 }, changeSet)
+  expect(repeatedConflict.body.nextChangeSetToken).toEqual(advertised)
+  expect(await bytes(path)).toEqual(initializedCanvas)
+  expect(await bytes(`${path}.bak`)).toEqual(initializedBackup)
+
+  const retried = await tokenPost(app, advertised, changeSet)
+  expect(retried.status).toBe(200)
+  expect(retried.body).toMatchObject({
+    revision: 1,
+    nextChangeSetToken: { epoch: advertised.epoch, sequence: 1 },
+  })
+  expect((await readCanvas(path) as any).document.store['shape:a'].x).toBe(25)
+  expect((await token(createServer(root))).body).toEqual({
+    revision: 1,
+    token: { epoch: advertised.epoch, sequence: 1 },
+  })
+})
+
+test('direct tokenized POST can retry the initialized token into a durable queue', async () => {
+  const { root, app } = await setup()
+  const path = await seed(root, { document: null, session: null })
+  const changeSet = create('direct-queue')
+  const initialized = await tokenPost(app, { epoch: 'wrong', sequence: 0 }, changeSet)
+  expect(initialized.status).toBe(409)
+  const advertised = initialized.body.nextChangeSetToken
+
+  const queued = await tokenPost(app, advertised, changeSet)
+  expect(queued.status).toBe(202)
+  expect(queued.body).toMatchObject({
+    pending: true,
+    revision: 1,
+    nextChangeSetToken: { epoch: advertised.epoch, sequence: 1 },
+  })
+  const restarted = await request(createServer(root)).get('/projects/essay/canvas?protocol=2')
+  expect(restarted.body.pendingChangeSets).toEqual([{ token: advertised, changeSet }])
+  expect((await readCanvas(path) as any)[SERVER_CANVAS_METADATA_KEY].epoch).toBe(advertised.epoch)
+})
+
 test('tokenized route strictly rejects malformed token bodies without mutation', async () => {
   const { root, app } = await setup()
   const path = await seed(root)
@@ -237,6 +297,7 @@ test('wrong epoch and future sequence return current state without side effects'
   const broadcast = vi.fn()
   const app = createServer(root, broadcast)
   const before = await bytes(path)
+  const beforeBackup = await bytes(`${path}.bak`)
   const cases = [
     [{ epoch: 'wrong', sequence: 0 }, 'epoch-mismatch'],
     [{ epoch: issued.epoch, sequence: 1 }, 'sequence-ahead'],
@@ -250,6 +311,7 @@ test('wrong epoch and future sequence return current state without side effects'
       nextChangeSetToken: issued,
     })
     expect(await bytes(path)).toEqual(before)
+    expect(await bytes(`${path}.bak`)).toEqual(beforeBackup)
   }
   expect(broadcast).not.toHaveBeenCalled()
 })
