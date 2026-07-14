@@ -133,6 +133,7 @@ export async function postChangeSet(
   projectId: string,
   cs: ChangeSet,
   fetchImpl: typeof fetch = globalThis.fetch,
+  attemptTimeoutMs = 8_000,
 ): Promise<void> {
   const capturedChangeSetJson = JSON.stringify(cs)
   const projectUrl = `${baseUrl}/projects/${encodeURIComponent(projectId)}`
@@ -156,8 +157,31 @@ export async function postChangeSet(
       && Number.isSafeInteger(candidate.sequence)
       && (candidate.sequence as number) >= 0
   }
-  const responseBody = async (res: Response): Promise<string> =>
-    res.text().catch(() => '')
+  const fetchAttempt = async (
+    url: string,
+    init?: RequestInit,
+  ): Promise<{ response: Response; body: string }> => {
+    const controller = new AbortController()
+    const operation = (async () => {
+      const response = await fetchImpl(url, { ...init, signal: controller.signal })
+      const body = await response.text()
+      return { response, body }
+    })()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort()
+        reject(new Error(`attempt timed out after ${attemptTimeoutMs}ms`))
+      }, attemptTimeoutMs)
+      const unref = (timer as { unref?: () => void }).unref
+      if (typeof unref === 'function') unref.call(timer)
+    })
+    try {
+      return await Promise.race([operation, timeout])
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }
   const responseCode = (body: string): string | undefined => {
     try {
       const parsed = JSON.parse(body) as unknown
@@ -182,8 +206,11 @@ export async function postChangeSet(
   const acquireToken = async (): Promise<ChangeSetToken> => {
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       let res: Response
+      let body: string
       try {
-        res = await fetchImpl(tokenUrl)
+        const result = await fetchAttempt(tokenUrl)
+        res = result.response
+        body = result.body
       } catch (error) {
         if (attempt === maxAttempts) {
           throw new Error(
@@ -193,7 +220,6 @@ export async function postChangeSet(
         continue
       }
 
-      const body = await responseBody(res)
       if (res.ok) {
         let parsed: unknown
         try {
@@ -227,14 +253,17 @@ export async function postChangeSet(
   while (true) {
     const requestBody = `{"token":${JSON.stringify(token)},"changeSet":${capturedChangeSetJson}}`
     let response: Response | undefined
+    let body = ''
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
-        response = await fetchImpl(changeSetUrl, {
+        const result = await fetchAttempt(changeSetUrl, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: requestBody,
         })
+        response = result.response
+        body = result.body
       } catch (error) {
         if (attempt === maxAttempts) {
           throw new Error(
@@ -245,7 +274,6 @@ export async function postChangeSet(
       }
 
       if (!isAmbiguousPostStatus(response.status)) break
-      const body = await responseBody(response)
       if (attempt === maxAttempts) {
         throw new Error(
           `change-set post failed after ${maxAttempts} attempts: ${response.status} ${body}`.trim(),
@@ -256,7 +284,6 @@ export async function postChangeSet(
     if (!response) throw new Error('change-set post failed')
     if (response.status === 200 || response.status === 202) return
 
-    const body = await responseBody(response)
     if (response.status === 404) throw unknownProjectError(body)
     const code = responseCode(body)
     if (response.status === 409 && code && refreshableCodes.has(code)) {

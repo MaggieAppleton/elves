@@ -53,12 +53,31 @@ function tokenResponse(token = TOKEN_A): Response {
   return json(200, { revision: 3, token })
 }
 
-function runWith(fetcher: FetchLike, cs = changeSet()): Promise<void> {
+function runWith(fetcher: FetchLike, cs = changeSet(), timeoutMs?: number): Promise<void> {
   vi.stubGlobal('fetch', fetcher)
-  return postChangeSet('http://elves.test', 'essay', cs, fetcher as typeof fetch)
+  return postChangeSet('http://elves.test', 'essay', cs, fetcher as typeof fetch, timeoutMs)
+}
+
+async function settleWithin<T>(promise: Promise<T>, guardMs = 250): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const guard = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`test guard exceeded ${guardMs}ms`)), guardMs)
+  })
+  try {
+    return await Promise.race([promise, guard])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+function responseWithHangingBody(status: number): Response {
+  const response = json(status, { ignored: true })
+  vi.spyOn(response, 'text').mockImplementation(() => new Promise<string>(() => {}))
+  return response
 }
 
 afterEach(() => {
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
@@ -69,7 +88,6 @@ test('gets a token and posts the captured change-set through protocol 2', async 
     (call) => {
       cs.id = 'mutated-after-capture'
       cs.ops = []
-      expect(call.init).toBeUndefined()
       return tokenResponse()
     },
     json(200, { ok: true, revision: 4, nextChangeSetToken: { ...TOKEN_A, sequence: 8 } }),
@@ -210,6 +228,101 @@ test.each([500, 502, 503])('token GET %i remains retryable and bounded', async (
   expect(scripted.calls.filter((call) => call.url.endsWith('/changeset-token'))).toHaveLength(3)
 })
 
+test('a non-cooperative token fetch times out, aborts, and terminates after three attempts', async () => {
+  const signals: AbortSignal[] = []
+  let calls = 0
+  const fetcher: FetchLike = async (_input, init) => {
+    calls += 1
+    signals.push(init?.signal as AbortSignal)
+    return new Promise<Response>(() => {})
+  }
+
+  await expect(settleWithin(runWith(fetcher, changeSet(), 5))).rejects.toThrow(
+    /change-set token failed after 3 attempts:.*timed out/,
+  )
+  expect(calls).toBe(3)
+  expect(signals).toHaveLength(3)
+  expect(signals.every((signal) => signal.aborted)).toBe(true)
+})
+
+test('a token success with a non-cooperative body times out and retries three times', async () => {
+  const signals: AbortSignal[] = []
+  let calls = 0
+  const fetcher: FetchLike = async (_input, init) => {
+    calls += 1
+    signals.push(init?.signal as AbortSignal)
+    return responseWithHangingBody(200)
+  }
+
+  await expect(settleWithin(runWith(fetcher, changeSet(), 5))).rejects.toThrow(
+    /change-set token failed after 3 attempts:.*timed out/,
+  )
+  expect(calls).toBe(3)
+  expect(signals.every((signal) => signal.aborted)).toBe(true)
+})
+
+test('an ambiguous POST fetch timeout retries the exact token and body', async () => {
+  const postBodies: string[] = []
+  const postSignals: AbortSignal[] = []
+  const success = json(200, { ok: true })
+  const successText = vi.spyOn(success, 'text')
+  const fetcher: FetchLike = async (input, init) => {
+    if (String(input).endsWith('/changeset-token')) return tokenResponse()
+    postBodies.push(String(init?.body))
+    postSignals.push(init?.signal as AbortSignal)
+    if (postBodies.length === 1) return new Promise<Response>(() => {})
+    return success
+  }
+
+  await settleWithin(runWith(fetcher, changeSet(), 5))
+
+  expect(postBodies).toHaveLength(2)
+  expect(postBodies[1]).toBe(postBodies[0])
+  expect(postBodies.map((body) => JSON.parse(body).changeSet.id)).toEqual(['cs-fixed', 'cs-fixed'])
+  expect(postSignals[0].aborted).toBe(true)
+  expect(successText).toHaveBeenCalledOnce()
+})
+
+test('three non-cooperative POST 5xx bodies time out with one exact request body', async () => {
+  const postBodies: string[] = []
+  const postSignals: AbortSignal[] = []
+  const fetcher: FetchLike = async (input, init) => {
+    if (String(input).endsWith('/changeset-token')) return tokenResponse()
+    postBodies.push(String(init?.body))
+    postSignals.push(init?.signal as AbortSignal)
+    return responseWithHangingBody(503)
+  }
+
+  await expect(settleWithin(runWith(fetcher, changeSet(), 5))).rejects.toThrow(
+    /change-set post failed after 3 attempts:.*timed out/,
+  )
+  expect(postBodies).toHaveLength(3)
+  expect(new Set(postBodies)).toHaveLength(1)
+  expect(postSignals.every((signal) => signal.aborted)).toBe(true)
+})
+
+test('successful attempts consume both bodies and clear unrefed timers', async () => {
+  const probe = setTimeout(() => {}, 1_000)
+  const timerPrototype = Object.getPrototypeOf(probe)
+  clearTimeout(probe)
+  const unrefSpy = vi.spyOn(timerPrototype, 'unref')
+  const setSpy = vi.spyOn(globalThis, 'setTimeout')
+  const clearSpy = vi.spyOn(globalThis, 'clearTimeout')
+  const token = tokenResponse()
+  const success = json(202, { ok: true, pending: true })
+  const tokenText = vi.spyOn(token, 'text')
+  const successText = vi.spyOn(success, 'text')
+  const scripted = scriptedFetch([token, success])
+
+  await runWith(scripted.fetch, changeSet(), 1_000)
+
+  expect(tokenText).toHaveBeenCalledOnce()
+  expect(successText).toHaveBeenCalledOnce()
+  expect(setSpy).toHaveBeenCalledTimes(2)
+  expect(unrefSpy.mock.calls.length).toBeGreaterThanOrEqual(2)
+  expect(clearSpy).toHaveBeenCalledTimes(2)
+})
+
 test('persistent ambiguous POST failure reuses one body and stops after three attempts', async () => {
   const scripted = scriptedFetch([
     tokenResponse(),
@@ -231,7 +344,7 @@ test('POST ambiguity and token refresh limits are independent and bounded', asyn
   const fetcher: FetchLike = async (input, init) => {
     const call = { url: String(input), init }
     calls.push(call)
-    if (!init) {
+    if (call.url.endsWith('/changeset-token')) {
       attemptForToken = 0
       return tokenResponse({ epoch: 'epoch', sequence: tokenNumber++ })
     }
@@ -241,7 +354,7 @@ test('POST ambiguity and token refresh limits are independent and bounded', asyn
   }
 
   await expect(runWith(fetcher)).rejects.toThrow(/token refresh.*3/)
-  expect(calls.filter((call) => !call.init)).toHaveLength(4)
+  expect(calls.filter((call) => call.url.endsWith('/changeset-token'))).toHaveLength(4)
   expect(calls.filter((call) => call.init?.method === 'POST')).toHaveLength(12)
   const ids = calls
     .filter((call) => call.init?.method === 'POST')
@@ -298,6 +411,57 @@ afterEach(async () => {
   servers = []
   await Promise.all(dirs.map((dir) => fs.rm(dir, { recursive: true, force: true })))
   dirs = []
+})
+
+test('a live applied success with an unreadable body times out and retries as a duplicate', async () => {
+  const { baseUrl, realFetch, canvasPath, initialState } = await startLiveProject()
+  const original = changeSet()
+  const capturedJson = JSON.stringify(original)
+  const postBodies: string[] = []
+  const postSignals: AbortSignal[] = []
+  const postResponses: any[] = []
+  let duplicateText: ReturnType<typeof vi.spyOn> | undefined
+  const unreadableFetch: FetchLike = async (input, init) => {
+    const url = String(input)
+    if (init?.method !== 'POST' || !url.endsWith('/changeset?protocol=2')) {
+      return realFetch(input, init)
+    }
+    postBodies.push(String(init.body))
+    postSignals.push(init.signal as AbortSignal)
+    const response = await realFetch(input, init)
+    if (postBodies.length === 1) {
+      postResponses.push(JSON.parse(await response.text()))
+      return responseWithHangingBody(response.status)
+    }
+    postResponses.push(await response.clone().json())
+    duplicateText = vi.spyOn(response, 'text')
+    return response
+  }
+
+  await settleWithin(
+    postChangeSet(baseUrl, 'essay', original, unreadableFetch as typeof fetch, 10),
+    500,
+  )
+
+  expect(postBodies).toEqual([
+    `{"token":${JSON.stringify(initialState.token)},"changeSet":${capturedJson}}`,
+    `{"token":${JSON.stringify(initialState.token)},"changeSet":${capturedJson}}`,
+  ])
+  expect(postBodies.map((body) => JSON.parse(body).changeSet.id)).toEqual(['cs-fixed', 'cs-fixed'])
+  expect(postSignals[0].aborted).toBe(true)
+  expect(duplicateText).toHaveBeenCalledOnce()
+  expect(postResponses).toEqual([
+    expect.objectContaining({ ok: true }),
+    expect.objectContaining({ ok: true, duplicate: true }),
+  ])
+  const finalState = await (await realFetch(`${baseUrl}/projects/essay/changeset-token`)).json() as any
+  expect(finalState).toEqual({
+    revision: initialState.revision + 1,
+    token: { epoch: initialState.token.epoch, sequence: initialState.token.sequence + 1 },
+  })
+  const stored = await readCanvas(canvasPath)
+  expect(cards(stored)).toHaveLength(1)
+  expect(cardsWithText(stored, 'Once')).toHaveLength(1)
 })
 
 test('a live failure before delivery retries the exact body and applies once', async () => {
