@@ -78,11 +78,15 @@ export function AgentBox({
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
+  // The run outlives a hidden box, but not the component itself. Detach first
+  // so late stream settlement cannot update an unmounted component, then stop
+  // callbacks and ask the server to terminate the child process.
   useEffect(() => () => {
     const handle = handleRef.current
     handleRef.current = null
-    handle?.dispose()
-    void handle?.requestCancel().catch(() => {})
+    if (!handle) return
+    handle.dispose()
+    void handle.requestCancel().catch(() => {})
   }, [])
 
   // A fresh open expands to the full box and focuses the field (after paint, so

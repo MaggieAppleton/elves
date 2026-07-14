@@ -52,6 +52,7 @@ import {
   requestOwnedRemoteSync,
   type AppCanvasMount,
 } from './client/appCanvasMount'
+import { createPointerDragManager, type PointerDragManager } from './client/dividerDrag'
 
 const shapeUtils = [CardShapeUtil, SectionShapeUtil, QuestionShapeUtil]
 const components = { SelectionForeground: CardSelectionForeground }
@@ -168,6 +169,7 @@ export default function App() {
   const [dragging, setDragging] = useState(false)
   const stageRef = useRef<HTMLDivElement>(null)
   const canvasPaneRef = useRef<HTMLDivElement>(null)
+  const dividerDragRef = useRef<PointerDragManager | null>(null)
 
   // Asset binding is intentionally left for the separate #137 cutover.
   setAssetProject(currentProjectId)
@@ -400,6 +402,10 @@ export default function App() {
     if (currentProjectId) localStorage.setItem(splitKey(currentProjectId), String(split))
   }, [split, currentProjectId])
 
+  // A drag belongs to the current view lifetime. Ending it on a view change or
+  // final unmount removes every window listener and restores pane transitions.
+  useEffect(() => () => dividerDragRef.current?.end(), [view])
+
   // Keyboard: ⌘/Ctrl + \ widens the drawer (more draft); add Shift to narrow it
   // (less draft). A modifier is required so it never fights typing in a card.
   useEffect(() => {
@@ -451,20 +457,13 @@ export default function App() {
     e.preventDefault()
     const stage = stageRef.current
     if (!stage) return
-    setDragging(true)
-    const onMove = (ev: PointerEvent) => {
+    const drag = dividerDragRef.current ??= createPointerDragManager(window, setDragging)
+    drag.start(e.pointerId, (ev) => {
       const rect = stage.getBoundingClientRect()
       if (rect.width === 0) return
       const r = (ev.clientX - rect.left) / rect.width
       setSplit(Math.min(MAX_SPLIT, Math.max(MIN_SPLIT, r)))
-    }
-    const onUp = () => {
-      setDragging(false)
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
+    })
   }
 
   // Split view: pan (keeping zoom) to a clicked paragraph's card and select it.
@@ -954,11 +953,17 @@ export default function App() {
             getShapeVisibility={getShapeVisibility}
             onMount={handleMount}
           />
-          {/* Creation toolbar lives inside the canvas pane so the draft pane
-              (a sibling) paints over it and the pane's overflow clips it — it
-              can never spill in front of the prose. */}
+          {/* Creation toolbar lives inside the canvas pane and scrolls internally
+              when that pane is narrow, so it never spills in front of the prose. */}
           {view !== 'draft' && (
-            <div className="elves-toolbar">
+            <div
+              className="elves-toolbar"
+              onFocus={(event) => {
+                if (event.target instanceof HTMLButtonElement) {
+                  event.target.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'nearest' })
+                }
+              }}
+            >
               <button disabled={canvasMutationsLocked} aria-label="New prose card" data-testid="new-prose" onClick={() => addCard('prose')}>
                 <TextAUnderline className="elves-btn-icon" aria-hidden="true" />
                 <span className="elves-toolbar__label">Prose</span>

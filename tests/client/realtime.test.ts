@@ -31,11 +31,21 @@ function createSocket(url: string) {
   return s as unknown as WebSocket
 }
 
+function retainHandlers(socket: FakeSocket) {
+  return {
+    open: socket.onopen!,
+    message: socket.onmessage!,
+    error: socket.onerror!,
+    close: socket.onclose!,
+  }
+}
+
 beforeEach(() => {
   vi.useFakeTimers()
   sockets = []
 })
 afterEach(() => {
+  vi.restoreAllMocks()
   vi.useRealTimers()
 })
 
@@ -128,6 +138,94 @@ describe('connectRealtime reconnect', () => {
     expect(onChangeSet).toHaveBeenCalledWith('p1', { id: 'cs1' })
     expect(onPresence).toHaveBeenCalledWith('p1', { cardIds: [] })
     teardown()
+  })
+
+  test('queued events from a replaced socket are inert', () => {
+    const onStatus = vi.fn()
+    const onReconnect = vi.fn()
+    const onChangeSet = vi.fn()
+    const onPresence = vi.fn()
+    const onReviews = vi.fn()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const teardown = connectRealtime(onChangeSet, onPresence, {
+      createSocket,
+      onStatus,
+      onReconnect,
+      onReviews,
+    })
+    const oldSocket = sockets[0]
+    oldSocket.open()
+    const queued = retainHandlers(oldSocket)
+    oldSocket.close()
+    vi.advanceTimersByTime(30000)
+    expect(sockets).toHaveLength(2)
+    sockets[1].open()
+
+    onStatus.mockClear()
+    onReconnect.mockClear()
+    onChangeSet.mockClear()
+    onPresence.mockClear()
+    onReviews.mockClear()
+    consoleError.mockClear()
+
+    queued.open()
+    queued.message({ data: JSON.stringify({ projectId: 'p1', changeSet: { id: 'stale-cs' } }) })
+    queued.message({ data: JSON.stringify({ projectId: 'p1', presence: { cardIds: ['shape:a'] } }) })
+    queued.message({ data: JSON.stringify({ projectId: 'p1', reviews: [{ id: 'stale-review' }] }) })
+    queued.error(new Error('stale socket error'))
+    queued.close()
+    vi.advanceTimersByTime(60000)
+
+    expect(onStatus).not.toHaveBeenCalled()
+    expect(onReconnect).not.toHaveBeenCalled()
+    expect(onChangeSet).not.toHaveBeenCalled()
+    expect(onPresence).not.toHaveBeenCalled()
+    expect(onReviews).not.toHaveBeenCalled()
+    expect(consoleError).not.toHaveBeenCalled()
+    expect(sockets).toHaveLength(2)
+
+    teardown()
+  })
+
+  test('queued socket events after teardown are inert', () => {
+    const onStatus = vi.fn()
+    const onReconnect = vi.fn()
+    const onChangeSet = vi.fn()
+    const onPresence = vi.fn()
+    const onReviews = vi.fn()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const teardown = connectRealtime(onChangeSet, onPresence, {
+      createSocket,
+      onStatus,
+      onReconnect,
+      onReviews,
+    })
+    sockets[0].open()
+    const queued = retainHandlers(sockets[0])
+    teardown()
+
+    onStatus.mockClear()
+    onReconnect.mockClear()
+    onChangeSet.mockClear()
+    onPresence.mockClear()
+    onReviews.mockClear()
+    consoleError.mockClear()
+
+    queued.open()
+    queued.message({ data: JSON.stringify({ projectId: 'p1', changeSet: { id: 'stale-cs' } }) })
+    queued.message({ data: JSON.stringify({ projectId: 'p1', presence: { cardIds: ['shape:a'] } }) })
+    queued.message({ data: JSON.stringify({ projectId: 'p1', reviews: [{ id: 'stale-review' }] }) })
+    queued.error(new Error('stale socket error'))
+    queued.close()
+    vi.advanceTimersByTime(60000)
+
+    expect(onStatus).not.toHaveBeenCalled()
+    expect(onReconnect).not.toHaveBeenCalled()
+    expect(onChangeSet).not.toHaveBeenCalled()
+    expect(onPresence).not.toHaveBeenCalled()
+    expect(onReviews).not.toHaveBeenCalled()
+    expect(consoleError).not.toHaveBeenCalled()
+    expect(sockets).toHaveLength(1)
   })
 })
 
