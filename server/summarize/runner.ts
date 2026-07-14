@@ -45,41 +45,59 @@ interface SummaryCandidates {
   cards: CardCandidate[]
   comments: CommentCandidate[]
   questions: QuestionCandidate[]
-  cardById: Map<string, CardCandidate>
   commentById: Map<string, CommentCandidate>
-  questionById: Map<string, QuestionCandidate>
-  ambiguousCardIds: Set<string>
   ambiguousCommentIds: Set<string>
-  ambiguousQuestionIds: Set<string>
+  unaddressableRecordIds: Set<string>
 }
 
 function commentKey(comment: Pick<CommentCandidate, 'cardId' | 'commentId'>): string {
   return `${comment.cardId}\0${comment.commentId}`
 }
 
+function globalRecordIdentity(snapshot: Parameters<typeof snapshotToSummarizableCards>[0]): {
+  addressableIds: Set<string>
+  unaddressableIds: Set<string>
+} {
+  const document = snapshot.document as {
+    store?: Record<string, unknown>
+    records?: Record<string, unknown>
+  } | null | undefined
+  const store = document?.store ?? document?.records ?? {}
+  const records = Object.entries(store).flatMap(([storeKey, record]) => {
+    if (typeof record !== 'object' || record === null ||
+      typeof (record as { id?: unknown }).id !== 'string') return []
+    return [{ storeKey, id: (record as { id: string }).id }]
+  })
+  const grouped = groupUniqueByKey(records, (record) => record.id)
+  const addressableIds = new Set<string>()
+  const unaddressableIds = new Set(grouped.ambiguousKeys)
+  for (const [id, record] of grouped.uniqueByKey) {
+    if (record.storeKey === id) addressableIds.add(id)
+    else unaddressableIds.add(id)
+  }
+  return { addressableIds, unaddressableIds }
+}
+
 function summaryCandidates(snapshot: Parameters<typeof snapshotToSummarizableCards>[0]): SummaryCandidates {
-  const cardGroups = groupUniqueByKey(snapshotToSummarizableCards(snapshot), (card) => card.id)
+  const identity = globalRecordIdentity(snapshot)
+  const cards = snapshotToSummarizableCards(snapshot)
+    .filter((card) => identity.addressableIds.has(card.id))
   const commentGroups = groupUniqueByKey(snapshotToSummarizableComments(snapshot), commentKey)
-  const questionGroups = groupUniqueByKey(
-    snapshotToSummarizableQuestions(snapshot),
-    (question) => question.questionId,
-  )
+  const questions = snapshotToSummarizableQuestions(snapshot)
+    .filter((question) => identity.addressableIds.has(question.questionId))
   const ambiguousCommentIds = new Set(commentGroups.ambiguousKeys)
   const commentById = new Map<string, CommentCandidate>()
   for (const [key, comment] of commentGroups.uniqueByKey) {
-    if (cardGroups.uniqueByKey.has(comment.cardId)) commentById.set(key, comment)
-    else if (cardGroups.ambiguousKeys.has(comment.cardId)) ambiguousCommentIds.add(key)
+    if (identity.addressableIds.has(comment.cardId)) commentById.set(key, comment)
+    else if (identity.unaddressableIds.has(comment.cardId)) ambiguousCommentIds.add(key)
   }
   return {
-    cards: [...cardGroups.uniqueByKey.values()],
+    cards,
     comments: [...commentById.values()],
-    questions: [...questionGroups.uniqueByKey.values()],
-    cardById: cardGroups.uniqueByKey,
+    questions,
     commentById,
-    questionById: questionGroups.uniqueByKey,
-    ambiguousCardIds: cardGroups.ambiguousKeys,
     ambiguousCommentIds,
-    ambiguousQuestionIds: questionGroups.ambiguousKeys,
+    unaddressableRecordIds: identity.unaddressableIds,
   }
 }
 
@@ -119,9 +137,9 @@ function validSummaryOpsForSnapshot(
   let retryDiscarded = false
   for (const op of ops) {
     if (op.kind === 'set_summary') {
-      if (current.ambiguousCardIds.has(op.cardId)) continue
-      const originalCard = original.cardById.get(op.cardId)
-      const currentCard = current.cardById.get(op.cardId)
+      if (current.unaddressableRecordIds.has(op.cardId)) continue
+      const originalCard = original.cards.find((card) => card.id === op.cardId)
+      const currentCard = current.cards.find((card) => card.id === op.cardId)
       if (!originalCard || !currentCard || !sameCardCandidate(originalCard, currentCard)) {
         retryDiscarded = true
         continue
@@ -133,7 +151,8 @@ function validSummaryOpsForSnapshot(
       continue
     } else if (op.kind === 'set_comment_summary') {
       const key = commentKey(op)
-      if (current.ambiguousCardIds.has(op.cardId) || current.ambiguousCommentIds.has(key)) continue
+      if (current.unaddressableRecordIds.has(op.cardId) ||
+        current.ambiguousCommentIds.has(key)) continue
       const originalComment = original.commentById.get(key)
       const currentComment = current.commentById.get(key)
       if (!originalComment || !currentComment ||
@@ -147,9 +166,13 @@ function validSummaryOpsForSnapshot(
       else retryDiscarded = true
       continue
     }
-    if (current.ambiguousQuestionIds.has(op.questionId)) continue
-    const originalQuestion = original.questionById.get(op.questionId)
-    const currentQuestion = current.questionById.get(op.questionId)
+    if (current.unaddressableRecordIds.has(op.questionId)) continue
+    const originalQuestion = original.questions.find(
+      (question) => question.questionId === op.questionId,
+    )
+    const currentQuestion = current.questions.find(
+      (question) => question.questionId === op.questionId,
+    )
     if (!originalQuestion || !currentQuestion ||
       !sameQuestionCandidate(originalQuestion, currentQuestion)) {
       retryDiscarded = true

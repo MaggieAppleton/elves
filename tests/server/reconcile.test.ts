@@ -562,6 +562,137 @@ test('a target duplicated during model work is discarded without retry churn', a
   expect(canvasRevision(JSON.parse(afterDuplicate.toString()))).toBe(1)
 })
 
+test.each([
+  {
+    label: 'card and question share one id',
+    store: {
+      'shape:shared': summaryCard('shape:shared', `${LONG} card`),
+      'record:question': summaryQuestion('shape:shared', `${LONG} question`),
+    },
+  },
+  {
+    label: 'card id collides with a section',
+    store: {
+      'shape:shared': summaryCard('shape:shared', LONG),
+      'record:section': {
+        id: 'shape:shared', typeName: 'shape', type: 'section', props: { text: 'Section' },
+      },
+    },
+  },
+  {
+    label: 'question id collides with a group',
+    store: {
+      'shape:shared': summaryQuestion('shape:shared', LONG),
+      'record:group': { id: 'shape:shared', typeName: 'shape', type: 'group', props: {} },
+    },
+  },
+  {
+    label: 'card id collides with another record type',
+    store: {
+      'shape:shared': summaryCard('shape:shared', LONG),
+      'record:asset': { id: 'shape:shared', typeName: 'asset', type: 'image', props: {} },
+    },
+  },
+  {
+    label: 'card is stored under the wrong key',
+    store: { 'record:card': summaryCard('shape:a', LONG) },
+  },
+  {
+    label: 'question is stored under the wrong key',
+    store: { 'record:question': summaryQuestion('shape:q1', LONG) },
+  },
+  {
+    label: 'comment owner is stored under the wrong key',
+    store: {
+      'record:card': summaryCard('shape:a', '', [summaryComment('cmt-1', LONG)]),
+    },
+  },
+])('globally unaddressable target ($label) stays inert across runs', async ({ store }) => {
+  const { dataRoot, canvasPath } = await seedSummaryCanvas(store)
+  const summarizer = new FakeSummarizer()
+  const before = await fs.readFile(canvasPath)
+
+  const first = await reconcileCanvasFile(dataRoot, 'essay', summarizer, () => 'T')
+  const second = await reconcileCanvasFile(dataRoot, 'essay', summarizer, () => 'T')
+
+  expect(first).toEqual({ changeSet: null, pending: false })
+  expect(second).toEqual({ changeSet: null, pending: false })
+  expect(summarizer.calls).toEqual([])
+  expect(await fs.readFile(canvasPath)).toEqual(before)
+  expect(canvasRevision(JSON.parse(before.toString()))).toBe(0)
+})
+
+test('a mixed cross-type collision still lets one globally addressable target progress', async () => {
+  const validText = `${LONG} valid`
+  const { dataRoot, canvasPath } = await seedSummaryCanvas({
+    'shape:valid': summaryCard('shape:valid', validText),
+    'shape:shared': summaryCard('shape:shared', `${LONG} ambiguous`),
+    'record:section': {
+      id: 'shape:shared', typeName: 'shape', type: 'section', props: { text: 'Section' },
+    },
+  })
+  const summarizer = new FakeSummarizer()
+
+  const result = await reconcileCanvasFile(dataRoot, 'essay', summarizer, () => 'T')
+  const stored = JSON.parse(await fs.readFile(canvasPath, 'utf8'))
+
+  expect(summarizer.calls).toEqual([validText])
+  expect(result.pending).toBe(false)
+  expect(result.changeSet?.ops).toEqual([
+    expect.objectContaining({ kind: 'set_summary', cardId: 'shape:valid' }),
+  ])
+  expect(stored.document.store['shape:valid'].props.summary).toBe('a gist')
+  expect(stored.document.store['shape:shared'].props.summary).toBeNull()
+  expect(canvasRevision(stored)).toBe(1)
+})
+
+test('repairing a mismatched store key makes the target eligible on the next run', async () => {
+  const { dataRoot, canvasPath } = await seedSummaryCanvas({
+    'record:card': summaryCard('shape:a', LONG),
+  })
+  const summarizer = new FakeSummarizer()
+  expect(await reconcileCanvasFile(dataRoot, 'essay', summarizer, () => 'T'))
+    .toEqual({ changeSet: null, pending: false })
+  expect(summarizer.calls).toEqual([])
+
+  await acceptedCanvasMutation(dataRoot, (snapshot) => {
+    snapshot.document.store['shape:a'] = snapshot.document.store['record:card']
+    delete snapshot.document.store['record:card']
+  })
+  const repaired = await reconcileCanvasFile(dataRoot, 'essay', summarizer, () => 'T')
+  const stored = JSON.parse(await fs.readFile(canvasPath, 'utf8'))
+
+  expect(summarizer.calls).toEqual([LONG])
+  expect(repaired.pending).toBe(false)
+  expect(repaired.changeSet?.ops).toHaveLength(1)
+  expect(stored.document.store['shape:a'].props.summary).toBe('a gist')
+  expect(canvasRevision(stored)).toBe(2)
+})
+
+test('a cross-type collision introduced during model work rejects the stale result', async () => {
+  const { dataRoot, canvasPath } = await seedSummaryCanvas({
+    'shape:a': summaryCard('shape:a', LONG),
+  })
+  const delayed = delayedSummary()
+  const run = reconcileCanvasFile(dataRoot, 'essay', delayed.summarizer, () => 'T')
+  await delayed.didStart
+  await acceptedCanvasMutation(dataRoot, (snapshot) => {
+    snapshot.document.store['record:section'] = {
+      id: 'shape:a', typeName: 'shape', type: 'section', props: { text: 'Section' },
+    }
+  })
+  const afterCollision = await fs.readFile(canvasPath)
+  const backupAfterCollision = await fs.readFile(`${canvasPath}.bak`)
+
+  delayed.release('stale gist')
+  const result = await run
+
+  expect(result).toEqual({ changeSet: null, pending: false })
+  expect(await fs.readFile(canvasPath)).toEqual(afterCollision)
+  expect(await fs.readFile(`${canvasPath}.bak`)).toEqual(backupAfterCollision)
+  expect(canvasRevision(JSON.parse(afterCollision.toString()))).toBe(1)
+})
+
 test('summary apply does not recreate a project renamed during model work', async () => {
   const { dataRoot } = await seedCanvasWithLongCard()
   let start!: () => void
