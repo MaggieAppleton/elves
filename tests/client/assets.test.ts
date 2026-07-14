@@ -2,8 +2,10 @@
 
 import { act, createElement, StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { react } from 'tldraw'
+import { react, track } from 'tldraw'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import type { Reference } from '../../src/model/types'
+import { ReferenceCardFace } from '../../src/shapes/ReferenceCardFace'
 import {
   assetUrl,
   setAssetProject,
@@ -140,6 +142,68 @@ test('an older binding cleanup cannot clear a newer overlapping owner', () => {
   expect(assetUrl('image.png')).toContain('/projects/new/assets/image.png')
   act(() => { newRoot.unmount() })
   expect(assetUrl('image.png')).toBe('')
+})
+
+test('a mounted reference face refreshes favicon and thumbnail without rerendering its parent', () => {
+  const reference: Reference = {
+    url: 'https://example.com/book',
+    refType: 'book',
+    title: 'Example book',
+    authors: ['Author'],
+    siteName: 'Example',
+    year: 2026,
+    venue: null,
+    description: null,
+    faviconAssetId: 'favicon.png',
+    thumbnailAssetId: 'cover.png',
+    doi: null,
+    arxivId: null,
+    fetchedBy: 'unfurl',
+    fetchedAt: '2026-07-14T00:00:00.000Z',
+  }
+  let parentRenders = 0
+  function Parent() {
+    parentRenders += 1
+    return createElement(ReferenceCardFace, { reference })
+  }
+  const container = document.createElement('div')
+  const root = createRoot(container)
+  setAssetProject('old')
+  act(() => { root.render(createElement(Parent)) })
+  const favicon = container.querySelector<HTMLImageElement>('.elves-ref__favicon')
+  const thumbnail = container.querySelector<HTMLImageElement>('.elves-ref__media')
+  expect(favicon?.src).toContain('/projects/old/assets/favicon.png')
+  expect(thumbnail?.src).toContain('/projects/old/assets/cover.png')
+
+  act(() => { setAssetProject('new') })
+
+  expect(favicon?.src).toContain('/projects/new/assets/favicon.png')
+  expect(thumbnail?.src).toContain('/projects/new/assets/cover.png')
+  expect(parentRenders).toBe(1)
+  act(() => { root.unmount() })
+})
+
+test('the image-card direct tracked consumption pattern remains reactive', () => {
+  let renders = 0
+  const ImageCardAssetConsumer = track(function ImageCardAssetConsumer() {
+    renders += 1
+    return createElement('img', {
+      className: 'elves-card__image',
+      src: assetUrl('image.png'),
+    })
+  })
+  const container = document.createElement('div')
+  const root = createRoot(container)
+  setAssetProject('old')
+  act(() => { root.render(createElement(ImageCardAssetConsumer)) })
+  const image = container.querySelector<HTMLImageElement>('.elves-card__image')
+  expect(image?.src).toContain('/projects/old/assets/image.png')
+
+  act(() => { setAssetProject('new') })
+
+  expect(image?.src).toContain('/projects/new/assets/image.png')
+  expect(renders).toBe(2)
+  act(() => { root.unmount() })
 })
 
 test('uploadAsset keeps its explicit project-scoped API', async () => {
