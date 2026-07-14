@@ -9,6 +9,7 @@ import {
   mergeCardComments,
 } from './canvasMergeComments'
 import { validateBoundary } from './canvasMergeBoundary'
+import { requiresCanvasParentGraph, validateCanvasParentGraph } from './canvasMergeGraph'
 import { finalizeRecordSummaries } from './canvasMergeSummaries'
 import type {
   CanvasMergeConflict,
@@ -217,6 +218,7 @@ function mergeSlot(
 export function mergeCanvasRecords(input: CanvasMergeInput): CanvasMergeResult {
   const boundaryConflicts = validateBoundary(input)
   if (boundaryConflicts.length > 0) return { ok: false, conflicts: boundaryConflicts }
+  const requireGraphValidation = requiresCanvasParentGraph(input)
 
   const document: DocumentRecords = {}
   const conflicts: CanvasMergeConflict[] = []
@@ -275,5 +277,9 @@ export function mergeCanvasRecords(input: CanvasMergeInput): CanvasMergeResult {
     if (merged !== MISSING) setDocumentRecord(document, recordId, merged as DocumentRecord)
   }
 
-  return conflicts.length > 0 ? { ok: false, conflicts } : { ok: true, document }
+  if (conflicts.length > 0) return { ok: false, conflicts }
+  const graphConflicts = validateCanvasParentGraph(document, requireGraphValidation)
+  return graphConflicts.length > 0
+    ? { ok: false, conflicts: graphConflicts }
+    : { ok: true, document }
 }

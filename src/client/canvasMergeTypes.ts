@@ -50,6 +50,19 @@ export type CanvasMergeConflict =
       path: string[]
       reason: 'invalid-record' | 'non-document-type' | 'key-id-mismatch'
     }
+  | {
+      kind: 'invalid-shape-parent'
+      recordId: string
+      path: string[]
+      reason: 'missing-parent-id' | 'non-string-parent-id' |
+        'missing-parent' | 'invalid-parent-type'
+    }
+  | {
+      kind: 'shape-parent-cycle'
+      recordId: string
+      path: string[]
+      cycleIds: string[]
+    }
 
 export type CanvasMergeResult =
   | { ok: true; document: DocumentRecords }
