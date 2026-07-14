@@ -8,6 +8,12 @@ import { resetProject } from './helpers'
 const sse = (frames: string[]) => frames.map((f) => `${f}\n\n`).join('') + 'event: end\ndata: {}\n\n'
 const dataFrame = (e: unknown) => `data: ${JSON.stringify(e)}`
 
+async function openReadyCanvas(page: import('@playwright/test').Page) {
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await expect(page.getByTestId('new-prose')).toBeEnabled()
+}
+
 async function installAgentStream(page: import('@playwright/test').Page) {
   await page.addInitScript(() => {
     const originalFetch = fetch.bind(globalThis)
@@ -70,8 +76,7 @@ test('pressing / opens the box and streams a transcript', async ({ page }) => {
     }),
   )
 
-  await page.goto('/')
-  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await openReadyCanvas(page)
 
   await page.keyboard.press('/')
   const box = page.locator('.elves-agentbox')
@@ -101,8 +106,7 @@ test('the submitted message is pinned above the tool calls and replies', async (
     }),
   )
 
-  await page.goto('/')
-  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await openReadyCanvas(page)
 
   await page.keyboard.press('/')
   await page.getByTestId('agent-input').fill('critique my argument')
@@ -116,8 +120,7 @@ test('the submitted message is pinned above the tool calls and replies', async (
 })
 
 test('the input grows to fit a multi-line message', async ({ page }) => {
-  await page.goto('/')
-  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await openReadyCanvas(page)
 
   await page.keyboard.press('/')
   const input = page.getByTestId('agent-input')
@@ -145,8 +148,7 @@ test('a transcript and long prompt stay usable inside the agent box in a short v
       ]),
     }),
   )
-  await page.goto('/')
-  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await openReadyCanvas(page)
 
   await page.keyboard.press('/')
   const box = page.locator('.elves-agentbox')
@@ -185,8 +187,7 @@ test('a transcript and long prompt stay usable inside the agent box in a short v
 })
 
 test('/ is a literal slash while typing in the box, not a re-trigger', async ({ page }) => {
-  await page.goto('/')
-  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await openReadyCanvas(page)
 
   await page.keyboard.press('/')
   const input = page.getByTestId('agent-input')
@@ -196,8 +197,7 @@ test('/ is a literal slash while typing in the box, not a re-trigger', async ({ 
 })
 
 test('/ while editing a card is a literal slash, not a box trigger', async ({ page }) => {
-  await page.goto('/')
-  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await openReadyCanvas(page)
 
   // A new prose card drops straight into editing (its textarea is focused).
   await page.getByTestId('new-prose').click()
@@ -211,8 +211,7 @@ test('/ while editing a card is a literal slash, not a box trigger', async ({ pa
 })
 
 test('Esc closes the box', async ({ page }) => {
-  await page.goto('/')
-  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await openReadyCanvas(page)
 
   await page.keyboard.press('/')
   await expect(page.locator('.elves-agentbox')).toBeVisible()
@@ -240,8 +239,7 @@ test('Cancel stays cancelling and blocks resubmission until the run stream ends'
     return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' })
   })
 
-  await page.goto('/')
-  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await openReadyCanvas(page)
 
   await page.keyboard.press('/')
   await page.getByTestId('agent-input').fill('dedupe everything')
@@ -277,8 +275,7 @@ test('collapse shrinks the box to a live status bar and clicking it expands agai
     })
   })
 
-  await page.goto('/')
-  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await openReadyCanvas(page)
 
   await page.keyboard.press('/')
   await page.getByTestId('agent-input').fill('read my cards')
@@ -315,8 +312,7 @@ test('the clear button empties the transcript and closes the box', async ({ page
     }),
   )
 
-  await page.goto('/')
-  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await openReadyCanvas(page)
 
   await page.keyboard.press('/')
   await page.getByTestId('agent-input').fill('critique my argument')
@@ -336,8 +332,7 @@ test('the clear button empties the transcript and closes the box', async ({ page
 
 test('clear and reopen stays locked to the live run until its stream ends', async ({ page }) => {
   await installAgentStream(page)
-  await page.goto('/')
-  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await openReadyCanvas(page)
   await page.keyboard.press('/')
   await page.getByTestId('agent-input').fill('keep working')
   await page.getByTestId('agent-send').click()
@@ -359,8 +354,7 @@ test('clear and reopen stays locked to the live run until its stream ends', asyn
 
 test('clear before the run response still stays locked until the eventual stream ends', async ({ page }) => {
   await installAgentStream(page)
-  await page.goto('/')
-  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await openReadyCanvas(page)
   await page.evaluate(() => (window as any).__agentTest.holdRunResponse())
   await page.keyboard.press('/')
   await page.getByTestId('agent-input').fill('start slowly')
@@ -380,8 +374,7 @@ test('clear before the run response still stays locked until the eventual stream
 
 test('a failed cancel is shown and can be retried while the stream stays live', async ({ page }) => {
   await installAgentStream(page)
-  await page.goto('/')
-  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await openReadyCanvas(page)
   await page.evaluate(() => (window as any).__agentTest.setCancelStatus(503))
   await page.keyboard.press('/')
   await page.getByTestId('agent-input').fill('try to stop')
