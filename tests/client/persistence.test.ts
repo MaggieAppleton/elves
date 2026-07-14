@@ -18,6 +18,16 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+const validVersionedState = {
+  snapshot: { document: null, session: null },
+  revision: 7,
+  pendingChangeSets: [{
+    token: { epoch: 'epoch-a', sequence: 0 },
+    changeSet: { id: 'cs-a', author: 'claude', ops: [] },
+  }],
+  nextChangeSetToken: { epoch: 'epoch-a', sequence: 1 },
+}
+
 test('loadCanvas GETs the project canvas and returns the parsed snapshot', async () => {
   const snap = { document: null, session: null }
   vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => snap })))
@@ -37,18 +47,12 @@ test('saveCanvas POSTs the snapshot to the project canvas as JSON', async () => 
 })
 
 test('loadCanvasVersioned GETs protocol 2 and returns the versioned canvas state', async () => {
-  const state = {
-    snapshot: { document: null, session: null },
-    revision: 7,
-    pendingChangeSets: [{
-      token: { epoch: 'epoch-a', sequence: 0 },
-      changeSet: { id: 'cs-a', author: 'claude', ops: [] },
-    }],
-    nextChangeSetToken: { epoch: 'epoch-a', sequence: 1 },
-  }
-  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => state })))
+  vi.stubGlobal('fetch', vi.fn(async () => ({
+    ok: true,
+    json: async () => validVersionedState,
+  })))
 
-  await expect(loadCanvasVersioned('essay notes')).resolves.toEqual(state)
+  await expect(loadCanvasVersioned('essay notes')).resolves.toEqual(validVersionedState)
   expect(fetch).toHaveBeenCalledWith(
     expect.stringContaining('/projects/essay%20notes/canvas?protocol=2'),
   )
@@ -138,6 +142,98 @@ test('loadCanvasVersioned reports other protocol failures with status and code',
     code: 'canvas-revision-exhausted',
     revision: Number.MAX_SAFE_INTEGER,
   })
+})
+
+test.each([
+  ['non-object snapshot', { ...validVersionedState, snapshot: null }],
+  ['negative revision', { ...validVersionedState, revision: -1 }],
+  ['non-array pending changes', { ...validVersionedState, pendingChangeSets: {} }],
+  ['invalid pending token', {
+    ...validVersionedState,
+    pendingChangeSets: [{
+      ...validVersionedState.pendingChangeSets[0],
+      token: { epoch: '', sequence: 0 },
+    }],
+  }],
+  ['invalid pending change-set', {
+    ...validVersionedState,
+    pendingChangeSets: [{
+      ...validVersionedState.pendingChangeSets[0],
+      changeSet: { id: 'cs-a', author: '', ops: [] },
+    }],
+  }],
+  ['invalid next token', {
+    ...validVersionedState,
+    nextChangeSetToken: { epoch: 'epoch-a', sequence: -1 },
+  }],
+])('loadCanvasVersioned rejects a malformed success envelope: %s', async (_label, body) => {
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => body })))
+
+  const error = await loadCanvasVersioned('essay').catch((caught: unknown) => caught)
+  expect(error).toBeInstanceOf(CanvasProtocolError)
+  expect(error).toMatchObject({ status: 200, code: 'invalid-canvas-response' })
+})
+
+test('loadCanvasVersioned wraps malformed success JSON in a typed protocol error', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => { throw new SyntaxError('bad JSON') },
+  })))
+
+  const error = await loadCanvasVersioned('essay').catch((caught: unknown) => caught)
+  expect(error).toBeInstanceOf(CanvasProtocolError)
+  expect(error).not.toBeInstanceOf(SyntaxError)
+  expect(error).toMatchObject({ status: 200, code: 'invalid-canvas-response' })
+})
+
+test.each([
+  ['wrong ok marker', { ok: false, revision: 8 }],
+  ['negative revision', { ok: true, revision: -1 }],
+])('saveCanvasVersioned rejects a malformed success envelope: %s', async (_label, body) => {
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => body })))
+
+  const error = await saveCanvasVersioned('essay', { document: null }, 7)
+    .catch((caught: unknown) => caught)
+  expect(error).toBeInstanceOf(CanvasProtocolError)
+  expect(error).toMatchObject({ status: 200, code: 'invalid-canvas-response' })
+})
+
+test('saveCanvasVersioned wraps malformed success JSON in a typed protocol error', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => { throw new SyntaxError('bad JSON') },
+  })))
+
+  const error = await saveCanvasVersioned('essay', { document: null }, 7)
+    .catch((caught: unknown) => caught)
+  expect(error).toBeInstanceOf(CanvasProtocolError)
+  expect(error).not.toBeInstanceOf(SyntaxError)
+})
+
+test.each([
+  ['negative conflict revision', {
+    code: 'canvas-revision-conflict', error: 'conflict', revision: -1,
+  }],
+  ['negative pending token sequence', {
+    code: 'pending-materialization-incomplete', error: 'pending', revision: 7,
+    nextChangeSetToken: { epoch: 'epoch-a', sequence: -1 },
+  }],
+  ['empty pending token epoch', {
+    code: 'pending-materialization-incomplete', error: 'pending', revision: 7,
+    nextChangeSetToken: { epoch: '', sequence: 1 },
+  }],
+])('protocol errors discard malformed metadata: %s', async (_label, body) => {
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 409, json: async () => body })))
+
+  const error = await saveCanvasVersioned('essay', { document: null }, 7)
+    .catch((caught: unknown) => caught)
+  expect(error).toBeInstanceOf(CanvasProtocolError)
+  expect(error).not.toBeInstanceOf(CanvasRevisionConflictError)
+  if (!(error instanceof CanvasProtocolError)) throw new Error('expected protocol error')
+  if (body.revision === -1) expect(error.revision).toBeNull()
+  if ('nextChangeSetToken' in body) expect(error.nextChangeSetToken).toBeNull()
 })
 
 test('listProjects GETs /projects', async () => {

@@ -1,6 +1,7 @@
 import type { Project } from '../../server/projects'
 import type { ChangeSetToken, PendingChangeSetV2 } from '../../server/canvasMetadata'
 import type { CanvasSnapshot } from '../../server/store'
+import { isChangeSet } from '../model/changeset'
 
 const BASE = (import.meta as any).env?.VITE_SERVER_URL ?? 'http://localhost:5199'
 
@@ -43,16 +44,45 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0
+}
+
+function tokenFrom(value: unknown): ChangeSetToken | null {
+  if (!isRecord(value) || typeof value.epoch !== 'string' || value.epoch.length === 0 ||
+    !isNonNegativeSafeInteger(value.sequence)) return null
+  return { epoch: value.epoch, sequence: value.sequence }
+}
+
 function errorDetails(value: unknown): CanvasProtocolErrorDetails {
   if (!isRecord(value)) return { code: null, revision: null, nextChangeSetToken: null }
   const token = value.nextChangeSetToken
   return {
     code: typeof value.code === 'string' ? value.code : null,
-    revision: Number.isSafeInteger(value.revision) ? value.revision as number : null,
-    nextChangeSetToken: isRecord(token) && typeof token.epoch === 'string' &&
-      Number.isSafeInteger(token.sequence)
-      ? { epoch: token.epoch, sequence: token.sequence as number }
-      : null,
+    revision: isNonNegativeSafeInteger(value.revision) ? value.revision : null,
+    nextChangeSetToken: tokenFrom(token),
+  }
+}
+
+function isVersionedState(value: unknown): value is CanvasVersionedState {
+  if (!isRecord(value) || !isRecord(value.snapshot) ||
+    !isNonNegativeSafeInteger(value.revision) || !Array.isArray(value.pendingChangeSets) ||
+    tokenFrom(value.nextChangeSetToken) === null) return false
+  return value.pendingChangeSets.every((entry) =>
+    isRecord(entry) && tokenFrom(entry.token) !== null && isChangeSet(entry.changeSet))
+}
+
+function invalidCanvasResponse(response: Response): CanvasProtocolError {
+  return new CanvasProtocolError(
+    'invalid canvas response', response.status, 'invalid-canvas-response', null, null,
+  )
+}
+
+async function successJson(response: Response): Promise<unknown> {
+  try {
+    return await response.json()
+  } catch {
+    throw invalidCanvasResponse(response)
   }
 }
 
@@ -131,7 +161,9 @@ export async function loadCanvasVersioned(projectId: string): Promise<CanvasVers
     `${BASE}/projects/${encodeURIComponent(projectId)}/canvas?protocol=2`,
   )
   if (!res.ok) throw await protocolError(res, 'load')
-  return res.json()
+  const result = await successJson(res)
+  if (!isVersionedState(result)) throw invalidCanvasResponse(res)
+  return result
 }
 
 export async function saveCanvasVersioned(
@@ -151,7 +183,9 @@ export async function saveCanvasVersioned(
     },
   )
   if (!res.ok) throw await protocolError(res, 'save')
-  const result = await res.json() as { revision: number }
+  const result = await successJson(res)
+  if (!isRecord(result) || result.ok !== true ||
+    !isNonNegativeSafeInteger(result.revision)) throw invalidCanvasResponse(res)
   return result.revision
 }
 
