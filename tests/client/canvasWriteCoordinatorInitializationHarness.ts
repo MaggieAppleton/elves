@@ -141,7 +141,19 @@ export function initHarness(options: {
     onEditingEnd: () => () => {},
   } as CanvasWriteCoordinatorEditor
   const coordinator = createCanvasWriteCoordinator({
-    projectId: 'essay', editor, transport: { load, save }, autosaveMs: 0,
+    project: {
+      id: 'essay', name: 'Essay', createdAt: '2026-07-14T00:00:00.000Z',
+    },
+    editor,
+    transport: {
+      load,
+      save,
+      renameProject: async () => ({
+        id: 'essay', name: 'Essay', createdAt: '2026-07-14T00:00:00.000Z',
+      }),
+      listProjects: async () => [],
+    },
+    autosaveMs: 0,
     onRemoteChange: remoteChanges,
   })
   return {

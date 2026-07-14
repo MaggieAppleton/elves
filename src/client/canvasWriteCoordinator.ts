@@ -7,15 +7,21 @@ import {
   CanvasRevisionConflictError,
   type CanvasSnapshot,
   type CanvasVersionedState,
+  type Project,
 } from './persistence'
 import { pendingMaterializationStatus } from './canvasPendingMaterialization'
+import { validRenameResult } from './canvasRenameResolution'
 import { changeSetTokenStamp, type ChangeSet } from '../model/changeset'
 
-export type CanvasWriteStatus = 'loading' | 'idle' | 'unsaved' | 'saving' | 'syncing' | 'error'
+export type CanvasWriteStatus =
+  | 'loading' | 'idle' | 'unsaved' | 'saving' | 'syncing' | 'renaming'
+  | 'rename-ambiguous' | 'conflict' | 'error'
 
 export interface CanvasWriteCoordinatorTransport {
   load(projectId: string): Promise<CanvasVersionedState>
   save(projectId: string, snapshot: CanvasSnapshot, revision: number): Promise<number>
+  renameProject(projectId: string, name: string): Promise<unknown>
+  listProjects(): Promise<unknown>
 }
 
 export interface CanvasWriteCoordinatorEditor {
@@ -31,7 +37,7 @@ export interface CanvasWriteCoordinatorEditor {
 }
 
 export interface CanvasWriteCoordinatorOptions {
-  projectId: string
+  project: Project
   editor: CanvasWriteCoordinatorEditor
   transport: CanvasWriteCoordinatorTransport
   autosaveMs?: number
@@ -44,6 +50,8 @@ export interface CanvasWriteCoordinator {
   markDirty(): void
   requestRemoteSync(options?: { glow?: boolean }): Promise<void>
   flushOrThrow(): Promise<void>
+  renameProject(name: string): Promise<Project>
+  ownsProject(projectId: string): boolean
   dispose(): void
 }
 
@@ -73,6 +81,11 @@ interface Barrier {
   reject(error: unknown): void
 }
 
+interface RenameJob {
+  requestedName: string
+  promise: Promise<Project>
+}
+
 const MAX_INITIALIZATION_CONFLICT_RETRIES = 1
 
 export function createCanvasWriteCoordinator(
@@ -80,7 +93,8 @@ export function createCanvasWriteCoordinator(
 ): CanvasWriteCoordinator {
   const { editor, transport } = options
   const autosaveMs = options.autosaveMs ?? 500
-  let projectId = options.projectId
+  let project = options.project
+  let projectId = project.id
   let lifecycle = 0
   let disposed = false
   let initialized = false
@@ -97,6 +111,8 @@ export function createCanvasWriteCoordinator(
   let workSerial = 0
   const barriers: Barrier[] = []
   const editingEndBarriers: Barrier[] = []
+  let renameJob: RenameJob | null = null
+  let renameExclusive = false
 
   editor.setReadOnly(true)
 
@@ -106,6 +122,7 @@ export function createCanvasWriteCoordinator(
     if (!isCurrent(expected, expectedProjectId)) throw new CanvasWriteCoordinatorDisposedError()
   }
   const publish = (status: CanvasWriteStatus) => {
+    if (renameJob && status !== 'renaming') return
     if (!disposed) options.onStatus?.(status)
   }
   const clearAutosave = () => {
@@ -236,7 +253,7 @@ export function createCanvasWriteCoordinator(
   }
 
   const start = () => {
-    if (busy || disposed || !initialized) return
+    if (busy || disposed || !initialized || renameExclusive) return
     busy = true
     const expected = lifecycle
     const expectedProjectId = projectId
@@ -381,7 +398,7 @@ export function createCanvasWriteCoordinator(
     return promise
   }
 
-  const flushOrThrow = (): Promise<void> => {
+  const flushCurrentOrThrow = (): Promise<void> => {
     clearAutosave()
     if (disposed) return Promise.reject(new CanvasWriteCoordinatorDisposedError())
     if (!initialized) return Promise.reject(new Error('canvas write coordinator is not initialized'))
@@ -390,6 +407,53 @@ export function createCanvasWriteCoordinator(
     signal()
     return promise
   }
+
+  const flushOrThrow = (): Promise<void> => {
+    if (renameJob) return renameJob.promise.then(() => undefined)
+    return flushCurrentOrThrow()
+  }
+
+  const renameProject = (requestedName: string): Promise<Project> => {
+    const name = requestedName.trim()
+    if (!name) return Promise.reject(new Error('project name required'))
+    if (renameJob) {
+      return renameJob.requestedName === name
+        ? renameJob.promise
+        : Promise.reject(new Error('project rename already in progress'))
+    }
+    const original = project
+    const expected = lifecycle
+    let succeeded = false
+    const operation = (async (): Promise<Project> => {
+      publish('renaming')
+      await flushCurrentOrThrow()
+      assertCurrent(expected, original.id)
+      renameExclusive = true
+      const response = await transport.renameProject(original.id, name)
+      assertCurrent(expected, original.id)
+      const renamed = validRenameResult(response, original, name)
+      if (!renamed) throw new Error('invalid project rename response')
+
+      project = renamed
+      projectId = renamed.id
+      lifecycle += 1
+      const reboundLifecycle = lifecycle
+      renameExclusive = false
+      await flushCurrentOrThrow()
+      assertCurrent(reboundLifecycle, renamed.id)
+      succeeded = true
+      return renamed
+    })()
+    const promise = operation.finally(() => {
+      if (renameJob?.promise === promise) renameJob = null
+      renameExclusive = false
+      if (!disposed && succeeded) publish('idle')
+    })
+    renameJob = { requestedName: name, promise }
+    return promise
+  }
+
+  const ownsProject = (id: string): boolean => !disposed && project.id === id
 
   const dispose = () => {
     if (disposed) return
@@ -419,6 +483,8 @@ export function createCanvasWriteCoordinator(
     markDirty,
     requestRemoteSync,
     flushOrThrow,
+    renameProject,
+    ownsProject,
     dispose,
   }
 }

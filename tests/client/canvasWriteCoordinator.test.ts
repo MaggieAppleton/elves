@@ -90,9 +90,18 @@ function harness(options: {
     },
   }
   coordinator = createCanvasWriteCoordinator({
-    projectId: 'essay',
+    project: {
+      id: 'essay', name: 'Essay', createdAt: '2026-07-14T00:00:00.000Z',
+    },
     editor,
-    transport: { load, save },
+    transport: {
+      load,
+      save,
+      renameProject: async () => ({
+        id: 'essay', name: 'Essay', createdAt: '2026-07-14T00:00:00.000Z',
+      }),
+      listProjects: async () => [],
+    },
     autosaveMs: options.autosaveMs ?? 0,
     onStatus: (status) => statuses.push(status),
     onRemoteChange: (ids, glow) => remoteChanges.push({ ids, glow }),
