@@ -347,20 +347,32 @@ function applyOp(editor: Editor, op: Op, author: string, acceptedTokenStamp?: st
 
 /**
  * Apply a change-set to the editor and return the shape ids it touched (deduped),
- * so the caller can glow them as agent presence. The whole change-set is one undo
- * step (mark + squash); the returned ids feed a store OUTSIDE tldraw's document,
- * so presence never enters history.
+ * so the caller can glow them as agent presence. By default the whole change-set
+ * is one undo step (mark + squash). Accepted initialization materialization may
+ * opt out of history entirely; that path deliberately creates no mark.
  */
+export interface ApplyChangeSetOptions {
+  history?: 'record' | 'ignore'
+}
+
 export function applyChangeSet(
   editor: Editor,
   cs: ChangeSet,
   acceptedTokenStamp?: string,
+  options: ApplyChangeSetOptions = {},
 ): TLShapeId[] {
-  const markId = editor.markHistoryStoppingPoint(`${cs.author}:${cs.id}`)
   const affected = new Set<TLShapeId>()
-  for (const op of cs.ops) {
-    for (const id of applyOp(editor, op, cs.author, acceptedTokenStamp)) affected.add(id)
+  const apply = () => {
+    for (const op of cs.ops) {
+      for (const id of applyOp(editor, op, cs.author, acceptedTokenStamp)) affected.add(id)
+    }
   }
-  editor.squashToMark(markId)
+  if (options.history === 'ignore') {
+    editor.run(apply, { history: 'ignore' })
+  } else {
+    const markId = editor.markHistoryStoppingPoint(`${cs.author}:${cs.id}`)
+    apply()
+    editor.squashToMark(markId)
+  }
   return [...affected]
 }
