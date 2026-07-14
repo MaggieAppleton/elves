@@ -73,6 +73,11 @@ function harness(options: {
     return ids.sort()
   })
   const editor: CanvasWriteCoordinatorEditor = {
+    setReadOnly: () => {},
+    loadInitialSnapshot: (snapshot) => {
+      if (snapshot.document !== null) current = structuredClone(snapshot.document as DocumentRecords)
+    },
+    applyAcceptedChangeSet: () => [],
     captureSnapshot: () => ({ document: structuredClone(current) }),
     captureDocument: () => structuredClone(current),
     normalizeDocument: (snapshot: CanvasSnapshot) =>

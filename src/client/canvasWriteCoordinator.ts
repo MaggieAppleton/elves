@@ -8,6 +8,8 @@ import {
   type CanvasSnapshot,
   type CanvasVersionedState,
 } from './persistence'
+import { pendingMaterializationStatus } from './canvasPendingMaterialization'
+import { changeSetTokenStamp, type ChangeSet } from '../model/changeset'
 
 export type CanvasWriteStatus = 'loading' | 'idle' | 'unsaved' | 'saving' | 'syncing' | 'error'
 
@@ -17,6 +19,9 @@ export interface CanvasWriteCoordinatorTransport {
 }
 
 export interface CanvasWriteCoordinatorEditor {
+  setReadOnly(readOnly: boolean): void
+  loadInitialSnapshot(snapshot: CanvasSnapshot): void
+  applyAcceptedChangeSet(changeSet: ChangeSet, stamp: string): string[]
   captureSnapshot(): CanvasSnapshot
   captureDocument(): DocumentRecords
   normalizeDocument(snapshot: CanvasSnapshot): DocumentRecords
@@ -56,10 +61,19 @@ export class CanvasWriteCoordinatorDisposedError extends Error {
   }
 }
 
+export class CanvasPendingMaterializationError extends Error {
+  constructor() {
+    super('pending change-set materialization is incomplete')
+    this.name = 'CanvasPendingMaterializationError'
+  }
+}
+
 interface Barrier {
   resolve(): void
   reject(error: unknown): void
 }
+
+const MAX_INITIALIZATION_CONFLICT_RETRIES = 1
 
 export function createCanvasWriteCoordinator(
   options: CanvasWriteCoordinatorOptions,
@@ -83,6 +97,8 @@ export function createCanvasWriteCoordinator(
   let workSerial = 0
   const barriers: Barrier[] = []
   const editingEndBarriers: Barrier[] = []
+
+  editor.setReadOnly(true)
 
   const isCurrent = (expected: number, expectedProjectId: string) =>
     !disposed && lifecycle === expected && projectId === expectedProjectId
@@ -275,22 +291,57 @@ export function createCanvasWriteCoordinator(
     publish('loading')
     initializing = (async () => {
       try {
-        const loaded = await transport.load(expectedProjectId)
-        assertCurrent(expected, expectedProjectId)
-        const hasInitialDocument = loaded.snapshot.document !== null
-        const remote = hasInitialDocument
-          ? editor.normalizeDocument(loaded.snapshot)
-          : editor.captureDocument()
-        if (hasInitialDocument) applyRemote(remote, false)
-        base = remote
-        revision = loaded.revision
+        let conflictRetries = 0
+        for (;;) {
+          const loaded = await transport.load(expectedProjectId)
+          assertCurrent(expected, expectedProjectId)
+          editor.loadInitialSnapshot(loaded.snapshot)
+          assertCurrent(expected, expectedProjectId)
+
+          if (loaded.pendingChangeSets.length === 0) {
+            base = editor.captureDocument()
+            revision = loaded.revision
+            break
+          }
+          for (const entry of loaded.pendingChangeSets) {
+            editor.applyAcceptedChangeSet(entry.changeSet, changeSetTokenStamp(entry.token))
+          }
+          const stagedDocument = editor.captureDocument()
+          for (const entry of loaded.pendingChangeSets) {
+            if (pendingMaterializationStatus(stagedDocument, entry) !== 'complete') {
+              throw new CanvasPendingMaterializationError()
+            }
+          }
+          try {
+            revision = await transport.save(
+              expectedProjectId,
+              editor.captureSnapshot(),
+              loaded.revision,
+            )
+            assertCurrent(expected, expectedProjectId)
+            base = stagedDocument
+            break
+          } catch (error) {
+            if (error instanceof CanvasRevisionConflictError &&
+              conflictRetries < MAX_INITIALIZATION_CONFLICT_RETRIES) {
+              conflictRetries += 1
+              continue
+            }
+            throw error
+          }
+        }
         initialized = true
+        editor.setReadOnly(false)
         publish('idle')
         if (syncRequested) start()
       } catch (error) {
         if (isCurrent(expected, expectedProjectId)) {
+          initialized = false
+          base = null
+          revision = 0
           syncRequested = false
           syncGlow = false
+          editor.setReadOnly(true)
           publish('error')
           settleBarriers(error)
         }
@@ -321,9 +372,6 @@ export function createCanvasWriteCoordinator(
   const requestRemoteSync = (request: { glow?: boolean } = {}): Promise<void> => {
     clearAutosave()
     if (disposed) return Promise.reject(new CanvasWriteCoordinatorDisposedError())
-    if (!initialized && !initializing) {
-      return Promise.reject(new Error('canvas write coordinator is not initialized'))
-    }
     syncGlow = syncGlow || request.glow === true
     syncRequested = true
     workSerial += 1
