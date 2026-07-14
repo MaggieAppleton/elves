@@ -208,6 +208,7 @@ test('a second conflict stops, retains dirty work, and a later flush restarts', 
   await expect(h.coordinator.flushOrThrow()).rejects.toBeInstanceOf(
     CanvasRevisionConflictError,
   )
+  expect(h.statuses.at(-1)).toBe('conflict')
   expect(save).toHaveBeenCalledTimes(2)
   await tick()
   expect(save).toHaveBeenCalledTimes(2)

@@ -10,8 +10,18 @@ import {
   type Project,
 } from './persistence'
 import { pendingMaterializationStatus } from './canvasPendingMaterialization'
-import { validRenameResult } from './canvasRenameResolution'
+import {
+  createCanvasRenameController,
+  type CanvasRenameController,
+} from './canvasRenameCoordinator'
 import { changeSetTokenStamp, type ChangeSet } from '../model/changeset'
+
+export {
+  CanvasRenameAmbiguousError,
+  CanvasRenameCommittedDrainError,
+  CanvasRenameInProgressError,
+  CanvasRenameRollbackDrainError,
+} from './canvasRenameCoordinator'
 
 export type CanvasWriteStatus =
   | 'loading' | 'idle' | 'unsaved' | 'saving' | 'syncing' | 'renaming'
@@ -81,11 +91,6 @@ interface Barrier {
   reject(error: unknown): void
 }
 
-interface RenameJob {
-  requestedName: string
-  promise: Promise<Project>
-}
-
 const MAX_INITIALIZATION_CONFLICT_RETRIES = 1
 
 export function createCanvasWriteCoordinator(
@@ -111,8 +116,7 @@ export function createCanvasWriteCoordinator(
   let workSerial = 0
   const barriers: Barrier[] = []
   const editingEndBarriers: Barrier[] = []
-  let renameJob: RenameJob | null = null
-  let renameExclusive = false
+  let renameController!: CanvasRenameController
 
   editor.setReadOnly(true)
 
@@ -122,7 +126,7 @@ export function createCanvasWriteCoordinator(
     if (!isCurrent(expected, expectedProjectId)) throw new CanvasWriteCoordinatorDisposedError()
   }
   const publish = (status: CanvasWriteStatus) => {
-    if (renameJob && status !== 'renaming') return
+    if (renameController?.suppressesStatus(status)) return
     if (!disposed) options.onStatus?.(status)
   }
   const clearAutosave = () => {
@@ -253,7 +257,7 @@ export function createCanvasWriteCoordinator(
   }
 
   const start = () => {
-    if (busy || disposed || !initialized || renameExclusive) return
+    if (busy || disposed || !initialized || renameController?.blocksWork()) return
     busy = true
     const expected = lifecycle
     const expectedProjectId = projectId
@@ -281,7 +285,12 @@ export function createCanvasWriteCoordinator(
       } catch (error) {
         failedAt = attemptedWorkSerial
         if (isCurrent(expected, expectedProjectId)) {
-          publish('error')
+          publish(
+            error instanceof CanvasRevisionConflictError ||
+              error instanceof CanvasWriteMergeConflictError
+              ? 'conflict'
+              : 'error',
+          )
           settleBarriers(error)
         }
       } finally {
@@ -390,6 +399,8 @@ export function createCanvasWriteCoordinator(
   const requestRemoteSync = (request: { glow?: boolean } = {}): Promise<void> => {
     clearAutosave()
     if (disposed) return Promise.reject(new CanvasWriteCoordinatorDisposedError())
+    const renameError = renameController.ambiguousError()
+    if (renameError) return Promise.reject(renameError)
     syncGlow = syncGlow || request.glow === true
     syncRequested = true
     workSerial += 1
@@ -408,52 +419,47 @@ export function createCanvasWriteCoordinator(
     return promise
   }
 
+  renameController = createCanvasRenameController({
+    renameProject: (id, name) => transport.renameProject(id, name),
+    listProjects: () => transport.listProjects(),
+    getProject: () => project,
+    getLifecycle: () => lifecycle,
+    adoptProject: (next) => {
+      project = next
+      projectId = next.id
+      lifecycle += 1
+      return lifecycle
+    },
+    restoreProject: (restored) => {
+      project = restored
+      projectId = restored.id
+    },
+    assertCurrent,
+    flushCurrentOrThrow,
+    queuePostRebindSync: () => {
+      syncRequested = true
+      workSerial += 1
+    },
+    settleBarriers: (error) => settleBarriers(error),
+    emitStatus: (status) => {
+      if (!disposed) options.onStatus?.(status)
+    },
+    isDisposed: () => disposed,
+    isDisposedError: (error) => error instanceof CanvasWriteCoordinatorDisposedError,
+  })
+
   const flushOrThrow = (): Promise<void> => {
-    if (renameJob) return renameJob.promise.then(() => undefined)
+    const renameError = renameController.ambiguousError()
+    if (renameError) return Promise.reject(renameError)
+    const activeRename = renameController.activePromise()
+    if (activeRename) return activeRename.then(() => undefined)
     return flushCurrentOrThrow()
   }
 
-  const renameProject = (requestedName: string): Promise<Project> => {
-    const name = requestedName.trim()
-    if (!name) return Promise.reject(new Error('project name required'))
-    if (renameJob) {
-      return renameJob.requestedName === name
-        ? renameJob.promise
-        : Promise.reject(new Error('project rename already in progress'))
-    }
-    const original = project
-    const expected = lifecycle
-    let succeeded = false
-    const operation = (async (): Promise<Project> => {
-      publish('renaming')
-      await flushCurrentOrThrow()
-      assertCurrent(expected, original.id)
-      renameExclusive = true
-      const response = await transport.renameProject(original.id, name)
-      assertCurrent(expected, original.id)
-      const renamed = validRenameResult(response, original, name)
-      if (!renamed) throw new Error('invalid project rename response')
+  const renameProject = (name: string): Promise<Project> =>
+    renameController.renameProject(name)
 
-      project = renamed
-      projectId = renamed.id
-      lifecycle += 1
-      const reboundLifecycle = lifecycle
-      renameExclusive = false
-      await flushCurrentOrThrow()
-      assertCurrent(reboundLifecycle, renamed.id)
-      succeeded = true
-      return renamed
-    })()
-    const promise = operation.finally(() => {
-      if (renameJob?.promise === promise) renameJob = null
-      renameExclusive = false
-      if (!disposed && succeeded) publish('idle')
-    })
-    renameJob = { requestedName: name, promise }
-    return promise
-  }
-
-  const ownsProject = (id: string): boolean => !disposed && project.id === id
+  const ownsProject = (id: string): boolean => renameController.ownsProject(id)
 
   const dispose = () => {
     if (disposed) return

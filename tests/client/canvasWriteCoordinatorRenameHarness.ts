@@ -22,7 +22,7 @@ export function renameHarness(options: {
 } = {}) {
   let current = document('remote')
   const statuses: CanvasWriteStatus[] = []
-  const load = vi.fn(async () => state(document('remote'), 7))
+  const load = vi.fn(async (_projectId: string) => state(document('remote'), 7))
   const save = vi.fn(options.save ?? (async (_id, _snapshot, revision) => revision + 1))
   const renameProject = vi.fn(options.renameProject ?? (async (_id, name) => ({
     ...originalProject, id: 'final', name,

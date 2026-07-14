@@ -25,6 +25,7 @@ test('flushes old identity, holds writes during PATCH, then rebinds and drains b
 
   h.setDocument(document('edit during patch'))
   h.coordinator.markDirty()
+  const synced = h.coordinator.requestRemoteSync({ glow: true })
   let externalFlushSettled = false
   const externalFlush = h.coordinator.flushOrThrow().then(() => { externalFlushSettled = true })
   await tick()
@@ -35,12 +36,14 @@ test('flushes old identity, holds writes during PATCH, then rebinds and drains b
   patch.resolve(finalProject)
   await expect(renamed).resolves.toEqual(finalProject)
   await externalFlush
+  await synced
 
   expect(save.mock.calls.map((call) => [call[0], call[2]])).toEqual([
     ['draft', 7],
     ['final', 8],
   ])
   expect(save.mock.calls[1][1]).toEqual({ document: document('edit during patch') })
+  expect(h.load.mock.calls.map((call) => call[0])).toEqual(['draft', 'final'])
   expect(h.coordinator.ownsProject('draft')).toBe(false)
   expect(h.coordinator.ownsProject('final')).toBe(true)
   expect(h.statuses).toContain('renaming')
@@ -58,5 +61,6 @@ test('supports a same-id metadata rename without a canvas save', async () => {
 
   expect(h.renameProject).toHaveBeenCalledWith('draft', 'Draft!')
   expect(h.save).not.toHaveBeenCalled()
+  expect(h.load.mock.calls.map((call) => call[0])).toEqual(['draft', 'draft'])
   expect(h.coordinator.ownsProject('draft')).toBe(true)
 })
