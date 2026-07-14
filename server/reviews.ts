@@ -95,12 +95,27 @@ function sortNewestFirst(reviews: Review[]): Review[] {
  */
 export function createReview(
   path: string,
-  args: { personality: PersonalityId; focus?: string | null; agent?: string | null },
+  args: {
+    id?: string
+    attemptId?: string | null
+    personality: PersonalityId
+    focus?: string | null
+    agent?: string | null
+  },
   now: string,
 ): Promise<Review> {
   return enqueue(path, async () => {
     const reviews = await readFileReviews(path)
-    const review = makeReview(`rev-${crypto.randomUUID()}`, args.personality, now, args.focus ?? null)
+    const id = args.id ?? `rev-${crypto.randomUUID()}`
+    const existing = reviews.find((review) => review.id === id)
+    if (existing) {
+      if (existing.personality !== args.personality || existing.focus !== (args.focus ?? null)) {
+        throw new ReviewError('review id was already used for different input', 409)
+      }
+      return existing
+    }
+    const review = makeReview(id, args.personality, now, args.focus ?? null)
+    if (args.attemptId !== undefined) review.attemptId = args.attemptId
     if (args.agent) {
       review.status = 'in-progress'
       review.agent = args.agent
@@ -124,7 +139,13 @@ export function createReview(
 export function transitionReview(
   path: string,
   reviewId: string,
-  args: { status: ReviewStatus; agent?: string | null; verdict?: string | null; error?: string | null },
+  args: {
+    status: ReviewStatus
+    agent?: string | null
+    verdict?: string | null
+    error?: string | null
+    attemptId?: string | null
+  },
   now: string,
   canvasForCounts?: CanvasSnapshot | null,
 ): Promise<Review> {
@@ -137,7 +158,12 @@ export function transitionReview(
       throw new ReviewError(`cannot move a ${cur.status} review to ${args.status}`, 409)
     }
     const next: Review = { ...cur, status: args.status }
+    if (args.attemptId !== undefined) next.attemptId = args.attemptId
     if (cur.status === 'failed') next.error = null // retry/dismiss leaves the old failure behind
+    if (args.status === 'pending') {
+      next.agent = null
+      next.startedAt = null
+    }
     if (args.status === 'in-progress') {
       if (!args.agent) throw new ReviewError('claiming a review requires an agent id', 400)
       next.agent = args.agent
@@ -157,6 +183,36 @@ export function transitionReview(
     updated[idx] = next
     await writeFileReviews(path, updated)
     return next
+  })
+}
+
+/** Durably admit one retry attempt. Replaying the same attempt id is a no-op. */
+export function admitReviewAttempt(
+  path: string,
+  reviewId: string,
+  attemptId: string,
+): Promise<{ review: Review; admitted: boolean }> {
+  return enqueue(path, async () => {
+    const reviews = await readFileReviews(path)
+    const index = reviews.findIndex((review) => review.id === reviewId)
+    if (index < 0) throw new ReviewError('unknown review', 404)
+    const current = reviews[index]
+    if (current.attemptId === attemptId) return { review: current, admitted: false }
+    if (current.status !== 'failed' && current.status !== 'pending') {
+      throw new ReviewError(`cannot re-run a ${current.status} review`, 409)
+    }
+    const review: Review = {
+      ...current,
+      attemptId,
+      status: 'pending',
+      agent: null,
+      startedAt: null,
+      error: null,
+    }
+    const updated = [...reviews]
+    updated[index] = review
+    await writeFileReviews(path, updated)
+    return { review, admitted: true }
   })
 }
 

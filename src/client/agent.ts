@@ -16,7 +16,7 @@ export interface AgentRunHandle {
   requestCancel: () => Promise<void>
   /** Suppress callbacks while continuing to observe this stream's termination. */
   dispose: () => void
-  /** Resolves when the server closes the stream. */
+  /** Resolves only after the server confirms the run is no longer active. */
   done: Promise<void>
 }
 
@@ -46,6 +46,7 @@ export function runAgent(input: AgentRunInput, onEvent: (e: AgentEvent) => void)
       })
     } catch {
       if (!disposed) emit({ type: 'error', message: 'could not reach the server — is it running?' })
+      await abandonAndWaitForRun(runId)
       return
     }
     if (!res.ok || !res.body) {
@@ -58,12 +59,18 @@ export function runAgent(input: AgentRunInput, onEvent: (e: AgentEvent) => void)
         /* keep the status-code message */
       }
       emit({ type: 'error', message })
+      // Validation/conflict 4xx responses are definite refusals. A 5xx or a
+      // success missing its stream can be a lost accepted response, so settle
+      // it through the same atomic abandon handshake as a fetch rejection.
+      if (res.status >= 500 || res.ok) await abandonAndWaitForRun(runId)
       return
     }
 
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
     let buf = ''
+    let sawEnd = false
+    let reportedInterruption = false
     try {
       for (;;) {
         const { done: streamDone, value } = await reader.read()
@@ -74,11 +81,19 @@ export function runAgent(input: AgentRunInput, onEvent: (e: AgentEvent) => void)
         while ((sep = buf.indexOf('\n\n')) >= 0) {
           const frame = buf.slice(0, sep)
           buf = buf.slice(sep + 2)
-          handleFrame(frame, emit)
+          if (handleFrame(frame, emit)) sawEnd = true
         }
       }
     } catch {
-      if (!disposed) emit({ type: 'error', message: 'the agent stream was interrupted' })
+      emit({ type: 'error', message: 'the agent stream was interrupted' })
+      reportedInterruption = true
+    }
+    if (!sawEnd) {
+      // A response can truncate either with a reader error or a clean EOF. The
+      // child deliberately survives that disconnect, so only its authoritative
+      // status may release the UI's active-run lock.
+      if (!reportedInterruption) emit({ type: 'error', message: 'the agent stream was interrupted' })
+      await waitForRunToStop(runId)
     }
   })()
 
@@ -114,18 +129,18 @@ export function runAgent(input: AgentRunInput, onEvent: (e: AgentEvent) => void)
 
 /**
  * Parse one SSE frame. A `data:` line carries a JSON {@link AgentEvent}; the
- * terminal `event: end` frame carries none and is ignored (the reader's own
- * end-of-stream is the real signal callers wait on).
+ * terminal `event: end` frame carries none and returns `true`; it is the proof
+ * of normal completion that lets callers avoid authoritative status polling.
  */
-function handleFrame(frame: string, onEvent: (e: AgentEvent) => void): void {
+function handleFrame(frame: string, onEvent: (e: AgentEvent) => void): boolean {
   const dataLines: string[] = []
   for (const line of frame.split('\n')) {
     // The terminal `event: end` frame carries only a placeholder `data: {}` —
     // ignore the whole frame so it never dispatches a typeless event.
-    if (line.startsWith('event:') && line.slice(6).trim() === 'end') return
+    if (line.startsWith('event:') && line.slice(6).trim() === 'end') return true
     if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
   }
-  if (!dataLines.length) return
+  if (!dataLines.length) return false
   try {
     const parsed = JSON.parse(dataLines.join('\n'))
     // Guard against any stray frame: a real event always has a string `type`.
@@ -133,4 +148,37 @@ function handleFrame(frame: string, onEvent: (e: AgentEvent) => void): void {
   } catch {
     /* a malformed frame is dropped, never thrown */
   }
+  return false
+}
+
+async function waitForRunToStop(runId: string): Promise<void> {
+  for (;;) {
+    try {
+      const response = await fetch(`${BASE}/agent/runs/${encodeURIComponent(runId)}`, { cache: 'no-store' })
+      if (response.ok) {
+        const status = await response.json()
+        if (status?.active === false) return
+      }
+    } catch {
+      // A transient status failure must not unlock project transitions.
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 250))
+  }
+}
+
+async function abandonAndWaitForRun(runId: string): Promise<void> {
+  for (;;) {
+    try {
+      const response = await fetch(`${BASE}/agent/abandon`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ runId }),
+      })
+      if (response.ok) break
+    } catch {
+      // Retry with the same run id until late admission is atomically excluded.
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 250))
+  }
+  await waitForRunToStop(runId)
 }

@@ -267,6 +267,26 @@ export default function App() {
     }
   }
 
+  const mergeReviewForVisit = (pid: string, visit: number, review: Review) => {
+    if (reviewVisitRef.current !== visit ||
+      !canvasMountRef.current?.writeCoordinator.ownsProject(pid)) return
+    reviewRevisionRef.current++
+    setReviews((current) => {
+      if (reviewVisitRef.current !== visit ||
+        !canvasMountRef.current?.writeCoordinator.ownsProject(pid)) return current
+      const index = current.findIndex((candidate) => candidate.id === review.id)
+      if (index < 0) return [...current, review]
+      const next = [...current]
+      next[index] = review
+      return next
+    })
+  }
+
+  const refreshReviewsAfterMutation = (pid: string, visit: number) =>
+    refreshReviewsForVisit(pid, visit).catch((err) =>
+      console.error('Elves: failed to refresh reviews', err),
+    )
+
   const handleSummonReview = (personality: PersonalityId, focus: string | null) => {
     if (canvasMutationsLocked) return
     const pid = currentProjectId
@@ -276,7 +296,10 @@ export default function App() {
     // The websocket echo will also land; setting from the fetch keeps the panel
     // truthful even if the socket is down.
     summonReview(pid, personality, focus)
-      .then(() => refreshReviewsForVisit(pid, visit))
+      .then((review) => {
+        mergeReviewForVisit(pid, visit, review)
+        return refreshReviewsAfterMutation(pid, visit)
+      })
       .catch((err) => console.error('Elves: failed to summon review', err))
       .finally(() => setReviewRequestCount((count) => Math.max(0, count - 1)))
   }
@@ -288,7 +311,10 @@ export default function App() {
     const visit = reviewVisitRef.current
     setReviewRequestCount((count) => count + 1)
     dismissReview(pid, reviewId)
-      .then(() => refreshReviewsForVisit(pid, visit))
+      .then((review) => {
+        mergeReviewForVisit(pid, visit, review)
+        return refreshReviewsAfterMutation(pid, visit)
+      })
       .catch((err) => console.error('Elves: failed to dismiss review', err))
       .finally(() => setReviewRequestCount((count) => Math.max(0, count - 1)))
   }
@@ -302,7 +328,10 @@ export default function App() {
     const visit = reviewVisitRef.current
     setReviewRequestCount((count) => count + 1)
     retryReview(pid, reviewId)
-      .then(() => refreshReviewsForVisit(pid, visit))
+      .then((review) => {
+        mergeReviewForVisit(pid, visit, review)
+        return refreshReviewsAfterMutation(pid, visit)
+      })
       .catch((err) => console.error('Elves: failed to retry review', err))
       .finally(() => setReviewRequestCount((count) => Math.max(0, count - 1)))
   }

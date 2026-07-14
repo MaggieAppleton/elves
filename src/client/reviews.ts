@@ -19,39 +19,67 @@ export async function summonReview(
   personality: PersonalityId,
   focus: string | null,
 ): Promise<Review> {
-  const res = await fetch(`${BASE}/projects/${encodeURIComponent(projectId)}/reviews`, {
+  const reviewId = `rev-${crypto.randomUUID()}`
+  return postReview(`${BASE}/projects/${encodeURIComponent(projectId)}/reviews`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ personality, focus }),
+    body: JSON.stringify({ reviewId, personality, focus }),
   })
-  if (!res.ok) throw new Error(`failed to summon review: ${res.status}`)
-  const { review } = (await res.json()) as { review: Review }
-  return review
 }
 
 /** Retry a `failed` pass (or re-summon a `pending` one that never got picked
  * up): fires the server's in-app runner again, keyed the same way the original
- * summon was. Fire-and-forget from the client's perspective — progress shows
- * up over the reviews WS broadcast like any other transition. */
-export async function retryReview(projectId: string, reviewId: string): Promise<void> {
-  const res = await fetch(
+ * summon was. The accepted response reserves the pass as pending immediately;
+ * later progress still arrives over the reviews WS broadcast. */
+export async function retryReview(projectId: string, reviewId: string): Promise<Review> {
+  const attemptId = `attempt-${crypto.randomUUID()}`
+  return postReview(
     `${BASE}/projects/${encodeURIComponent(projectId)}/reviews/${encodeURIComponent(reviewId)}/run`,
-    { method: 'POST' },
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ attemptId }),
+    },
   )
-  if (!res.ok) throw new Error(`failed to retry review: ${res.status}`)
 }
 
 /** The user-only transition: cancel a pending summon or clear a pass from the panel. */
 export async function dismissReview(projectId: string, reviewId: string): Promise<Review> {
-  const res = await fetch(
+  const mutationId = `dismiss-${crypto.randomUUID()}`
+  return postReview(
     `${BASE}/projects/${encodeURIComponent(projectId)}/reviews/${encodeURIComponent(reviewId)}/status`,
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ status: 'dismissed' satisfies ReviewStatus }),
+      body: JSON.stringify({ status: 'dismissed' satisfies ReviewStatus, mutationId }),
     },
   )
-  if (!res.ok) throw new Error(`failed to dismiss review: ${res.status}`)
-  const { review } = (await res.json()) as { review: Review }
-  return review
+}
+
+async function postReview(url: string, init: RequestInit): Promise<Review> {
+  for (;;) {
+    let response: Response
+    try {
+      response = await fetch(url, init)
+    } catch {
+      await retryDelay()
+      continue
+    }
+    if (response.ok) {
+      try {
+        const { review } = (await response.json()) as { review?: Review }
+        if (review?.id) return review
+      } catch {
+        // A success whose body was lost is still ambiguous; replay the same id.
+      }
+      await retryDelay()
+      continue
+    }
+    if (response.status < 500) throw new Error(`review mutation failed: ${response.status}`)
+    await retryDelay()
+  }
+}
+
+function retryDelay(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 250))
 }

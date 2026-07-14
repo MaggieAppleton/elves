@@ -214,12 +214,36 @@ export interface AgentRunnerDeps {
   cliName?: string
   /** Injectable for tests; defaults to node:child_process spawn. */
   spawn?: SpawnFn
+  /** Grace period before an ignored SIGTERM escalates to SIGKILL. */
+  cancelGraceMs?: number
+  /** Injectable monotonic-ish clock for bounded abandonment tombstones. */
+  nowMs?: () => number
+  tombstoneTtlMs?: number
+  tombstoneLimit?: number
+}
+
+export interface AgentRunReservation {
+  readonly projectId: string
 }
 
 export interface AgentRunner {
   run(key: string, input: AgentRunInput, onEvent: (e: AgentEvent) => void): Promise<void>
   cancel(key: string, runId: string): AgentCancelResult
-  isRunning(key: string): boolean
+  isRunning(key: string, runId?: string): boolean
+  isProjectRunning(projectId: string): boolean
+  reserveProjectRun(projectId: string, key?: string, runId?: string): AgentRunReservation | null
+  isRunAdmitted(key: string, runId: string): boolean
+  runReserved(
+    reservation: AgentRunReservation,
+    key: string,
+    input: AgentRunInput,
+    onEvent: (e: AgentEvent) => void,
+  ): Promise<void>
+  releaseProjectRun(reservation: AgentRunReservation): void
+  abandon(key: string, runId: string): AgentAbandonResult
+  cancelAndWait(key: string, runId: string): Promise<AgentCancelResult>
+  /** Atomically exclude new runs for a project while a structural transition runs. */
+  tryLockProject(projectId: string): (() => void) | null
 }
 
 export type AgentCancelResult =
@@ -227,6 +251,8 @@ export type AgentCancelResult =
   | { status: 'not-running' }
   | { status: 'run-mismatch' }
   | { status: 'signal-failed' }
+
+export type AgentAbandonResult = AgentCancelResult | { status: 'prevented' }
 
 /** ENOENT means the CLI isn't installed / not on PATH — the single most likely
  * failure, so name it plainly instead of leaking a raw errno. */
@@ -243,101 +269,229 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
   // Concurrent runs, keyed by caller: 'chat' for the chat box, 'review:<id>'
   // for an in-app review run. A key is single-flight (see run() below); across
   // keys there's no coordination at all — that's the whole point of the map.
-  const active = new Map<string, { runId: string; child: ChildLike }>()
+  const active = new Map<string, {
+    runId: string
+    projectId: string
+    child: ChildLike
+    stopped: Promise<void>
+    resolveStopped: () => void
+  }>()
+  const projectLocks = new Map<string, symbol>()
+  const reservationTokens = new WeakMap<AgentRunReservation, symbol>()
+  const reservations = new Map<symbol, { projectId: string; key?: string; runId?: string }>()
+  const tombstones = new Map<string, number>()
   const cancelled = new WeakSet<ChildLike>()
+  const cancelGraceMs = deps.cancelGraceMs ?? 5_000
+  const nowMs = deps.nowMs ?? Date.now
+  const tombstoneTtlMs = deps.tombstoneTtlMs ?? 10 * 60_000
+  const tombstoneLimit = deps.tombstoneLimit ?? 1_024
 
-  return {
-    isRunning: (key) => active.has(key),
-    cancel(key, runId) {
-      const current = active.get(key)
-      if (!current) return { status: 'not-running' }
-      if (current.runId !== runId) return { status: 'run-mismatch' }
-      try {
-        if (!current.child.kill('SIGTERM')) return { status: 'signal-failed' }
-      } catch {
-        return { status: 'signal-failed' }
+  const tombstoneKey = (key: string, runId: string) => `${key}\0${runId}`
+  const pruneTombstones = () => {
+    const now = nowMs()
+    for (const [key, expiresAt] of tombstones) {
+      if (expiresAt <= now) tombstones.delete(key)
+    }
+    while (tombstones.size >= tombstoneLimit) {
+      const oldest = tombstones.keys().next().value as string | undefined
+      if (oldest === undefined) break
+      tombstones.delete(oldest)
+    }
+  }
+  const installTombstone = (key: string, runId: string) => {
+    pruneTombstones()
+    tombstones.set(tombstoneKey(key, runId), nowMs() + tombstoneTtlMs)
+  }
+  const isTombstoned = (key: string, runId: string) => {
+    pruneTombstones()
+    return tombstones.has(tombstoneKey(key, runId))
+  }
+
+  const reserveProjectRun = (projectId: string, key?: string, runId?: string): AgentRunReservation | null => {
+    if (projectLocks.has(projectId)) return null
+    if (key && (active.has(key) || [...reservations.values()].some((entry) => entry.key === key))) return null
+    const reservation = Object.freeze({ projectId })
+    const token = Symbol(projectId)
+    reservationTokens.set(reservation, token)
+    reservations.set(token, { projectId, key, runId })
+    return reservation
+  }
+
+  const releaseProjectRun = (reservation: AgentRunReservation) => {
+    const token = reservationTokens.get(reservation)
+    if (token) reservations.delete(token)
+  }
+
+  const signalCancel = (key: string, runId: string): AgentCancelResult => {
+    const current = active.get(key)
+    if (!current) return { status: 'not-running' }
+    if (current.runId !== runId) return { status: 'run-mismatch' }
+    try {
+      if (!current.child.kill('SIGTERM')) return { status: 'signal-failed' }
+    } catch {
+      return { status: 'signal-failed' }
+    }
+    cancelled.add(current.child)
+    return { status: 'accepted' }
+  }
+
+  const runReserved = (
+    reservation: AgentRunReservation,
+    key: string,
+    input: AgentRunInput,
+    onEvent: (e: AgentEvent) => void,
+  ): Promise<void> => {
+    const token = reservationTokens.get(reservation)
+    const held = token ? reservations.get(token) : undefined
+    if (!held || held.projectId !== input.projectId ||
+      (held.key !== undefined && held.key !== key) ||
+      (held.runId !== undefined && held.runId !== input.runId)) {
+      onEvent({ type: 'error', message: 'the agent run reservation is no longer valid.' })
+      return Promise.resolve()
+    }
+    if (isTombstoned(key, input.runId)) {
+      onEvent({ type: 'error', message: 'the agent run was abandoned before it could start.' })
+      return Promise.resolve()
+    }
+    if (active.has(key)) {
+      onEvent({ type: 'error', message: 'an agent is already running — wait for it to finish or cancel it.' })
+      return Promise.resolve()
+    }
+    const adapter = resolveAdapter(cliName)
+    if (!adapter) {
+      onEvent({
+        type: 'error',
+        message: `ELVES_CLI="${cliName}" is not supported yet — v1 supports "claude".`,
+      })
+      return Promise.resolve()
+    }
+    const { cmd, args } = adapter.buildCommand(input, {
+      mcpConfigPath: deps.mcpConfigPath,
+      allowedTools: ALLOWED_TOOLS,
+      disallowedTools: DISALLOWED_TOOLS,
+    })
+
+    let child: ChildLike
+    try {
+      child = spawnFn(cmd, args, { cwd: deps.cwd, env: { ...process.env } })
+    } catch (err) {
+      onEvent({ type: 'error', message: friendlySpawnError(cmd, err as NodeJS.ErrnoException) })
+      return Promise.resolve()
+    }
+
+    let resolveStopped!: () => void
+    const stopped = new Promise<void>((resolve) => { resolveStopped = resolve })
+    active.set(key, { runId: input.runId, projectId: input.projectId, child, stopped, resolveStopped })
+    onEvent({ type: 'started' })
+
+    let sawTerminal = false
+    const emit = (e: AgentEvent) => {
+      if (e.type === 'done' || e.type === 'error') {
+        if (sawTerminal) return
+        sawTerminal = true
       }
-      cancelled.add(current.child)
-      return { status: 'accepted' }
+      onEvent(e)
+    }
+
+    let buf = ''
+    child.stdout?.on('data', (chunk) => {
+      buf += chunk.toString()
+      let nl: number
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl)
+        buf = buf.slice(nl + 1)
+        for (const e of adapter.parseLine(line)) emit(e)
+      }
+    })
+    let stderr = ''
+    child.stderr?.on('data', (chunk) => {
+      stderr += chunk.toString()
+    })
+
+    return new Promise<void>((resolve) => {
+      const finish = () => {
+        if (active.get(key)?.child === child) active.delete(key)
+        resolveStopped()
+        resolve()
+      }
+      child.on('error', (err) => {
+        emit({ type: 'error', message: friendlySpawnError(cmd, err as NodeJS.ErrnoException) })
+      })
+      child.on('close', (code) => {
+        if (buf.trim()) for (const e of adapter.parseLine(buf)) emit(e)
+        if (cancelled.has(child)) emit({ type: 'done', reply: 'Cancelled.' })
+        else if (code === 0) emit({ type: 'done', reply: '' })
+        else emit({ type: 'error', message: stderr.trim() || `\`${cmd}\` exited with code ${code}.` })
+        finish()
+      })
+    })
+  }
+
+  const runner: AgentRunner = {
+    isRunning: (key, runId) => {
+      const current = active.get(key)
+      return !!current && (runId === undefined || current.runId === runId)
+    },
+    isProjectRunning: (projectId) =>
+      [...active.values()].some((run) => run.projectId === projectId),
+    reserveProjectRun,
+    isRunAdmitted(key, runId) {
+      if (active.get(key)?.runId === runId) return true
+      return [...reservations.values()].some((entry) => entry.key === key && entry.runId === runId)
+    },
+    runReserved,
+    releaseProjectRun,
+    abandon(key, runId) {
+      installTombstone(key, runId)
+      const current = active.get(key)
+      if (!current || current.runId !== runId) return { status: 'prevented' }
+      return signalCancel(key, runId)
+    },
+    async cancelAndWait(key, runId) {
+      installTombstone(key, runId)
+      const current = active.get(key)
+      const result = signalCancel(key, runId)
+      if (result.status !== 'accepted' || !current) return result
+      const escalation = setTimeout(() => {
+        if (active.get(key)?.child !== current.child) return
+        try {
+          current.child.kill('SIGKILL')
+        } catch {
+          // Keep waiting for a truthful close; the caller must remain locked.
+        }
+      }, cancelGraceMs)
+      await current.stopped
+      clearTimeout(escalation)
+      return result
+    },
+    tryLockProject(projectId) {
+      if (projectLocks.has(projectId) ||
+        [...reservations.values()].some((reservation) => reservation.projectId === projectId) ||
+        [...active.values()].some((run) => run.projectId === projectId)) {
+        return null
+      }
+      const token = Symbol(projectId)
+      projectLocks.set(projectId, token)
+      return () => {
+        if (projectLocks.get(projectId) === token) projectLocks.delete(projectId)
+      }
+    },
+    cancel(key, runId) {
+      return signalCancel(key, runId)
     },
     run(key, input, onEvent) {
       if (active.has(key)) {
         onEvent({ type: 'error', message: 'an agent is already running — wait for it to finish or cancel it.' })
         return Promise.resolve()
       }
-      const adapter = resolveAdapter(cliName)
-      if (!adapter) {
-        onEvent({
-          type: 'error',
-          message: `ELVES_CLI="${cliName}" is not supported yet — v1 supports "claude".`,
-        })
+      const reservation = reserveProjectRun(input.projectId, key, input.runId)
+      if (!reservation) {
+        onEvent({ type: 'error', message: 'the project is changing — wait for it to finish before starting an agent.' })
         return Promise.resolve()
       }
-      const { cmd, args } = adapter.buildCommand(input, {
-        mcpConfigPath: deps.mcpConfigPath,
-        allowedTools: ALLOWED_TOOLS,
-        disallowedTools: DISALLOWED_TOOLS,
-      })
-
-      let child: ChildLike
-      try {
-        child = spawnFn(cmd, args, { cwd: deps.cwd, env: { ...process.env } })
-      } catch (err) {
-        onEvent({ type: 'error', message: friendlySpawnError(cmd, err as NodeJS.ErrnoException) })
-        return Promise.resolve()
-      }
-
-      active.set(key, { runId: input.runId, child })
-      onEvent({ type: 'started' })
-
-      // A terminal event (done/error) may come from the parsed stream OR be
-      // synthesized on close; either way, emit at most one so the box can't show
-      // both a reply and an error for the same run.
-      let sawTerminal = false
-      const emit = (e: AgentEvent) => {
-        if (e.type === 'done' || e.type === 'error') {
-          if (sawTerminal) return
-          sawTerminal = true
-        }
-        onEvent(e)
-      }
-
-      // stdout arrives in arbitrary chunks, not whole lines — buffer and split.
-      let buf = ''
-      child.stdout?.on('data', (chunk) => {
-        buf += chunk.toString()
-        let nl: number
-        while ((nl = buf.indexOf('\n')) >= 0) {
-          const line = buf.slice(0, nl)
-          buf = buf.slice(nl + 1)
-          for (const e of adapter.parseLine(line)) emit(e)
-        }
-      })
-      let stderr = ''
-      child.stderr?.on('data', (chunk) => {
-        stderr += chunk.toString()
-      })
-
-      return new Promise<void>((resolve) => {
-        const finish = () => {
-          // Only this run's own entry is ours to clear — a cancel() may have
-          // been requested (or, in principle, a new run under the same key
-          // could have replaced it), so check identity before deleting.
-          if (active.get(key)?.child === child) active.delete(key)
-          resolve()
-        }
-        child.on('error', (err) => {
-          emit({ type: 'error', message: friendlySpawnError(cmd, err as NodeJS.ErrnoException) })
-        })
-        child.on('close', (code) => {
-          // Flush a trailing line the stream left unterminated.
-          if (buf.trim()) for (const e of adapter.parseLine(buf)) emit(e)
-          if (cancelled.has(child)) emit({ type: 'done', reply: 'Cancelled.' })
-          else if (code === 0) emit({ type: 'done', reply: '' })
-          else emit({ type: 'error', message: stderr.trim() || `\`${cmd}\` exited with code ${code}.` })
-          finish()
-        })
-      })
+      return runReserved(reservation, key, input, onEvent)
+        .finally(() => releaseProjectRun(reservation))
     },
   }
+  return runner
 }

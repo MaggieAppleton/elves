@@ -128,10 +128,10 @@ describe('canTransition', () => {
     ['dismissed', 'done', false],
     ['dismissed', 'failed', false],
     ['dismissed', 'dismissed', false],
-    // from failed — retry (in-progress) or dismiss are the only ways out
+    // from failed — retry reserves pending before a fresh claim, or dismisses
     ['failed', 'in-progress', true],
     ['failed', 'dismissed', true],
-    ['failed', 'pending', false],
+    ['failed', 'pending', true],
     ['failed', 'done', false],
     ['failed', 'failed', false],
   ]

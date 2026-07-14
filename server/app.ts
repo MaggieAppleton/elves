@@ -14,7 +14,7 @@ import {
   snapshotToCardMap, snapshotToCardsById, snapshotToDraft,
 } from './digest'
 import { enrichSelection, type SelectionStore } from './selection'
-import type { AgentRunner, AgentEvent } from './agentRun'
+import type { AgentRunner, AgentEvent, AgentRunReservation } from './agentRun'
 import { reconcileCanvasFile, type Summarizer } from './summarize'
 import { extForMime, saveAsset, resolveAssetPath } from './assets'
 import { unfurl, type UnfurlDeps, type FetchedImage } from './unfurl'
@@ -30,7 +30,14 @@ import {
   ProjectError,
 } from './projects'
 import { withProjectLock } from './projectLock'
-import { readReviews, createReview, transitionReview, reviewsPathFor, ReviewError } from './reviews'
+import {
+  readReviews,
+  createReview,
+  transitionReview,
+  admitReviewAttempt,
+  reviewsPathFor,
+  ReviewError,
+} from './reviews'
 import { isPersonalityId, isReviewStatus, PERSONALITY_IDS, type Review } from '../src/model/reviews'
 import {
   CanvasRevisionExhaustedError,
@@ -395,11 +402,21 @@ export function createServer(
         res.status(400).json({ error: 'name required' })
         return
       }
+      const unlockProject = agent?.tryLockProject(req.params.id)
+      if (agent && !unlockProject) {
+        res.status(409).json({
+          code: 'project-agent-active',
+          error: 'wait for active agents on this project to finish before renaming it',
+        })
+        return
+      }
       try {
         res.json(await renameProject(dataRoot, req.params.id, name))
       } catch (e) {
         if (e instanceof ProjectError) res.status(e.status).json({ error: e.message })
         else throw e
+      } finally {
+        unlockProject?.()
       }
     }),
   )
@@ -699,6 +716,11 @@ export function createServer(
   // still flow over the realtime WS as usual — this stream carries only its
   // reasoning + tool calls. One run at a time. Dormant when no runner is wired
   // (tests), so those suites stay hermetic.
+  app.get('/agent/runs/:runId', (req, res) => {
+    res.set('Cache-Control', 'no-store')
+    res.json({ active: agent?.isRunning('chat', req.params.runId) ?? false })
+  })
+
   app.post('/agent/run', (req, res) => {
     if (!agent) {
       res.status(501).json({ error: 'agent runs are not configured on this server' })
@@ -780,6 +802,27 @@ export function createServer(
         ? 'the requested agent run is no longer active'
         : 'could not signal the active agent run'
     res.status(result.status === 'signal-failed' ? 503 : 409).json({ code: result.status, error: message })
+  })
+
+  // Settle an ambiguous initial POST. This is atomic with runner admission:
+  // either the run already exists and is signalled, or its id is tombstoned so
+  // a delayed copy of the POST can never spawn invisibly.
+  app.post('/agent/abandon', (req, res) => {
+    if (!agent) {
+      res.status(501).json({ error: 'agent runs are not configured on this server' })
+      return
+    }
+    const runId = req.body?.runId
+    if (typeof runId !== 'string' || !runId) {
+      res.status(400).json({ error: 'runId is required' })
+      return
+    }
+    const result = agent.abandon('chat', runId)
+    if (result.status === 'signal-failed') {
+      res.status(503).json({ code: result.status, error: 'could not signal the ambiguous agent run' })
+      return
+    }
+    res.json({ ok: true, status: result.status })
   })
 
   app.post(
@@ -1021,27 +1064,33 @@ export function createServer(
   // whole review state machine, comment tagging, and WS broadcasts are
   // untouched. No SSE stream here: the panel tracks progress over the reviews
   // WS broadcast (pending → in-progress → done), not a transcript.
-  async function launchReviewRun(projectId: string, reviewId: string): Promise<void> {
+  async function launchReviewRun(
+    projectId: string,
+    reviewId: string,
+    runId: string,
+    reservation: AgentRunReservation,
+  ): Promise<void> {
     const key = `review:${reviewId}`
-    if (!agent || agent.isRunning(key)) return // no runner wired, or already running: stays pending
+    if (!agent) return
     let lastError: string | null = null
+    let durablySettled = false
     const prompt =
       `A review pass is waiting for you on this canvas, id \`${reviewId}\`. Call \`start_review\` with ` +
       `reviewId \`${reviewId}\`, follow the returned brief exactly, leave your comments tagged with that ` +
       `reviewId, and finish by calling \`complete_review\`. Do only this review — nothing else.`
-    await agent.run(key, { runId: reviewId, prompt, projectId, hasSelection: false }, (e) => {
-      if (e.type === 'error') lastError = e.message
-    })
-    // The child exited. If the pass never reached done (or wasn't dismissed
-    // out from under it — e.g. the user × cancelled mid-run), mark it failed
-    // so the panel shows Retry instead of leaving it stuck "Starting…" forever.
     try {
+      await agent.runReserved(reservation, key, { runId, prompt, projectId, hasSelection: false }, (e) => {
+        if (e.type === 'error') lastError = e.message
+      })
+      // The child exited. Keep the reservation until an unfinished pass is
+      // durably failed, so rename cannot move the project between those steps.
       const updated = await withProjectLock(dataRoot, projectId, async () => {
         if (!(await getProject(dataRoot, projectId))) return null
         const path = reviewsPath(projectId)
         const reviews = await readReviews(path)
         const review = reviews.find((r) => r.id === reviewId)
-        if (review && (review.status === 'pending' || review.status === 'in-progress')) {
+        if (review && (review.attemptId ?? review.id) === runId &&
+          (review.status === 'pending' || review.status === 'in-progress')) {
           await transitionReview(
             path,
             reviewId,
@@ -1052,12 +1101,80 @@ export function createServer(
         }
         return null
       })
+      durablySettled = true
       if (updated && onReviews) onReviews(projectId, updated)
     } catch (err) {
       // Lost the race to done/dismissed between the read above and this write
       // (ReviewError 409) — the pass finished or was cancelled on its own
       // terms, which is the outcome we wanted anyway.
       if (!(err instanceof ReviewError)) throw err
+      durablySettled = true
+    } finally {
+      // An unexpected persistence failure leaves the lease held fail-closed;
+      // rename must not move a still-pending review away from its run identity.
+      if (durablySettled) agent.releaseProjectRun(reservation)
+    }
+  }
+
+  async function settleReviewDismissal(
+    projectId: string,
+    reviewId: string,
+    res: Response,
+  ): Promise<Review | null> {
+    const settlementLease = agent?.reserveProjectRun(projectId) ?? null
+    if (agent && !settlementLease) {
+      res.status(409).json({ code: 'project-transition-active', error: 'the project is changing' })
+      return null
+    }
+    let safelySettled = false
+    try {
+      if (!(await requireProject(projectId, res))) {
+        safelySettled = true
+        return null
+      }
+      const before = (await readReviews(reviewsPath(projectId)))
+        .find((review) => review.id === reviewId)
+      if (!before) {
+        safelySettled = true
+        res.status(404).json({ error: 'unknown review' })
+        return null
+      }
+      if (before.status === 'dismissed') {
+        safelySettled = true
+        return before
+      }
+      if (agent && (before.status === 'pending' || before.status === 'in-progress')) {
+        const cancelled = await agent.cancelAndWait(`review:${reviewId}`, before.attemptId ?? before.id)
+        if (cancelled.status === 'signal-failed' || cancelled.status === 'run-mismatch') {
+          safelySettled = true // the live attempt/lease remains exclusionary
+          const message = cancelled.status === 'run-mismatch'
+            ? 'the requested review run is no longer active'
+            : 'could not signal the active review run'
+          res.status(cancelled.status === 'signal-failed' ? 503 : 409).json({
+            code: cancelled.status,
+            error: message,
+          })
+          return null
+        }
+      }
+      const dismissed = await withProjectMutation(projectId, res, async () => {
+        const current = (await readReviews(reviewsPath(projectId)))
+          .find((review) => review.id === reviewId)
+        if (!current) throw new ReviewError('unknown review', 404)
+        if (current.status === 'dismissed') return current
+        return transitionReview(
+          reviewsPath(projectId),
+          reviewId,
+          { status: 'dismissed' },
+          new Date().toISOString(),
+        )
+      })
+      if (dismissed === null) return null
+      await broadcastReviews(projectId)
+      safelySettled = true
+      return dismissed
+    } finally {
+      if (settlementLease && safelySettled) agent!.releaseProjectRun(settlementLease)
     }
   }
 
@@ -1073,50 +1190,74 @@ export function createServer(
   app.post(
     '/projects/:id/reviews',
     wrap(async (req, res) => {
-      const result = await withProjectMutation(
-        req.params.id,
-        res,
-        async () => {
-          const { personality, focus, agent } = req.body ?? {}
-          if (!isPersonalityId(personality)) return { error: 'personality' as const, review: null }
-          if (focus !== undefined && focus !== null && typeof focus !== 'string') {
-            return { error: 'focus' as const, review: null }
-          }
-          if (agent !== undefined && agent !== null && (typeof agent !== 'string' || !agent)) {
-            return { error: 'agent' as const, review: null }
-          }
-          const review = await createReview(
-            reviewsPath(req.params.id),
-            { personality, focus: focus ?? null, agent: agent ?? null },
-            new Date().toISOString(),
-          )
-          return { error: null, review }
-        },
-      )
-      if (result === null) return
-      if (result.error === 'personality') {
+      const { reviewId: requestedReviewId, personality, focus, agent: agentId } = req.body ?? {}
+      if (!isPersonalityId(personality)) {
         res.status(400).json({ error: 'unknown personality', valid: PERSONALITY_IDS })
         return
       }
-      if (result.error === 'focus') {
+      if (focus !== undefined && focus !== null && typeof focus !== 'string') {
         res.status(400).json({ error: 'focus must be a string' })
         return
       }
-      if (result.error === 'agent') {
+      if (agentId !== undefined && agentId !== null && (typeof agentId !== 'string' || !agentId)) {
         res.status(400).json({ error: 'agent must be a non-empty string' })
         return
       }
-      const review = result.review!
-      await broadcastReviews(req.params.id)
-      // A UI summon (no `agent` in the body) is born pending — launch the
-      // in-app runner to claim and run it. An ad-hoc chat pass (`agent` given)
-      // is already in-progress, claimed by the caller itself; nothing to launch.
-      if (review.status === 'pending') {
-        void launchReviewRun(req.params.id, review.id).catch((err) =>
-          console.error('[elves] review run failed to launch:', err),
-        )
+      if (requestedReviewId !== undefined &&
+        (typeof requestedReviewId !== 'string' || !requestedReviewId)) {
+        res.status(400).json({ error: 'reviewId must be a non-empty string' })
+        return
       }
-      res.json({ review })
+      const reviewId = requestedReviewId ?? `rev-${crypto.randomUUID()}`
+      const shouldLaunch = !agentId && !!agent
+      const runKey = `review:${reviewId}`
+      const reservation = shouldLaunch
+        ? agent!.reserveProjectRun(req.params.id, runKey, reviewId)
+        : null
+      const alreadyAdmitted = shouldLaunch && !reservation
+        ? agent!.isRunAdmitted(runKey, reviewId)
+        : false
+      if (shouldLaunch && !reservation && !alreadyAdmitted) {
+        res.status(409).json({ code: 'project-transition-active', error: 'the project is changing' })
+        return
+      }
+      let handedOff = false
+      try {
+        const result = await withProjectMutation(req.params.id, res, async () => {
+          const review = await createReview(
+            reviewsPath(req.params.id),
+            {
+              id: reviewId,
+              attemptId: agentId ? undefined : reviewId,
+              personality,
+              focus: focus ?? null,
+              agent: agentId ?? null,
+            },
+            new Date().toISOString(),
+          )
+          return { review }
+        })
+        if (result === null) return
+        const { review } = result
+        // A fresh lease with an existing pending record is orphan recovery: no
+        // active/reserved owner exists, so safely relaunch the same attempt.
+        if (review.status === 'pending' && reservation) {
+          handedOff = true
+          void launchReviewRun(req.params.id, review.id, review.attemptId ?? review.id, reservation).catch((err) =>
+            console.error('[elves] review run failed to launch:', err),
+          )
+        }
+        await broadcastReviews(req.params.id)
+        res.json({ review })
+      } catch (err) {
+        if (err instanceof ReviewError) {
+          res.status(err.status).json({ error: err.message })
+          return
+        }
+        throw err
+      } finally {
+        if (reservation && !handedOff) agent!.releaseProjectRun(reservation)
+      }
     }),
   )
 
@@ -1127,25 +1268,73 @@ export function createServer(
   app.post(
     '/projects/:id/reviews/:reviewId/run',
     wrap(async (req, res) => {
-      const paths = await requireProject(req.params.id, res)
-      if (!paths) return
-      const reviews = await readReviews(reviewsPath(req.params.id))
-      const review = reviews.find((r) => r.id === req.params.reviewId)
-      if (!review) {
-        res.status(404).json({ error: 'unknown review' })
+      const requestedAttemptId = req.body?.attemptId
+      if (requestedAttemptId !== undefined &&
+        (typeof requestedAttemptId !== 'string' || !requestedAttemptId)) {
+        res.status(400).json({ error: 'attemptId must be a non-empty string' })
         return
       }
-      // Only a stalled pass is re-runnable. A finished (`done`) or cleared
-      // (`dismissed`) review would just spawn a CLI whose start_review claim the
-      // state machine rejects anyway — refuse up front instead of wasting it.
-      if (review.status !== 'failed' && review.status !== 'pending') {
-        res.status(409).json({ error: `cannot re-run a ${review.status} review` })
+      const attemptId = requestedAttemptId ?? `attempt-${crypto.randomUUID()}`
+      if (!agent) {
+        res.status(501).json({ error: 'review runs are not configured on this server' })
         return
       }
-      void launchReviewRun(req.params.id, req.params.reviewId).catch((err) =>
-        console.error('[elves] review run failed to launch:', err),
-      )
-      res.status(202).json({ ok: true })
+      const runKey = `review:${req.params.reviewId}`
+      const reservation = agent.reserveProjectRun(req.params.id, runKey, attemptId)
+      const alreadyAdmitted = !reservation && agent.isRunAdmitted(runKey, attemptId)
+      if (!reservation && requestedAttemptId === undefined && agent.isRunning(runKey)) {
+        const paths = await requireProject(req.params.id, res)
+        if (!paths) return
+        const current = (await readReviews(reviewsPath(req.params.id)))
+          .find((review) => review.id === req.params.reviewId)
+        if (!current) {
+          res.status(404).json({ error: 'unknown review' })
+          return
+        }
+        res.status(202).json({ review: current })
+        return
+      }
+      if (!reservation && !alreadyAdmitted) {
+        res.status(409).json({ code: 'project-transition-active', error: 'the project is changing' })
+        return
+      }
+      let handedOff = false
+      try {
+        const accepted = await withProjectMutation(req.params.id, res, async () => {
+          const current = (await readReviews(reviewsPath(req.params.id)))
+            .find((review) => review.id === req.params.reviewId)
+          if (!current) throw new ReviewError('unknown review', 404)
+          if (current.attemptId === attemptId) return { review: current, admitted: false }
+          if (agent.isRunning(`review:${req.params.reviewId}`)) {
+            // Legacy clients omitted attemptId; preserve their old idempotent
+            // no-op while a pass is already running. New distinct attempts are
+            // rejected so they cannot overwrite the live child's identity.
+            if (requestedAttemptId === undefined) return { review: current, admitted: false }
+            throw new ReviewError('a review attempt is already running', 409)
+          }
+          return admitReviewAttempt(reviewsPath(req.params.id), req.params.reviewId, attemptId)
+        })
+        if (accepted === null) return
+        if (accepted.review.status === 'pending' && reservation) {
+          handedOff = true
+          void launchReviewRun(
+            req.params.id,
+            req.params.reviewId,
+            attemptId,
+            reservation,
+          ).catch((err) => console.error('[elves] review run failed to launch:', err))
+        }
+        await broadcastReviews(req.params.id)
+        res.status(202).json({ review: accepted.review })
+      } catch (err) {
+        if (err instanceof ReviewError) {
+          res.status(err.status).json({ error: err.message })
+          return
+        }
+        throw err
+      } finally {
+        if (reservation && !handedOff) agent.releaseProjectRun(reservation)
+      }
     }),
   )
 
@@ -1153,17 +1342,22 @@ export function createServer(
     '/projects/:id/reviews/:reviewId/status',
     wrap(async (req, res) => {
       try {
+        const { status, agent: agentId, verdict, error } = req.body ?? {}
+        if (!isReviewStatus(status)) {
+          res.status(400).json({ error: 'unknown status' })
+          return
+        }
+
+        // Never wait for process settlement while holding the filesystem lock.
+        // A repeated dismiss reads back the terminal record without signalling.
+        if (status === 'dismissed') {
+          const dismissed = await settleReviewDismissal(req.params.id, req.params.reviewId, res)
+          if (!dismissed) return
+          res.json({ review: dismissed })
+          return
+        }
+
         const result = await withProjectMutation(req.params.id, res, async (paths) => {
-          const { status, agent: agentId, verdict, error } = req.body ?? {}
-          if (!isReviewStatus(status)) return { kind: 'invalid-status' as const }
-          // Dismissing a running pass must kill its child before transitioning,
-          // otherwise the runner's completion handler can re-mark it failed.
-          if (status === 'dismissed') {
-            const cancelled = agent?.cancel(`review:${req.params.reviewId}`, req.params.reviewId)
-            if (cancelled?.status === 'signal-failed' || cancelled?.status === 'run-mismatch') {
-              return { kind: 'cancel-failed' as const, cancelled }
-            }
-          }
           // Completion stamps the pass's comment footprint, so it needs the
           // canvas as it stands; the other transitions never read the document.
           const canvas = status === 'done' ? await readCanvas(paths.canvasPath) : null
@@ -1177,20 +1371,6 @@ export function createServer(
           return { kind: 'transitioned' as const, review }
         })
         if (result === null) return
-        if (result.kind === 'invalid-status') {
-          res.status(400).json({ error: 'unknown status' })
-          return
-        }
-        if (result.kind === 'cancel-failed') {
-          const message = result.cancelled.status === 'run-mismatch'
-            ? 'the requested review run is no longer active'
-            : 'could not signal the active review run'
-          res.status(result.cancelled.status === 'signal-failed' ? 503 : 409).json({
-            code: result.cancelled.status,
-            error: message,
-          })
-          return
-        }
         await broadcastReviews(req.params.id)
         res.json({ review: result.review })
       } catch (err) {

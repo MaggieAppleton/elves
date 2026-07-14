@@ -89,11 +89,27 @@ test('overlapping review requests keep project transitions locked until both set
   await page.route(`**/projects/${projectId}/reviews`, async (route) => {
     if (route.request().method() !== 'POST') return route.continue()
     requestCount += 1
+    const requestNumber = requestCount
+    const { personality } = route.request().postDataJSON() as { personality: string }
     await new Promise<void>((resolve) => releases.push(resolve))
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ review: {} }),
+      body: JSON.stringify({
+        review: {
+          id: `rev-overlap-${requestNumber}`,
+          personality,
+          status: 'dismissed',
+          focus: null,
+          requestedAt: `2026-07-14T12:00:0${requestNumber}.000Z`,
+          agent: null,
+          startedAt: null,
+          completedAt: null,
+          verdict: null,
+          commentCount: 0,
+          error: null,
+        },
+      }),
     })
     responseCount += 1
   })
@@ -115,6 +131,117 @@ test('overlapping review requests keep project transitions locked until both set
   releases[1]()
   await expect.poll(() => responseCount).toBe(2)
   await expect(page.getByTestId('project-switcher')).toBeEnabled()
+})
+
+test('summon and dismiss stay locked through lost responses and failed refresh', async ({ page }) => {
+  const review = {
+    id: '',
+    personality: 'architect',
+    status: 'pending',
+    focus: null,
+    requestedAt: '2026-07-14T12:00:00.000Z',
+    agent: null,
+    startedAt: null,
+    completedAt: null,
+    verdict: null,
+    commentCount: 0,
+    error: null,
+  }
+  let mutationAccepted = false
+  const summonBodies: any[] = []
+  const dismissBodies: any[] = []
+  await page.route(`**/projects/${projectId}/reviews`, async (route) => {
+    if (route.request().method() === 'POST') {
+      summonBodies.push(route.request().postDataJSON())
+      mutationAccepted = true
+      review.id = summonBodies[0].reviewId
+      if (summonBodies.length === 1) return route.abort('connectionreset')
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ review }),
+      })
+    }
+    if (mutationAccepted) return route.fulfill({ status: 500, body: 'refresh unavailable' })
+    return route.continue()
+  })
+  await page.route(`**/projects/${projectId}/reviews/*/status`, async (route) => {
+    dismissBodies.push(route.request().postDataJSON())
+    if (dismissBodies.length === 1) return route.abort('connectionreset')
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ review: { ...review, status: 'dismissed' } }),
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByTestId('new-prose')).toBeEnabled()
+  await page.getByTestId('review-button').click()
+  await page.getByTestId('review-summon-architect').click()
+
+  const pass = page.getByTestId('review-pass-architect')
+  await expect.poll(() => summonBodies.length).toBe(1)
+  await expect(page.getByTestId('project-switcher')).toBeDisabled()
+  await expect(pass).toHaveAttribute('data-status', 'pending')
+  expect(summonBodies[1]).toEqual(summonBodies[0])
+  await expect(page.getByTestId('project-switcher')).toBeDisabled()
+
+  await page.getByTestId('review-dismiss-architect').click()
+  await expect.poll(() => dismissBodies.length).toBe(1)
+  await expect(page.getByTestId('project-switcher')).toBeDisabled()
+  await expect(pass).toHaveCount(0)
+  expect(dismissBodies[1]).toEqual(dismissBodies[0])
+  await expect(page.getByTestId('project-switcher')).toBeEnabled()
+})
+
+test('retry stays active through a lost response and failed refresh', async ({ page }) => {
+  const review = {
+    id: 'rev-retry',
+    personality: 'trimmer',
+    status: 'failed',
+    focus: null,
+    requestedAt: '2026-07-14T12:00:00.000Z',
+    agent: null,
+    startedAt: null,
+    completedAt: null,
+    verdict: null,
+    commentCount: 0,
+    error: 'agent stopped',
+  }
+  let retryAccepted = false
+  const retryBodies: any[] = []
+  await page.route(`**/projects/${projectId}/reviews`, async (route) => {
+    if (retryAccepted) return route.fulfill({ status: 500, body: 'refresh unavailable' })
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ reviews: [review] }),
+    })
+  })
+  await page.route(`**/projects/${projectId}/reviews/${review.id}/run`, async (route) => {
+    retryBodies.push(route.request().postDataJSON())
+    retryAccepted = true
+    if (retryBodies.length === 1) return route.abort('connectionreset')
+    await route.fulfill({
+      status: 202,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        review: { ...review, status: 'pending', error: null, attemptId: retryBodies[0].attemptId },
+      }),
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByTestId('new-prose')).toBeEnabled()
+  await page.getByTestId('review-button').click()
+  await page.getByTestId('review-retry-trimmer').click()
+
+  await expect.poll(() => retryBodies.length).toBe(1)
+  await expect(page.getByTestId('project-switcher')).toBeDisabled()
+  await expect(page.getByTestId('review-pass-trimmer')).toHaveAttribute('data-status', 'pending')
+  expect(retryBodies[1]).toEqual(retryBodies[0])
+  await expect(page.getByTestId('project-switcher')).toBeDisabled()
 })
 
 test('ambiguous rename recovery stays reachable at 320px', async ({ page, request }) => {

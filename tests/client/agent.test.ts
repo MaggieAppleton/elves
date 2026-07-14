@@ -26,6 +26,7 @@ function openSseResponse() {
     response: new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } }),
     push: (frame: string) => controller.enqueue(enc.encode(`${frame}\n\n`)),
     close: () => controller.close(),
+    fail: () => controller.error(new Error('connection lost')),
   }
 }
 
@@ -35,7 +36,10 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+})
 
 test('decodes SSE frames into events, joining a frame split across chunks', async () => {
   vi.stubGlobal(
@@ -68,16 +72,104 @@ test('a non-ok response surfaces the server error message', async () => {
   expect(events).toEqual([{ type: 'error', message: 'an agent is already running' }])
 })
 
+test('a 5xx initial response abandons before done settles', async () => {
+  const calls: string[] = []
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    calls.push(String(url))
+    if (String(url).endsWith('/agent/run')) return new Response('upstream lost response', { status: 503 })
+    if (String(url).endsWith('/agent/abandon')) return new Response('{"ok":true}', { status: 200 })
+    return new Response('{"active":false}', { status: 200 })
+  }))
+
+  await runAgent({ prompt: 'x', projectId: 'p', hasSelection: false }, () => {}).done
+
+  expect(calls.map((url) => new URL(url).pathname)).toEqual([
+    '/agent/run', '/agent/abandon', expect.stringMatching(/^\/agent\/runs\//),
+  ])
+})
+
 test('a failed connection surfaces a reach-the-server error', async () => {
   vi.stubGlobal(
     'fetch',
-    vi.fn(async () => {
-      throw new TypeError('Failed to fetch')
+    vi.fn(async (url: string) => {
+      if (String(url).endsWith('/agent/run')) throw new TypeError('Failed to fetch')
+      if (String(url).endsWith('/agent/abandon')) return new Response('{"ok":true}', { status: 200 })
+      return new Response('{"active":false}', { status: 200 })
     }),
   )
   const events: AgentEvent[] = []
   await runAgent({ prompt: 'x', projectId: 'p', hasSelection: false }, (e) => events.push(e)).done
   expect(events).toEqual([{ type: 'error', message: expect.stringContaining('could not reach the server') }])
+})
+
+test('a rejected initial POST abandons atomically before done can settle', async () => {
+  vi.useFakeTimers()
+  let abandonAttempts = 0
+  let statusChecks = 0
+  const fetchMock = vi.fn(async (url: string) => {
+    if (String(url).endsWith('/agent/run')) throw new TypeError('response lost')
+    if (String(url).endsWith('/agent/abandon')) {
+      abandonAttempts += 1
+      if (abandonAttempts === 1) throw new TypeError('still offline')
+      return new Response('{"ok":true}', { status: 200 })
+    }
+    if (String(url).includes('/agent/runs/')) {
+      statusChecks += 1
+      return new Response('{"active":false}', { status: 200 })
+    }
+    throw new Error(`unexpected URL: ${url}`)
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  const handle = runAgent({ prompt: 'x', projectId: 'p', hasSelection: false }, () => {})
+  let settled = false
+  void handle.done.then(() => { settled = true })
+
+  await vi.waitFor(() => expect(abandonAttempts).toBe(1))
+  expect(settled).toBe(false)
+  expect(statusChecks).toBe(0)
+
+  await vi.advanceTimersByTimeAsync(250)
+  await handle.done
+  expect(abandonAttempts).toBe(2)
+  expect(statusChecks).toBe(1)
+})
+
+test('an interrupted stream stays active until the server confirms that run is inactive', async () => {
+  vi.useFakeTimers()
+  const stream = openSseResponse()
+  let statusChecks = 0
+  let cancelRequests = 0
+  const fetchMock = vi.fn(async (url: string) => {
+    if (String(url).endsWith('/agent/cancel')) {
+      cancelRequests += 1
+      return new Response('{"ok":true}', { status: 200 })
+    }
+    if (String(url).includes('/agent/runs/')) {
+      statusChecks += 1
+      return new Response(JSON.stringify({ active: statusChecks === 1 }), { status: 200 })
+    }
+    return stream.response
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  const events: AgentEvent[] = []
+  const handle = runAgent({ prompt: 'x', projectId: 'p', hasSelection: false }, (event) => events.push(event))
+  let settled = false
+  void handle.done.then(() => { settled = true })
+
+  stream.push('data: {"type":"started"}')
+  await Promise.resolve()
+  stream.fail()
+  await vi.waitFor(() => expect(statusChecks).toBe(1))
+
+  expect(settled).toBe(false)
+  expect(events.at(-1)).toEqual({ type: 'error', message: 'the agent stream was interrupted' })
+  await handle.requestCancel()
+  expect(cancelRequests).toBe(1)
+
+  await vi.advanceTimersByTimeAsync(250)
+  await handle.done
+  expect(statusChecks).toBe(2)
+  vi.useRealTimers()
 })
 
 test('requestCancel sends the run UUID without aborting the stream or settling done', async () => {
@@ -107,6 +199,7 @@ test('requestCancel sends the run UUID without aborting the stream or settling d
   expect(runCall?.[1]?.signal).toBeUndefined()
   expect(settled).toBe(false)
 
+  stream.push('event: end\ndata: {}')
   stream.close()
   await handle.done
 })
@@ -122,6 +215,7 @@ test('requestCancel rejects with the server message when cancellation is not acc
 
   await expect(handle.requestCancel()).rejects.toThrow('could not signal the active agent run')
 
+  stream.push('event: end\ndata: {}')
   stream.close()
   await handle.done
 })
@@ -143,6 +237,7 @@ test('dispose suppresses callbacks but keeps observing the stream until it ends'
   expect(settled).toBe(false)
   expect(events).toEqual([])
 
+  stream.push('event: end\ndata: {}')
   stream.close()
   await handle.done
 
@@ -165,6 +260,7 @@ test('dispose before the run response still observes the eventual stream until i
   expect(settled).toBe(false)
   expect(events).toEqual([])
 
+  stream.push('event: end\ndata: {}')
   stream.close()
   await handle.done
 })
