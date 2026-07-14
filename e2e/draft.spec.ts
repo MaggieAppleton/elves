@@ -118,3 +118,32 @@ test('the drawer chevrons step canvas → split → draft and back', async ({ pa
   await page.getByTestId('draft-collapse').click()
   await expect(stage).toHaveAttribute('data-view', 'canvas')
 })
+
+test('changing view ends an active divider drag and makes its stale pointer inert', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  const stage = page.locator('.elves-stage')
+  await page.getByTestId('draft-open').click()
+  await expect(stage).toHaveAttribute('data-view', 'split')
+
+  const divider = page.getByTestId('draft-divider')
+  const initialLeft = await divider.evaluate((element) => element.style.left)
+  await divider.dispatchEvent('pointerdown', { pointerId: 17 })
+  await expect(stage).toHaveAttribute('data-dragging', 'true')
+
+  await page.getByTestId('draft-expand').click()
+  await expect(stage).toHaveAttribute('data-view', 'draft')
+  await expect(stage).toHaveAttribute('data-dragging', 'false')
+
+  await page.evaluate(() => {
+    window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 17, clientX: 1 }))
+  })
+  await page.getByTestId('draft-collapse').click()
+  const leftAfterStaleMove = await page
+    .getByTestId('draft-divider')
+    .evaluate((element) => element.style.left)
+  expect(leftAfterStaleMove).toBe(initialLeft)
+})
