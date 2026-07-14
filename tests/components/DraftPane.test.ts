@@ -1,4 +1,4 @@
-import { createElement } from 'react'
+import { createElement, StrictMode } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { Editor } from 'tldraw'
@@ -107,6 +107,51 @@ test('an older clipboard completion cannot overwrite a newer copy status', async
     await firstCopy
   })
   expect(copyLabel(renderer)).toBe('Copied')
+
+  await act(async () => { renderer.unmount() })
+})
+
+test('StrictMode keeps the latest rejection authoritative over an older success', async () => {
+  const older = deferred<void>()
+  const latest = deferred<void>()
+  const writeText = vi.fn()
+    .mockImplementationOnce(() => older.promise)
+    .mockImplementationOnce(() => latest.promise)
+  vi.stubGlobal('navigator', { clipboard: { writeText } })
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+  let renderer!: ReactTestRenderer
+  await act(async () => {
+    renderer = create(createElement(
+      StrictMode,
+      null,
+      createElement(DraftPane, { editor, onSelectCard: vi.fn() }),
+    ))
+  })
+
+  let olderCopy!: Promise<void>
+  let latestCopy!: Promise<void>
+  act(() => { olderCopy = copyButton(renderer).props.onClick() })
+  act(() => { latestCopy = copyButton(renderer).props.onClick() })
+  await act(async () => {
+    latest.reject(new Error('latest failure'))
+    await latestCopy
+  })
+
+  expect(copyLabel(renderer)).toBe('Copy failed')
+  expect(log).toHaveBeenCalledOnce()
+  expect(vi.getTimerCount()).toBe(1)
+
+  await act(async () => {
+    older.resolve()
+    await olderCopy
+  })
+  expect(copyLabel(renderer)).toBe('Copy failed')
+  expect(log).toHaveBeenCalledOnce()
+  expect(vi.getTimerCount()).toBe(1)
+
+  await act(async () => { vi.advanceTimersByTime(1400) })
+  expect(copyLabel(renderer)).toBe('Copy as Markdown')
+  expect(vi.getTimerCount()).toBe(0)
 
   await act(async () => { renderer.unmount() })
 })
