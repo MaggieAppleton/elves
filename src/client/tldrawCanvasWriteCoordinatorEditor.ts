@@ -27,19 +27,17 @@ export function createTldrawCanvasWriteCoordinatorEditor(
     },
 
     loadInitialSnapshot(snapshot) {
-      loadSnapshot(
-        editor.store,
-        snapshot as unknown as Partial<TLEditorSnapshot> | TLStoreSnapshot,
-        { forceOverwriteSessionState: true },
-      )
+      editor.run(() => {
+        loadSnapshot(
+          editor.store,
+          snapshot as unknown as Partial<TLEditorSnapshot> | TLStoreSnapshot,
+          { forceOverwriteSessionState: true },
+        )
+      }, { history: 'ignore' })
     },
 
     applyAcceptedChangeSet(changeSet: ChangeSet, stamp: string): string[] {
-      let changedIds: string[] = []
-      editor.run(() => {
-        changedIds = applyChangeSet(editor, changeSet, stamp)
-      }, { history: 'ignore' })
-      return changedIds
+      return applyChangeSet(editor, changeSet, stamp, { history: 'ignore' })
     },
 
     captureSnapshot(): CanvasSnapshot {
