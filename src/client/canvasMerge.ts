@@ -70,11 +70,20 @@ function structuralEqual(left: Slot, right: Slot): boolean {
     leftKeys.every((key, index) => key === rightKeys[index] && structuralEqual(left[key], right[key]))
 }
 
+function setOwn(target: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  })
+}
+
 function cloneValue<T>(value: T): T {
   if (Array.isArray(value)) return value.map((item) => cloneValue(item)) as T
   if (!isPlainObject(value)) return value
   const cloned: Record<string, unknown> = {}
-  for (const key of Object.keys(value).sort()) cloned[key] = cloneValue(value[key])
+  for (const key of Object.keys(value).sort()) setOwn(cloned, key, cloneValue(value[key]))
   return cloned as T
 }
 
@@ -105,7 +114,7 @@ function mergeObject(
       [...path, key],
       conflicts,
     )
-    if (value !== MISSING) merged[key] = value
+    if (value !== MISSING) setOwn(merged, key, value)
   }
   return merged
 }
@@ -178,9 +187,9 @@ export function mergeCanvasRecords(input: CanvasMergeInput): CanvasMergeResult {
     if (base === MISSING) {
       if (local === MISSING && remote === MISSING) continue
       if (local === MISSING || remote === MISSING) {
-        document[recordId] = cloneValue((local === MISSING ? remote : local) as DocumentRecord)
+        setOwn(document, recordId, cloneValue((local === MISSING ? remote : local) as DocumentRecord))
       } else if (structuralEqual(local, remote)) {
-        document[recordId] = cloneValue(local as DocumentRecord)
+        setOwn(document, recordId, cloneValue(local as DocumentRecord))
       } else {
         conflicts.push({ kind: 'record-addition-conflict', recordId, path: [] })
       }
@@ -197,7 +206,7 @@ export function mergeCanvasRecords(input: CanvasMergeInput): CanvasMergeResult {
     }
 
     const merged = mergeSlot(base, local, remote, recordId, [], conflicts)
-    if (merged !== MISSING) document[recordId] = merged as DocumentRecord
+    if (merged !== MISSING) setOwn(document, recordId, merged as DocumentRecord)
   }
 
   return conflicts.length > 0 ? { ok: false, conflicts } : { ok: true, document }

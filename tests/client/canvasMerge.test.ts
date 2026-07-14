@@ -121,6 +121,37 @@ test('inputs are not mutated or aliased into the result', () => {
   expect((local['shape:a'].props as any).nested.a).toBe(1)
 })
 
+test('nested __proto__ metadata remains an own data property without prototype pollution', () => {
+  const base = records(shape('shape:a', {}, { meta: {} }))
+  const localMeta = JSON.parse('{"__proto__":{"local":1,"polluted":true}}')
+  const remoteMeta = JSON.parse('{"__proto__":{"remote":2,"polluted":true}}')
+  const local = records(shape('shape:a', {}, { meta: localMeta }))
+  const remote = records(shape('shape:a', {}, { meta: remoteMeta }))
+
+  const document = documentOf(mergeCanvasRecords({ base, local, remote }))
+  const meta = document['shape:a'].meta as Record<string, unknown>
+
+  expect(Object.getPrototypeOf(meta)).toBe(Object.prototype)
+  expect(Object.hasOwn(meta, '__proto__')).toBe(true)
+  expect(Object.keys(meta)).toEqual(['__proto__'])
+  expect(meta.__proto__).toEqual({ local: 1, polluted: true, remote: 2 })
+  expect((meta as any).polluted).toBeUndefined()
+  expect(({} as any).polluted).toBeUndefined()
+})
+
+test('a valid __proto__ record id remains an own map key with a normal prototype', () => {
+  const base = records(shape('__proto__', { value: 0 }))
+  const local = records(shape('__proto__', { value: 1 }))
+
+  const document = documentOf(mergeCanvasRecords({ base, local, remote: base }))
+
+  expect(Object.getPrototypeOf(document)).toBe(Object.prototype)
+  expect(Object.hasOwn(document, '__proto__')).toBe(true)
+  expect(Object.keys(document)).toEqual(['__proto__'])
+  expect(document.__proto__.props).toEqual({ value: 1 })
+  expect(({} as any).value).toBeUndefined()
+})
+
 test('permuted record and object key order produces byte-identical successful output', () => {
   const first = mergeCanvasRecords({
     base: {
