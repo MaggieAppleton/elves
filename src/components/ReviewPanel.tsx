@@ -13,6 +13,7 @@ interface Props {
   projectId: string | null
   editor: Editor | null
   reviews: Review[]
+  disabled: boolean
   onSummon: (personality: PersonalityId, focus: string | null) => void
   onDismiss: (reviewId: string) => void
   onRetry: (reviewId: string) => void
@@ -70,7 +71,15 @@ function EyeglassesIcon() {
   )
 }
 
-export function ReviewPanel({ projectId, editor, reviews, onSummon, onDismiss, onRetry }: Props) {
+export function ReviewPanel({
+  projectId,
+  editor,
+  reviews,
+  disabled,
+  onSummon,
+  onDismiss,
+  onRetry,
+}: Props) {
   const [open, setOpen] = useState(false)
   const [focus, setFocus] = useState('')
   const ref = useRef<HTMLDivElement>(null)
@@ -90,6 +99,10 @@ export function ReviewPanel({ projectId, editor, reviews, onSummon, onDismiss, o
       document.removeEventListener('keydown', onKey)
     }
   }, [open])
+
+  useEffect(() => {
+    if (disabled) setOpen(false)
+  }, [disabled])
 
   const visible = reviews.filter((r) => r.status !== 'dismissed')
   // `failed` stays in the active group (not recentDone) so it's visible with
@@ -140,6 +153,7 @@ export function ReviewPanel({ projectId, editor, reviews, onSummon, onDismiss, o
         aria-label="Review"
         aria-haspopup="menu"
         aria-expanded={open}
+        disabled={disabled}
         onClick={() => setOpen((v) => !v)}
       >
         <EyeglassesIcon />
@@ -166,6 +180,7 @@ export function ReviewPanel({ projectId, editor, reviews, onSummon, onDismiss, o
             type="text"
             placeholder="Focus (optional) — e.g. just the opening"
             value={focus}
+            disabled={disabled}
             onChange={(e) => setFocus(e.target.value)}
           />
           {PERSONALITY_IDS.map((id) => {
@@ -176,6 +191,7 @@ export function ReviewPanel({ projectId, editor, reviews, onSummon, onDismiss, o
                 role="menuitem"
                 className="elves-review__persona"
                 data-testid={`review-summon-${id}`}
+                disabled={disabled}
                 onClick={() => summon(id)}
               >
                 <span className="elves-review__swatch" style={{ background: personalityTone(id) }} />
@@ -231,6 +247,7 @@ export function ReviewPanel({ projectId, editor, reviews, onSummon, onDismiss, o
                           className="elves-review__tally"
                           data-testid={`review-tally-${r.personality}`}
                           title="Show this pass's comments on the canvas"
+                          disabled={disabled}
                           onClick={() => jumpToPass(r)}
                         >
                           {tally.open > 0 ? `${tally.open} open · ${tally.total} notes` : `${tally.total} notes`}
@@ -241,6 +258,7 @@ export function ReviewPanel({ projectId, editor, reviews, onSummon, onDismiss, o
                           className="elves-review__retry"
                           data-testid={`review-retry-${r.personality}`}
                           title="Try this pass again"
+                          disabled={disabled}
                           onClick={() => onRetry(r.id)}
                         >
                           Retry
@@ -254,6 +272,7 @@ export function ReviewPanel({ projectId, editor, reviews, onSummon, onDismiss, o
                             ? 'Clear from panel'
                             : 'Cancel this pass'
                         }
+                        disabled={disabled}
                         aria-label={
                           r.status === 'done'
                             ? `Clear ${p.name} review from panel: ${actionContext}`

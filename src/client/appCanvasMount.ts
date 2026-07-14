@@ -16,7 +16,7 @@ export interface AppCanvasMount {
   waitForCommands(): Promise<void>
   closeCommands(): Promise<void>
   openCommands(): void
-  setSelectionStop(stop: () => void): void
+  restartSelection(start: () => () => void): void
   adoptProject(project: Project): void
   dispose(): void
 }
@@ -106,9 +106,9 @@ export function createAppCanvasMount(options: AppCanvasMountOptions): AppCanvasM
     openCommands() {
       if (!disposed) commandsOpen = true
     },
-    setSelectionStop(stop) {
+    restartSelection(start) {
       stopSelection?.()
-      stopSelection = stop
+      stopSelection = start()
     },
     adoptProject(project) {
       mount.project = project

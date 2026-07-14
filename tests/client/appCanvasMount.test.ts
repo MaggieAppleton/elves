@@ -79,6 +79,25 @@ test('dispose tears down the listener and coordinator and blocks late initializa
   expect(writeCoordinator.dispose).toHaveBeenCalledOnce()
 })
 
+test('restarts selection by stopping the old reporter before starting the new identity', () => {
+  const mount = createAppCanvasMount({
+    project,
+    editor: {} as never,
+    writeCoordinator: coordinator(),
+    listen: vi.fn(),
+  })
+  const calls: string[] = []
+  mount.restartSelection(() => {
+    calls.push('start-old')
+    return () => calls.push('stop-old')
+  })
+  mount.restartSelection(() => {
+    calls.push('start-new')
+    return vi.fn()
+  })
+  expect(calls).toEqual(['start-old', 'stop-old', 'start-new'])
+})
+
 test('routes realtime sync only to a coordinator that owns the project', async () => {
   const writeCoordinator = coordinator()
   const mount = createAppCanvasMount({

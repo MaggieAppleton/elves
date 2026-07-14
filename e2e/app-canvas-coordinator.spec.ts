@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
-import { BASE, resetProject } from './helpers'
+import { readSelectionTool } from '../mcp/tools'
+import { BASE, resetProject, serverCardIds } from './helpers'
 
 let projectId: string
 
@@ -41,8 +42,44 @@ test('canvas write progress is exposed as a live status', async ({ page }) => {
   await page.goto('/')
   const status = page.getByRole('status', { name: /canvas/i })
   await expect(status).toBeVisible()
+  await expect(status).toContainText(/canvas/i)
   await expect(status).toHaveAttribute('aria-live', 'polite')
   await expect(status).toHaveAttribute('data-write-status', /loading|idle|unsaved|saving|syncing/)
+  await expect(page.locator('.elves-realtime-status')).toHaveAttribute(
+    'aria-label',
+    /live agent updates/i,
+  )
+})
+
+test('an active agent run holds project identity until the run settles', async ({ page }) => {
+  let releaseRun!: () => void
+  const runGate = new Promise<void>((resolve) => {
+    releaseRun = resolve
+  })
+  let captureRun!: () => void
+  const runCaptured = new Promise<void>((resolve) => {
+    captureRun = resolve
+  })
+  await page.route('**/agent/run', async (route) => {
+    captureRun()
+    await runGate
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: `data: ${JSON.stringify({ type: 'done', reply: 'done' })}\n\n`,
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByTestId('new-prose')).toBeEnabled()
+  await page.keyboard.press('/')
+  await page.getByTestId('agent-input').fill('hold this project')
+  await page.getByTestId('agent-send').click()
+  await runCaptured
+
+  await expect(page.getByTestId('project-switcher')).toBeDisabled()
+  releaseRun()
+  await expect(page.getByTestId('project-switcher')).toBeEnabled()
 })
 
 test('a failed outgoing flush keeps the current project mounted', async ({ page, request }) => {
@@ -57,6 +94,7 @@ test('a failed outgoing flush keeps the current project mounted', async ({ page,
 
   await page.goto('/')
   await expect(page.getByTestId('project-switcher')).toContainText(current.name)
+  await expect(page.getByTestId('new-prose')).toBeEnabled()
   let observeSaveFailure!: () => void
   const saveFailed = new Promise<void>((resolve) => {
     observeSaveFailure = resolve
@@ -142,6 +180,8 @@ test('ambiguous rename locks mutations and offers same-name recovery', async ({ 
   await page.getByTestId('new-prose').click()
   await page.locator('.elves-card__editor').fill('read-only during ambiguity')
   await page.keyboard.press('Escape')
+  await page.getByTestId('draft-open').click()
+  await expect(page.getByTestId('draft-para')).toBeVisible()
   await page.route(`**/projects/${projectId}`, async (route) => {
     if (route.request().method() === 'PATCH') {
       await route.fulfill({ status: 503, body: 'rename response lost' })
@@ -164,6 +204,11 @@ test('ambiguous rename locks mutations and offers same-name recovery', async ({ 
   await page.getByTestId('project-rename').click()
 
   await expect(page.getByTestId('new-prose')).toBeDisabled()
+  await page.getByTestId('draft-para').dispatchEvent('click')
+  await expect(page.getByTestId('draft-editor')).toHaveCount(0)
+  await page.keyboard.press('/')
+  await expect(page.getByRole('dialog', { name: 'Ask an agent' })).toHaveCount(0)
+  await expect(page.getByTestId('review-button')).toBeDisabled()
   const card = page.locator('.elves-card--prose').first()
   const bounds = await card.boundingBox()
   if (!bounds) throw new Error('prose card not in DOM')
@@ -182,6 +227,10 @@ test('a committed rename drain failure still adopts identity without remounting'
   let renamedId: string | null = null
   let renameCommitted = false
   let renamedCanvasGets = 0
+  let observeRefresh!: () => void
+  const refreshStarted = new Promise<void>((resolve) => {
+    observeRefresh = resolve
+  })
 
   await page.route((url) => url.pathname.endsWith('/canvas'), async (route) => {
     if (route.request().method() === 'GET' && renameCommitted &&
@@ -200,6 +249,11 @@ test('a committed rename drain failure still adopts identity without remounting'
     renameCommitted = true
     await route.fulfill({ response })
   })
+  await page.route((url) => url.pathname === '/projects', async (route) => {
+    if (!renameCommitted || route.request().method() !== 'GET') return route.continue()
+    observeRefresh()
+    await new Promise<void>(() => {})
+  })
 
   await page.goto('/')
   const canvas = page.locator('.tl-canvas')
@@ -213,5 +267,29 @@ test('a committed rename drain failure still adopts identity without remounting'
   await expect(page.getByTestId('project-switcher')).toContainText(renamedName)
   await expect(canvas).toHaveAttribute('data-mount-marker', 'original')
   await expect(page.locator('.elves-canvas-write-status')).toHaveAttribute('data-write-status', 'error')
+  await expect(page.getByTestId('new-prose')).toBeEnabled()
+  await refreshStarted
   expect(renamedCanvasGets).toBe(1)
+})
+
+test('rename republishes the unchanged selection under the committed identity', async ({ page, request }) => {
+  const renamedName = `Selection identity ${Date.now()}`
+  const renamedId = renamedName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+  await page.goto('/')
+  await page.getByTestId('new-prose').click()
+  await expect.poll(async () => (await serverCardIds(request, projectId)).length).toBe(1)
+  const [cardId] = await serverCardIds(request, projectId)
+  await expect.poll(async () => (await readSelectionTool(BASE)).selection.map((shape) => shape.id))
+    .toEqual([cardId])
+  await page.keyboard.press('Escape')
+
+  page.once('dialog', (dialog) => dialog.accept(renamedName))
+  await page.getByTestId('project-switcher').click()
+  await page.getByTestId('project-rename').click()
+  await expect(page.getByTestId('project-switcher')).toContainText(renamedName)
+
+  await expect.poll(async () => {
+    const selection = await readSelectionTool(BASE)
+    return { project: selection.project, ids: selection.selection.map((shape) => shape.id) }
+  }).toEqual({ project: renamedId, ids: [cardId] })
 })

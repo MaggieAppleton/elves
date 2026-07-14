@@ -98,6 +98,13 @@ const DEFAULT_SPLIT = 0.6 // canvas gets 60% in split by default
 const MIN_SPLIT = 0.18
 const MAX_SPLIT = 0.82
 
+function realtimeStatusLabel(status: RealtimeStatus): string {
+  if (status === 'connected') return 'Connected — live agent updates are active'
+  if (status === 'connecting') return 'Connecting live agent updates…'
+  if (status === 'reconnecting') return 'Reconnecting — some agent changes may be delayed'
+  return 'Disconnected — live agent updates may be delayed; canvas saves use HTTP'
+}
+
 // Phosphor "Plus" (regular weight), inlined to avoid pulling in the whole icon package.
 function PlusIcon() {
   return (
@@ -122,6 +129,8 @@ export default function App() {
   const [showTools, setShowTools] = useState(false)
   const [linkPromptOpen, setLinkPromptOpen] = useState(false)
   const [agentBoxOpen, setAgentBoxOpen] = useState(false)
+  const [agentRunning, setAgentRunning] = useState(false)
+  const [reviewRequestPending, setReviewRequestPending] = useState(false)
   // How many shapes are selected right now, kept live so the agent box can show
   // its scope ("N selected" vs "Whole canvas") and tell the agent whether to
   // read_selection or read_map.
@@ -130,6 +139,13 @@ export default function App() {
   const editorRef = useRef<Editor | null>(null)
   const canvasMountRef = useRef<AppCanvasMount | null>(null)
   const transitionRef = useRef<Promise<void> | null>(null)
+  const canvasMutationsLocked = !editor || transitioning ||
+    canvasWriteStatus === 'renaming' || canvasWriteStatus === 'rename-ambiguous'
+  // Server-side agent/review runs cannot join the local canvas drain. Keep the
+  // project identity fixed until they settle or the user cancels them.
+  const activeServerMutation = agentRunning || reviewRequestPending || reviews.some(
+    (review) => review.status === 'pending' || review.status === 'in-progress',
+  )
   // Project ids can repeat across an A → B → A switch, so id equality alone
   // cannot identify the review lifecycle that launched an async fetch. Bump a
   // visit token on every switch and require completions to match it.
@@ -252,31 +268,43 @@ export default function App() {
   }
 
   const handleSummonReview = (personality: PersonalityId, focus: string | null) => {
+    if (canvasMutationsLocked) return
     const pid = currentProjectId
     if (!pid) return
     const visit = reviewVisitRef.current
+    setReviewRequestPending(true)
     // The websocket echo will also land; setting from the fetch keeps the panel
     // truthful even if the socket is down.
     summonReview(pid, personality, focus)
       .then(() => refreshReviewsForVisit(pid, visit))
       .catch((err) => console.error('Elves: failed to summon review', err))
+      .finally(() => setReviewRequestPending(false))
   }
 
   const handleDismissReview = (reviewId: string) => {
+    if (canvasMutationsLocked) return
     const pid = currentProjectId
     if (!pid) return
     const visit = reviewVisitRef.current
+    setReviewRequestPending(true)
     dismissReview(pid, reviewId)
       .then(() => refreshReviewsForVisit(pid, visit))
       .catch((err) => console.error('Elves: failed to dismiss review', err))
+      .finally(() => setReviewRequestPending(false))
   }
 
   const handleRetryReview = (reviewId: string) => {
+    if (canvasMutationsLocked) return
     const pid = currentProjectId
     if (!pid) return
     // The launch itself is fire-and-forget on the server; the WS broadcast
     // carries the resulting pending → in-progress transition to the panel.
-    retryReview(pid, reviewId).catch((err) => console.error('Elves: failed to retry review', err))
+    const visit = reviewVisitRef.current
+    setReviewRequestPending(true)
+    retryReview(pid, reviewId)
+      .then(() => refreshReviewsForVisit(pid, visit))
+      .catch((err) => console.error('Elves: failed to retry review', err))
+      .finally(() => setReviewRequestPending(false))
   }
 
   // Presence is keyed by shape id; dropping it on project switch is cheap
@@ -339,7 +367,7 @@ export default function App() {
   // slash there. Capture phase so we decide before tldraw sees the key.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (linkPromptOpen) return
+      if (linkPromptOpen || canvasMutationsLocked) return
       if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return
       const el = document.activeElement as HTMLElement | null
       const tag = el?.tagName
@@ -350,7 +378,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [linkPromptOpen])
+  }, [linkPromptOpen, canvasMutationsLocked])
 
   // Keep the agent box's scope in sync with the live canvas selection. Selection
   // lives on session-scoped records, so we listen there; React bails on an
@@ -471,7 +499,9 @@ export default function App() {
         const ed = mount.editor
         if (!ready || canvasMountRef.current !== mount || ed.isDisposed) return
         if (editorRef.current === ed) return
-        mount.setSelectionStop(trackSelection(ed, { getProjectId: () => mount.project.id }))
+        mount.restartSelection(() =>
+          trackSelection(ed, { getProjectId: () => mount.project.id }),
+        )
         ed.registerExternalContentHandler('files', async ({ files, point }) => {
           for (const file of files) {
             if (!file.type.startsWith('image/')) continue
@@ -642,7 +672,7 @@ export default function App() {
   }
 
   const switchProject = (id: string) => runTransition(async () => {
-    if (id === currentProjectId) return
+    if (id === currentProjectId || activeServerMutation) return
     const mount = canvasMountRef.current
     if (mount) {
       try {
@@ -664,6 +694,9 @@ export default function App() {
 
   const adoptRenamedProject = (mount: AppCanvasMount, oldId: string, updated: Project) => {
     mount.adoptProject(updated)
+    mount.restartSelection(() =>
+      trackSelection(mount.editor, { getProjectId: () => mount.project.id }),
+    )
     if (updated.id !== oldId) migrateProjectLocalStorage(oldId, updated.id)
     localStorage.setItem(LAST_PROJECT_KEY, updated.id)
     setCurrentProjectId(updated.id)
@@ -673,6 +706,7 @@ export default function App() {
   }
 
   const createFlow = async () => {
+    if (activeServerMutation) return
     const name = window.prompt('New project name')?.trim()
     if (!name) return
     try {
@@ -685,7 +719,7 @@ export default function App() {
   }
 
   const renameTo = (name: string) => runTransition(async () => {
-    if (!currentProjectId) return
+    if (!currentProjectId || activeServerMutation) return
     const mount = canvasMountRef.current
     if (!mount) return
     const ambiguousRetry = canvasWriteStatus === 'rename-ambiguous' &&
@@ -706,11 +740,19 @@ export default function App() {
       }
       adoptRenamedProject(mount, oldId, updated)
       setPendingRenameName(null)
-      try {
-        setProjects(await listProjects())
-      } catch (err) {
-        console.error('Elves: failed to refresh projects after rename', err)
-      }
+      void listProjects()
+        .then((list) => {
+          if (canvasMountRef.current === mount &&
+            mount.writeCoordinator.ownsProject(updated.id)) setProjects(list)
+        })
+        .catch((err) => console.error('Elves: failed to refresh projects after rename', err))
+      const reviewVisit = reviewVisitRef.current
+      void fetchReviews(updated.id)
+        .then((list) => {
+          if (reviewVisitRef.current === reviewVisit && canvasMountRef.current === mount &&
+            mount.writeCoordinator.ownsProject(updated.id)) setReviews(list)
+        })
+        .catch((err) => console.error('Elves: failed to refresh reviews after rename', err))
     } catch (err) {
       console.error('Elves: failed to rename project', err)
     } finally {
@@ -755,8 +797,7 @@ export default function App() {
   const canvasWidth = view === 'canvas' ? '100%' : view === 'draft' ? '0%' : `${split * 100}%`
   const draftWidth = view === 'canvas' ? '0%' : view === 'draft' ? '100%' : `${(1 - split) * 100}%`
   const writeStatusLabel = canvasWriteStatusLabel(canvasWriteStatus)
-  const canvasMutationsLocked = !editor || transitioning ||
-    canvasWriteStatus === 'renaming' || canvasWriteStatus === 'rename-ambiguous'
+  const realtimeLabel = realtimeStatusLabel(realtimeStatus)
 
   return (
     <div id="app-root" className={showTools ? undefined : 'elves-hide-tools'}>
@@ -769,6 +810,8 @@ export default function App() {
         open={agentBoxOpen}
         projectId={currentProjectId}
         selectedCount={selectedCount}
+        disabled={canvasMutationsLocked}
+        onRunningChange={setAgentRunning}
         onClose={() => setAgentBoxOpen(false)}
       />
       {/* Canvas-editing chrome is only meaningful when the canvas is visible. */}
@@ -801,7 +844,9 @@ export default function App() {
           aria-label={writeStatusLabel}
           data-write-status={canvasWriteStatus}
           title={writeStatusLabel}
-        />
+        >
+          <span className="elves-status-text">{writeStatusLabel}</span>
+        </div>
         {canvasWriteStatus === 'error' && !editor && (
           <button className="elves-status-action" onClick={retryCanvasInitialization}>
             Retry canvas
@@ -820,20 +865,14 @@ export default function App() {
         <div
           className="elves-realtime-status"
           data-status={realtimeStatus}
-          title={
-            realtimeStatus === 'connected'
-              ? 'Connected — your changes are saving'
-              : realtimeStatus === 'connecting'
-                ? 'Connecting…'
-                : realtimeStatus === 'reconnecting'
-                  ? 'Reconnecting — some agent changes may be delayed'
-                  : 'Disconnected — the server is not running, so your changes are NOT being saved'
-          }
+          aria-label={realtimeLabel}
+          title={realtimeLabel}
         />
         <ReviewPanel
           projectId={currentProjectId}
           editor={editor}
           reviews={reviews}
+          disabled={canvasMutationsLocked}
           onSummon={handleSummonReview}
           onDismiss={handleDismissReview}
           onRetry={handleRetryReview}
@@ -841,7 +880,7 @@ export default function App() {
         <ProjectSwitcher
           projects={projects}
           currentId={currentProjectId}
-          disabled={transitioning || canvasWriteStatus === 'renaming' ||
+          disabled={activeServerMutation || transitioning || canvasWriteStatus === 'renaming' ||
             canvasWriteStatus === 'rename-ambiguous'}
           onSwitch={switchProject}
           onCreate={createFlow}
@@ -928,7 +967,7 @@ export default function App() {
           style={{ width: draftWidth }}
           aria-hidden={view === 'canvas'}
         >
-          <DraftPane editor={editor} onSelectCard={onSelectCard} />
+          <DraftPane editor={editor} readOnly={canvasMutationsLocked} onSelectCard={onSelectCard} />
         </div>
         <DraftDrawerControls
           view={view}
