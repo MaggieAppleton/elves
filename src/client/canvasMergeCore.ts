@@ -9,6 +9,7 @@ import {
   mergeCardComments,
 } from './canvasMergeComments'
 import { validateBoundary } from './canvasMergeBoundary'
+import { finalizeRecordSummaries } from './canvasMergeSummaries'
 import type {
   CanvasMergeConflict,
   CanvasMergeInput,
@@ -48,6 +49,14 @@ function setOwn(target: Record<string, unknown>, key: string, value: unknown): v
     configurable: true,
     writable: true,
   })
+}
+
+function setDocumentRecord(
+  document: DocumentRecords,
+  recordId: string,
+  record: DocumentRecord,
+): void {
+  setOwn(document, recordId, finalizeRecordSummaries(record))
 }
 
 function cloneValue<T>(value: T): T {
@@ -227,7 +236,7 @@ export function mergeCanvasRecords(input: CanvasMergeInput): CanvasMergeResult {
       if (local === MISSING || remote === MISSING) {
         const source = local === MISSING ? 'remote' : 'local'
         const added = (local === MISSING ? remote : local) as DocumentRecord
-        setOwn(document, recordId, finalizeAddedCardRecord(
+        setDocumentRecord(document, recordId, finalizeAddedCardRecord(
           added,
           [source],
           source === 'remote',
@@ -235,7 +244,7 @@ export function mergeCanvasRecords(input: CanvasMergeInput): CanvasMergeResult {
           cloneValue,
         ))
       } else if (structuralEqual(local, remote)) {
-        setOwn(document, recordId, finalizeAddedCardRecord(
+        setDocumentRecord(document, recordId, finalizeAddedCardRecord(
           local as DocumentRecord,
           ['local', 'remote'],
           true,
@@ -263,7 +272,7 @@ export function mergeCanvasRecords(input: CanvasMergeInput): CanvasMergeResult {
       remote as Record<string, unknown>,
     )
     const merged = mergeSlot(base, local, remote, recordId, [], conflicts, domain)
-    if (merged !== MISSING) setOwn(document, recordId, merged as DocumentRecord)
+    if (merged !== MISSING) setDocumentRecord(document, recordId, merged as DocumentRecord)
   }
 
   return conflicts.length > 0 ? { ok: false, conflicts } : { ok: true, document }

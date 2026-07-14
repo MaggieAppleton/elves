@@ -1,6 +1,9 @@
+import { SUMMARY_KEYS } from './canvasMergeSummaries'
+
 export interface CanvasMergeDomainContext {
   isShape: boolean
   isCard: boolean
+  isQuestion: boolean
 }
 
 export interface CanvasAtomicFieldGroup {
@@ -21,6 +24,7 @@ export function canvasMergeDomainContext(
   return {
     isShape,
     isCard: isShape && records.every((record) => record.type === 'card'),
+    isQuestion: isShape && records.every((record) => record.type === 'question'),
   }
 }
 
@@ -32,7 +36,17 @@ export function atomicFieldGroupsAt(
     return [{ keys: LAYOUT_KEYS, conflictPath: ['layout'] }]
   }
   if (context.isCard && path.length === 1 && path[0] === 'props') {
-    return [{ keys: AUTHORSHIP_KEYS, conflictPath: ['props', 'authorship'] }]
+    return [
+      { keys: AUTHORSHIP_KEYS, conflictPath: ['props', 'authorship'] },
+      { keys: SUMMARY_KEYS, conflictPath: ['props', 'summary'] },
+    ]
+  }
+  if (context.isQuestion && path.length === 1 && path[0] === 'props') {
+    return [{ keys: SUMMARY_KEYS, conflictPath: ['props', 'summary'] }]
+  }
+  if (context.isCard && path.length === 3 &&
+    path[0] === 'props' && path[1] === 'comments') {
+    return [{ keys: SUMMARY_KEYS, conflictPath: [...path, 'summary'] }]
   }
   return []
 }
