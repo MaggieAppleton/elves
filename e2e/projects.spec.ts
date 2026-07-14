@@ -120,7 +120,7 @@ test('project switcher follows the menu keyboard and focus model', async ({ page
   await expect(trigger).toBeFocused()
 })
 
-test('a stale project load cannot reclaim the active project lifecycle', async ({ page, request }) => {
+test('a project switch stays put until the current mount has initialized', async ({ page, request }) => {
   const stamp = Date.now()
   const alpha = `Slow Alpha ${stamp}`
   const beta = `Active Beta ${stamp}`
@@ -136,8 +136,8 @@ test('a stale project load cannot reclaim the active project lifecycle', async (
   await expect.poll(async () => (await serverCardIds(request, betaId)).length).toBe(1)
   const [betaCardId] = await serverCardIds(request, betaId)
 
-  // Reload into Alpha, but hold its initial canvas GET until Beta has mounted and
-  // established its own autosave + selection reporters.
+  // Reload into Alpha, but hold its initial canvas response. A switch cannot
+  // bypass the coordinator's initialization/flush barrier.
   await page.evaluate((id) => localStorage.setItem('elves:lastProject', id), alphaId)
   let releaseAlpha!: () => void
   const alphaGate = new Promise<void>((resolve) => {
@@ -149,7 +149,10 @@ test('a stale project load cannot reclaim the active project lifecycle', async (
     async (route) => {
       if (route.request().method() === 'GET' && !heldAlpha) {
         heldAlpha = true
+        const response = await route.fetch()
         await alphaGate
+        await route.fulfill({ response })
+        return
       }
       await route.continue()
     },
@@ -162,17 +165,16 @@ test('a stale project load cannot reclaim the active project lifecycle', async (
 
   await page.getByTestId('project-switcher').click()
   await page.getByRole('menuitemradio', { name: beta }).click()
-  await expect(page.locator('.elves-card--prose')).toContainText('beta card')
-  await expect
-    .poll(async () => (await readSelectionTool(BASE)).selection.map((shape) => shape.id))
-    .toEqual([betaCardId])
+  await page.waitForTimeout(200)
+  await expect(page.getByTestId('project-switcher')).toContainText(alpha)
+  await expect(page.getByTestId('new-prose')).toBeDisabled()
 
-  // Alpha's late response must be ignored. Before the fix it installs Alpha's
-  // selection reporter under Beta's project id, replacing the selection with an
-  // invalid Alpha card id (read_selection consequently returns []).
   releaseAlpha()
   await staleAlphaLoaded
-  await page.waitForTimeout(250) // allow any wrongly installed reporter's 200ms debounce to fire
+  await expect(page.getByTestId('new-prose')).toBeEnabled()
+  await page.getByTestId('project-switcher').click()
+  await page.getByRole('menuitemradio', { name: beta }).click()
+  await expect(page.locator('.elves-card--prose')).toContainText('beta card')
   await expect
     .poll(async () => (await readSelectionTool(BASE)).selection.map((shape) => shape.id))
     .toEqual([betaCardId])
@@ -189,10 +191,9 @@ test('a stale project load cannot reclaim the active project lifecycle', async (
   await expect(page.locator('.elves-card--prose')).toContainText('beta still owns autosave')
 })
 
-test('a stale rejected load cannot clear the current mount pending changes', async ({ page, request }) => {
+test('retrying a rejected initialization catches up realtime canvas changes', async ({ page, request }) => {
   const stamp = Date.now()
   const alpha = `Retry Alpha ${stamp}`
-  const beta = `Bridge Beta ${stamp}`
   const agentText = 'arrived during the current alpha load'
   let sawAgentBroadcast!: () => void
   const agentBroadcast = new Promise<void>((resolve) => {
@@ -207,9 +208,7 @@ test('a stale rejected load cannot clear the current mount pending changes', asy
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
   const alphaId = await createPersistedProseProject(page, alpha, 'alpha seed')
-  const betaId = await createPersistedProseProject(page, beta, 'beta seed')
   await expect.poll(async () => (await serverCardIds(request, alphaId)).length).toBe(1)
-  await expect.poll(async () => (await serverCardIds(request, betaId)).length).toBe(1)
 
   await page.evaluate((id) => localStorage.setItem('elves:lastProject', id), alphaId)
   let rejectOldAlpha!: () => void
@@ -246,21 +245,8 @@ test('a stale rejected load cannot clear the current mount pending changes', asy
     },
   )
 
-  const loadErrors: string[] = []
-  page.on('console', (message) => {
-    if (message.type() === 'error') loadErrors.push(message.text())
-  })
   await page.reload()
   await expect(page.getByTestId('project-switcher')).toContainText(alpha)
-  await page.getByTestId('project-switcher').click()
-  await page.getByRole('menuitemradio', { name: beta }).click()
-  await expect(page.locator('.elves-card--prose')).toContainText('beta seed')
-  await page.getByTestId('project-switcher').click()
-  await page.getByRole('menuitemradio', { name: alpha }).click()
-  await currentAlphaCaptured
-
-  // The new Alpha request has already captured its stale snapshot. This change
-  // can reach the live editor only through its buffered realtime catch-up.
   await createNoteCardTool(BASE, alphaId, { text: agentText, x: 160, y: 160 })
   await agentBroadcast
   const oldAlphaFailed = page.waitForEvent('requestfailed', {
@@ -268,11 +254,12 @@ test('a stale rejected load cannot clear the current mount pending changes', asy
   })
   rejectOldAlpha()
   await oldAlphaFailed
-  await page.waitForTimeout(100)
+  await expect(page.getByRole('button', { name: 'Retry canvas' })).toBeVisible()
+  await page.getByRole('button', { name: 'Retry canvas' }).click()
+  await currentAlphaCaptured
   releaseCurrentAlpha()
 
   await expect(page.locator('.elves-card--note', { hasText: agentText })).toBeVisible({ timeout: 15000 })
-  expect(loadErrors.filter((message) => message.includes('canvas load failed'))).toEqual([])
 })
 
 test('a stale review load cannot overwrite a newer visit to the same project', async ({ page, request }) => {

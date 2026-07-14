@@ -31,8 +31,9 @@ export function renameHarness(options: {
     ...originalProject, id: 'final', name,
   })))
   const listProjects = vi.fn(options.listProjects ?? (async () => [originalProject]))
+  const readOnly = vi.fn()
   const editor: CanvasWriteCoordinatorEditor = {
-    setReadOnly: () => {},
+    setReadOnly: readOnly,
     loadInitialSnapshot: (snapshot) => {
       if (snapshot.document !== null) current = structuredClone(snapshot.document as DocumentRecords)
     },
@@ -64,6 +65,7 @@ export function renameHarness(options: {
     renameProject,
     listProjects,
     statuses,
+    readOnly,
     get document() { return current },
     setDocument(next: DocumentRecords) { current = structuredClone(next) },
     setEditing(next: boolean) {

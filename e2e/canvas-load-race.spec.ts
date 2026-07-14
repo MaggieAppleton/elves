@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { createNoteCardTool } from '../mcp/tools'
-import { BASE, resetProject } from './helpers'
+import { BASE, resetProject, serverCardIds } from './helpers'
 
 // Deterministic reproduction of the "change-set dropped before the canvas
 // finishes loading" race (issue #9). The flaky suite hits it by accident when
@@ -15,8 +15,18 @@ test.beforeEach(async ({ request }) => {
   projectId = await resetProject(request)
 })
 
-test('a change-set that arrives before the canvas finishes loading still renders', async ({ page }) => {
-  // Hold ONLY the first canvas GET (handleMount's loadCanvas) open for a beat so
+test('a change-set that arrives before the canvas finishes loading still renders', async ({ page, request }) => {
+  // Seed the canvas once. A brand-new project intentionally rejects agent
+  // changes until its first document exists; this race concerns an existing
+  // document reloading while a persisted change arrives.
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await page.getByTestId('new-prose').click()
+  await page.locator('.elves-card__editor').fill('persisted seed')
+  await page.keyboard.press('Escape')
+  await expect.poll(async () => (await serverCardIds(request, projectId)).length).toBe(1)
+
+  // Hold ONLY the reload's first canvas GET open for a beat so
   // the MCP create below lands squarely inside the load window. The post-fix
   // reconcile re-fetches the canvas, so let every later GET through untouched or
   // the catch-up would be delayed too. WebSocket broadcasts aren't HTTP, so the
@@ -27,13 +37,16 @@ test('a change-set that arrives before the canvas finishes loading still renders
     async (route) => {
       if (route.request().method() === 'GET' && !firstCanvasGetHeld) {
         firstCanvasGetHeld = true
+        const response = await route.fetch()
         await new Promise((resolve) => setTimeout(resolve, 1500))
+        await route.fulfill({ response })
+        return
       }
       await route.continue()
     },
   )
 
-  await page.goto('/')
+  await page.reload()
   // The canvas element mounts (and is visible) well before its document loads —
   // which is exactly the window the bug lives in.
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })

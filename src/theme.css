@@ -479,6 +479,11 @@ body {
   outline: none;
   box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring);
 }
+.elves-toolbar button:disabled,
+.elves-tools-toggle:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
 
 @media (prefers-reduced-motion: reduce) {
   .elves-tools-toggle,
@@ -503,6 +508,33 @@ body {
 .elves-realtime-status[data-status='disconnected'] {
   background: #d9534f;
   animation: elves-status-pulse 1.4s ease-in-out infinite;
+}
+
+/* Canvas persistence is distinct from WebSocket connectivity: the first dot
+   reports write ownership/progress, the second reports transport reachability. */
+.elves-canvas-write-status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #4a9e5c;
+}
+.elves-canvas-write-status[data-write-status='loading'],
+.elves-canvas-write-status[data-write-status='saving'],
+.elves-canvas-write-status[data-write-status='renaming'] { background: #d9a441; }
+.elves-canvas-write-status[data-write-status='unsaved'] { background: #b8843e; }
+.elves-canvas-write-status[data-write-status='syncing'] { background: #527da8; }
+.elves-canvas-write-status[data-write-status='conflict'],
+.elves-canvas-write-status[data-write-status='error'] { background: #d9534f; }
+.elves-canvas-write-status[data-write-status='rename-ambiguous'] { background: #8b62a8; }
+.elves-status-action {
+  border: 1px solid var(--elves-border);
+  border-radius: 7px;
+  background: var(--elves-surface);
+  color: var(--elves-ink);
+  padding: 5px 8px;
+  font: 500 12px/1 var(--elves-card-font);
+  cursor: pointer;
 }
 
 /* Compositor-only pulse (opacity + scale) so the frame loop never triggers

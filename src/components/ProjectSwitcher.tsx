@@ -4,6 +4,7 @@ import type { Project } from '../client/persistence'
 interface Props {
   projects: Project[]
   currentId: string | null
+  disabled?: boolean
   onSwitch: (id: string) => void
   onCreate: () => void
   onRename: () => void
@@ -25,7 +26,14 @@ function CheckIcon() {
   )
 }
 
-export function ProjectSwitcher({ projects, currentId, onSwitch, onCreate, onRename }: Props) {
+export function ProjectSwitcher({
+  projects,
+  currentId,
+  disabled = false,
+  onSwitch,
+  onCreate,
+  onRename,
+}: Props) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -97,6 +105,7 @@ export function ProjectSwitcher({ projects, currentId, onSwitch, onCreate, onRen
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls="project-switcher-menu"
+        disabled={disabled}
         onClick={() => {
           if (open) setOpen(false)
           else openAt(0)

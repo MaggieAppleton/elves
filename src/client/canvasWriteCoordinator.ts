@@ -483,6 +483,9 @@ export function createCanvasWriteCoordinator(
     emitStatus: (status) => {
       if (!disposed) options.onStatus?.(status)
     },
+    setReadOnly: (readOnly) => {
+      if (!disposed) editor.setReadOnly(readOnly)
+    },
     isDisposed: () => disposed,
     isDisposedError: (error) => error instanceof CanvasWriteCoordinatorDisposedError,
   })

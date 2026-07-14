@@ -51,12 +51,14 @@ test('a later same-name call retries reconciliation without another initial PATC
   await expect(h.coordinator.renameProject('Report')).rejects.toBeInstanceOf(
     CanvasRenameAmbiguousError,
   )
+  expect(h.readOnly).toHaveBeenLastCalledWith(true)
 
   const retrying = h.coordinator.renameProject('Report')
   await tick()
   expect(h.statuses.at(-1)).toBe('rename-ambiguous')
   retryList.resolve([committed])
   await expect(retrying).resolves.toEqual(committed)
+  expect(h.readOnly).toHaveBeenLastCalledWith(false)
 
   expect(h.renameProject).toHaveBeenCalledTimes(1)
   expect(h.listProjects).toHaveBeenCalledTimes(2)

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Tldraw, Editor, getSnapshot, loadSnapshot, createShapeId, type TLShapeId } from 'tldraw'
+import { Tldraw, Editor, createShapeId, type TLShapeId } from 'tldraw'
 import { TextAUnderline, Notepad, ImagesSquare, Link, Slideshow, SelectionPlus } from '@phosphor-icons/react'
 import 'tldraw/tldraw.css'
 import './theme.css'
@@ -17,23 +17,18 @@ import { cascadeOffset } from './model/layout'
 import { clearCardPosition } from './client/canvasLayout'
 import { requestUnfurl } from './client/references'
 import {
-  loadCanvas,
-  saveCanvas,
-  debounce,
-  createSaver,
+  loadCanvasVersioned,
+  saveCanvasVersioned,
   listProjects,
   createProject,
   renameProject,
   type Project,
 } from './client/persistence'
 import { uploadAsset, setAssetProject } from './client/assets'
-import { applyChangeSet } from './apply/applyChangeSet'
-import type { ChangeSet } from './model/changeset'
 import { isSummaryOp } from './model/changeset'
 import { connectRealtime, RealtimeStatus } from './client/realtime'
 import { trackSelection } from './client/selection'
 import { markDoing, markLooking, clearPresence } from './client/presence'
-import { shapeRecordsById, diffChangedIds } from './client/resync'
 import { ProjectSwitcher } from './components/ProjectSwitcher'
 import { ReviewPanel } from './components/ReviewPanel'
 import { fetchReviews, summonReview, dismissReview, retryReview } from './client/reviews'
@@ -44,9 +39,28 @@ import { DraftPane } from './components/DraftPane'
 import { DraftDrawerControls } from './components/DraftDrawerControls'
 import { type ViewState, moreDraft, lessDraft } from './client/viewMachine'
 import { prefersReducedMotion } from './client/motion'
+import {
+  createCanvasWriteCoordinator,
+  type CanvasWriteStatus,
+} from './client/canvasWriteCoordinator'
+import { createTldrawCanvasWriteCoordinatorEditor } from './client/tldrawCanvasWriteCoordinatorEditor'
+import {
+  canvasWriteStatusLabel,
+  committedRenameProject,
+  createAppCanvasMount,
+  flushCanvasMountForSwitch,
+  requestOwnedRemoteSync,
+  type AppCanvasMount,
+} from './client/appCanvasMount'
 
 const shapeUtils = [CardShapeUtil, SectionShapeUtil, QuestionShapeUtil]
 const components = { SelectionForeground: CardSelectionForeground }
+const canvasTransport = {
+  load: loadCanvasVersioned,
+  save: saveCanvasVersioned,
+  renameProject,
+  listProjects,
+}
 
 // A dismissed question is answered/waved off: hidden from render AND hit-testing
 // (so it can't linger as an invisible-yet-selectable ghost), but kept in the
@@ -93,27 +107,15 @@ function PlusIcon() {
   )
 }
 
-// Apply a change-set to the loaded store and persist the result. Shared by the
-// live realtime handler and the post-load catch-up, so a change-set replayed
-// after the canvas finishes loading behaves exactly like one applied live —
-// same document edit, same "doing" glow, same save.
-function applyAndPersist(ed: Editor, projectId: string, cs: ChangeSet) {
-  const affected = applyChangeSet(ed, cs)
-  // Glow the cards the agent just acted on ("doing"). Summary/gist reconciles
-  // (cards, comments, and questions) are background machine work, not the
-  // agent working — skip them so the board doesn't flicker orange every time
-  // a gist settles.
-  if (cs.ops.some((op) => !isSummaryOp(op))) markDoing(affected)
-  saveCanvas(projectId, getSnapshot(ed.store)).catch((err) =>
-    console.error('Elves: canvas save failed', err),
-  )
-}
-
 export default function App() {
   const [projects, setProjects] = useState<Project[] | null>(null) // null = still loading
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
   const [editor, setEditor] = useState<Editor | null>(null)
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>('connecting')
+  const [canvasWriteStatus, setCanvasWriteStatus] = useState<CanvasWriteStatus>('loading')
+  const [canvasMountKey, setCanvasMountKey] = useState(0)
+  const [transitioning, setTransitioning] = useState(false)
+  const [pendingRenameName, setPendingRenameName] = useState<string | null>(null)
   // The open project's review passes (see src/model/reviews.ts) — fetched on
   // project switch, kept live by the realtime `reviews` message.
   const [reviews, setReviews] = useState<Review[]>([])
@@ -126,7 +128,8 @@ export default function App() {
   const [selectedCount, setSelectedCount] = useState(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const editorRef = useRef<Editor | null>(null)
-  const projectIdRef = useRef<string | null>(null)
+  const canvasMountRef = useRef<AppCanvasMount | null>(null)
+  const transitionRef = useRef<Promise<void> | null>(null)
   // Project ids can repeat across an A → B → A switch, so id equality alone
   // cannot identify the review lifecycle that launched an async fetch. Bump a
   // visit token on every switch and require completions to match it.
@@ -135,42 +138,9 @@ export default function App() {
   // when it starts; a later read or realtime snapshot advances the revision so
   // an older completion cannot replace newer review state.
   const reviewRevisionRef = useRef(0)
-  // False until the open project's canvas has loaded from disk. Every save path
-  // checks this so a failed (or not-yet-finished) load can't serialize an empty
-  // store over real on-disk data.
-  const canvasLoadedRef = useRef(false)
-  // Change-sets that arrive in the window between the canvas element mounting and
-  // its document finishing loading can't be applied yet — doing so and saving
-  // would clobber the real on-disk document (see the realtime handler). Rather
-  // than drop them and lose the agent's action, buffer them here, tagged with
-  // their target project, and reconcile once the load resolves.
-  const pendingChangeSetsRef = useRef<{ projectId: string; cs: ChangeSet }[]>([])
-  // Coalesces steady-state resyncs (see resyncCanvas / scheduleResync below): a
-  // fetch already in flight absorbs any broadcasts that arrive while it's
-  // pending, rather than racing a second overlapping loadCanvas.
-  // `deferred` holds a resync that arrived while the user was editing text: a
-  // full loadSnapshot mid-edit resets tldraw's editingShapeId (dropping them to
-  // select mode) and reverts keystrokes newer than the last autosave. The
-  // instance_page_state after-change handler (handleMount) flushes it the moment
-  // editing ends.
-  const resyncStateRef = useRef<{ inFlight: boolean; pendingGlow: boolean; deferred: boolean }>({
-    inFlight: false,
-    pendingGlow: false,
-    deferred: false,
-  })
-  // The open canvas's autosave, exposed so the resync can force it to the server
-  // before re-fetching. Without this, a resync that fires while keystrokes are
-  // still held in the 500ms debounce reloads a stale snapshot over them — the
-  // note-blur truncation bug. Rewired on every mount (createSaver below).
-  const autosaveRef = useRef<{ flush: () => void; whenIdle: () => Promise<void> } | null>(null)
   // Counts spawns via addCard/addSection so each new card/section cascades
   // away from the last instead of stacking invisibly at the viewport center.
   const spawnCountRef = useRef(0)
-  // Disposes the selection reporter (trackSelection). Held so a project switch
-  // can stop the outgoing editor's reactor before the new one starts, and the
-  // final unmount can too — a reactor left running against a torn-down store
-  // would fire on a disposed editor.
-  const selectionStopRef = useRef<(() => void) | null>(null)
 
   // Three view states — canvas only, split, draft only — plus the split ratio
   // (canvas fraction). tldraw stays MOUNTED in all three; draft-only just
@@ -182,9 +152,7 @@ export default function App() {
   const stageRef = useRef<HTMLDivElement>(null)
   const canvasPaneRef = useRef<HTMLDivElement>(null)
 
-  // Keep the refs + the asset base in sync during render so they are correct the
-  // instant tldraw's onMount fires and whenever a card image renders.
-  projectIdRef.current = currentProjectId
+  // Asset binding is intentionally left for the separate #137 cutover.
   setAssetProject(currentProjectId)
 
   // Load the project list once; open the last-used project (or the first).
@@ -203,64 +171,32 @@ export default function App() {
       })
   }, [])
 
-  // A disconnected-but-open tab can't just resume where it left off: the
-  // server persists change-sets to disk independently, so this tab's in-memory
-  // store may be stale relative to disk by the time the socket reconnects.
-  // Re-fetch and loadSnapshot the CURRENTLY open project's authoritative
-  // canvas — mirroring reconcilePendingChangeSets — before any local autosave
-  // gets a chance to write the stale in-memory document back over it.
   const resyncOnReconnect = () => {
-    const ed = editorRef.current
-    const pid = projectIdRef.current
-    if (!ed || !pid || !canvasLoadedRef.current) return
-    loadCanvas(pid)
-      .then((fresh: any) => {
-        // A project switch (or unmount) may have moved on while we were fetching.
-        if (projectIdRef.current !== pid || editorRef.current !== ed) return
-        // Wrap in mergeRemoteChanges so the load is tagged source:'remote', not
-        // 'user' — otherwise it would trip the {source:'user'} autosave listener
-        // and schedule an echo save that could clobber a change the agent
-        // persisted in the ~500ms debounce window after this fetch.
-        if (fresh?.document) ed.store.mergeRemoteChanges(() => loadSnapshot(ed.store, fresh))
-      })
-      .catch((err) => console.error('Elves: resync after reconnect failed', err))
+    const mount = canvasMountRef.current
+    if (!mount) return
+    void requestOwnedRemoteSync(mount, mount.project.id, false).catch((err) =>
+      console.error('Elves: resync after reconnect failed', err),
+    )
   }
 
-  // One realtime connection for the app's lifetime. Apply a change-set only when
-  // it targets the project currently open (refs stay current across switches).
+  // One external subscription for the app lifetime. Every callback re-checks
+  // mount ownership so stale socket events cannot reach a replaced editor.
   useEffect(
     () =>
       connectRealtime(
         (projectId, cs) => {
-          if (projectId !== projectIdRef.current) return
-          const ed = editorRef.current
-          if (!ed) return
-          // The canvas hasn't finished loading. Applying now — onto a not-yet-
-          // loaded store — then saving would clobber the real document on disk.
-          // But silently dropping the change-set loses the agent's action for
-          // this page session (and for a brand-new project it may never have been
-          // persisted server-side, so a reload wouldn't recover it either).
-          // Buffer it; handleMount reconciles the buffer once the load resolves.
-          if (!canvasLoadedRef.current) {
-            pendingChangeSetsRef.current.push({ projectId, cs })
-            return
-          }
-          // Steady state: the server already applied AND persisted this
-          // change-set (server/app.ts) before broadcasting it verbatim. Replaying
-          // the ops here would mint a second, independent set of shape ids and
-          // then echo-save, overwriting the server's card with a diverging copy
-          // (issue #28). Re-fetch the authoritative snapshot instead — same
-          // pattern reconcilePendingChangeSets already uses for the load window.
           const glow = cs.ops.some((op) => !isSummaryOp(op))
-          scheduleResync(projectId, glow)
+          void requestOwnedRemoteSync(canvasMountRef.current, projectId, glow).catch((err) =>
+            console.error('Elves: realtime canvas sync failed', err),
+          )
         },
         (projectId, presence) => {
           // The agent is "looking" at these cards (read_cards). Ephemeral: no
           // document change, no save — just a glow on cards that actually exist
           // in the open project.
-          if (projectId !== projectIdRef.current) return
-          const ed = editorRef.current
-          if (!ed) return
+          const mount = canvasMountRef.current
+          if (!mount?.writeCoordinator.ownsProject(projectId) || !mount.initialized) return
+          const ed = mount.editor
           const present = presence.cardIds.filter((id) => ed.getShape(id as CardShape['id']))
           markLooking(present as CardShape['id'][])
         },
@@ -268,7 +204,7 @@ export default function App() {
           onStatus: setRealtimeStatus,
           onReconnect: resyncOnReconnect,
           onReviews: (projectId, next) => {
-            if (projectId === projectIdRef.current) {
+            if (canvasMountRef.current?.writeCoordinator.ownsProject(projectId)) {
               reviewRevisionRef.current++
               setReviews(next)
             }
@@ -290,7 +226,7 @@ export default function App() {
         if (
           reviewVisitRef.current === visit &&
           reviewRevisionRef.current === revision &&
-          projectIdRef.current === currentProjectId
+          canvasMountRef.current?.writeCoordinator.ownsProject(currentProjectId)
         ) {
           setReviews(list)
         }
@@ -302,13 +238,14 @@ export default function App() {
   }, [currentProjectId])
 
   const refreshReviewsForVisit = async (pid: string, visit: number) => {
-    if (reviewVisitRef.current !== visit || projectIdRef.current !== pid) return
+    if (reviewVisitRef.current !== visit ||
+      !canvasMountRef.current?.writeCoordinator.ownsProject(pid)) return
     const revision = ++reviewRevisionRef.current
     const list = await fetchReviews(pid)
     if (
       reviewVisitRef.current === visit &&
       reviewRevisionRef.current === revision &&
-      projectIdRef.current === pid
+      canvasMountRef.current?.writeCoordinator.ownsProject(pid)
     ) {
       setReviews(list)
     }
@@ -348,9 +285,10 @@ export default function App() {
     clearPresence()
   }, [currentProjectId])
 
-  // Stop the selection reporter when the app unmounts (handleMount handles the
-  // switch-to-switch handoff; this covers the final teardown).
-  useEffect(() => () => selectionStopRef.current?.(), [])
+  useEffect(() => () => {
+    canvasMountRef.current?.dispose()
+    canvasMountRef.current = null
+  }, [])
 
   // Restore this project's saved view + split ratio when it opens.
   useEffect(() => {
@@ -367,7 +305,7 @@ export default function App() {
 
   const changeView = (next: ViewState) => {
     setView(next)
-    if (projectIdRef.current) localStorage.setItem(viewKey(projectIdRef.current), next)
+    if (currentProjectId) localStorage.setItem(viewKey(currentProjectId), next)
   }
 
   // The drawer moves one step at a time: « widens toward draft, » narrows
@@ -393,7 +331,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [view, linkPromptOpen])
+  }, [view, linkPromptOpen, currentProjectId])
 
   // `/` opens the agent box — but ONLY when you're not typing. A bare key (no
   // modifier) would otherwise steal every slash you write, so bail out whenever
@@ -474,9 +412,11 @@ export default function App() {
     focusCard(cardId)
   }
 
-  const addImageCard = async (ed: Editor, file: File, point?: { x: number; y: number }) => {
-    const pid = projectIdRef.current
-    if (!pid) return
+  const addImageCard = (
+    mount: AppCanvasMount,
+    file: File,
+    point?: { x: number; y: number },
+  ) => mount.runCommand(async ({ projectId, assertCurrent }) => {
     let aspect = 0.7
     try {
       const bmp = await createImageBitmap(file)
@@ -485,164 +425,85 @@ export default function App() {
     } catch {
       /* keep default aspect */
     }
+    assertCurrent()
     const w = 280
     const h = Math.max(80, Math.round(w * aspect))
-    const assetId = await uploadAsset(pid, file)
-    const at = point ?? ed.getViewportPageBounds().center
+    const assetId = await uploadAsset(projectId, file)
+    assertCurrent()
+    const at = point ?? mount.editor.getViewportPageBounds().center
     const id = createShapeId()
-    ed.createShape<CardShape>({
+    mount.editor.createShape<CardShape>({
       id,
       type: 'card',
       x: at.x - w / 2,
       y: at.y - h / 2,
       props: { ...makeImageNoteCardProps(assetId), w, h },
     })
-    ed.select(id)
-  }
+    mount.editor.select(id)
+  })
 
   // Turn a url into a reference card: unfurl it (title/site/favicon/hero, cached
   // as local assets) and drop the type-adaptive card at the given point.
-  const addReferenceFromUrl = async (ed: Editor, url: string, point?: { x: number; y: number }) => {
-    const pid = projectIdRef.current
-    if (!pid) return
-    const reference = await requestUnfurl(pid, url)
+  const addReferenceFromUrl = (
+    mount: AppCanvasMount,
+    url: string,
+    point?: { x: number; y: number },
+  ) => mount.runCommand(async ({ projectId, assertCurrent }) => {
+    const reference = await requestUnfurl(projectId, url)
+    assertCurrent()
     const props = makeReferenceCardProps(reference)
-    const at = point ?? ed.getViewportPageBounds().center
+    const at = point ?? mount.editor.getViewportPageBounds().center
     const id = createShapeId()
-    ed.createShape<CardShape>({ id, type: 'card', x: at.x - props.w / 2, y: at.y - props.h / 2, props })
-    ed.select(id)
-  }
+    mount.editor.createShape<CardShape>({
+      id,
+      type: 'card',
+      x: at.x - props.w / 2,
+      y: at.y - props.h / 2,
+      props,
+    })
+    mount.editor.select(id)
+  })
 
-  // Re-fetch the server's authoritative snapshot and load it in place of
-  // locally replaying a change-set. Shared by the steady-state realtime handler
-  // (below) and the mount-time catch-up (reconcilePendingChangeSets, below):
-  // both need "the server already has this — go get it" rather than reapplying
-  // ops, which would mint a second set of shape ids and echo-save a diverging
-  // copy over the server's (issue #28).
-  //
-  // `loadSnapshot` replaces the store's contents wholesale, so there's nothing
-  // in the result to diff op-by-op the way applyChangeSet's return value works.
-  // Instead, snapshot the shape records just before the load and diff them
-  // against what's there right after, so callers that want the "doing" glow
-  // (steady state) can still drive it off real ids.
-  type ResyncResult =
-    | { status: 'loaded'; changedIds: TLShapeId[] }
-    // The fetch failed, or the project has no persisted document yet (a
-    // brand-new project — the server won't synthesise a tldraw schema for it).
-    | { status: 'no-document' }
-    // The project switched (or this editor unmounted) while the fetch was in
-    // flight; the response no longer applies to anything currently open.
-    | { status: 'stale' }
-  const resyncCanvas = async (ed: Editor, pid: string): Promise<ResyncResult> => {
-    // The user's latest keystrokes may still be sitting in the 500ms autosave
-    // debounce. loadSnapshot below replaces the store wholesale from the server,
-    // so fetching before that save lands would revert them — and the next
-    // debounce fire would then persist the reverted text (the note-blur
-    // truncation bug). Force the held save out and wait for it to reach the
-    // server first, so the snapshot we fetch already includes those keystrokes.
-    // POST /canvas overwrites canvas.json then re-reconciles summaries, so this
-    // can't lose a pending summary — it just re-broadcasts once editing ends.
-    autosaveRef.current?.flush()
-    await autosaveRef.current?.whenIdle()
-    if (projectIdRef.current !== pid || editorRef.current !== ed) return { status: 'stale' }
-    const before = shapeRecordsById(ed.store.allRecords())
-    let fresh: any = null
-    try {
-      fresh = await loadCanvas(pid)
-    } catch (err) {
-      console.error('Elves: resync fetch failed', err)
-    }
-    if (projectIdRef.current !== pid || editorRef.current !== ed) return { status: 'stale' }
-    if (!fresh?.document) return { status: 'no-document' }
-    // Load through the remote-changes escape hatch: loadSnapshot's store writes
-    // are otherwise tagged source:'user', which trips the {source:'user'}
-    // autosave listener and schedules an echo POST /canvas. The ids are already
-    // authoritative so that save wouldn't churn them, but the ~500ms debounce
-    // window could clobber a concurrently-persisted agent change (issue #32's
-    // hazard class). Tagging the load 'remote' excludes it from the listener.
-    // The presence-glow diff below is independent of the change source: `before`
-    // was captured above, and we re-read the store after, so markDoing still fires.
-    ed.store.mergeRemoteChanges(() => loadSnapshot(ed.store, fresh))
-    const changedIds = diffChangedIds(before, shapeRecordsById(ed.store.allRecords())) as TLShapeId[]
-    return { status: 'loaded', changedIds }
-  }
-
-  // Coalesce steady-state resyncs: a fetch already in flight absorbs any
-  // broadcasts that arrive while it's pending (accumulating whether any of them
-  // should glow) instead of racing a second overlapping loadCanvas. Once the
-  // in-flight fetch resolves, if more broadcasts arrived meanwhile it loops once
-  // more to pick up the latest state; otherwise it stops.
-  const scheduleResync = (pid: string, glow: boolean) => {
-    const state = resyncStateRef.current
-    state.pendingGlow = state.pendingGlow || glow
-    // Hold the resync while a text edit is in progress. loadSnapshot replaces the
-    // whole document, which resets editingShapeId (kicking the user out of the
-    // card they're typing in) and reverts any keystrokes newer than the last
-    // 500ms autosave. The common trigger is the user's OWN typing: each save
-    // schedules the server summariser, which ~1.5s later broadcasts a set_summary
-    // change-set back to this very tab. Deferring — not dropping — means the
-    // summary still lands once editing ends (see the flush in handleMount).
-    if (editorRef.current?.getEditingShapeId()) {
-      state.deferred = true
-      return
-    }
-    if (state.inFlight) return
-    state.inFlight = true
-    void (async () => {
-      for (;;) {
-        // The user may have entered a card between iterations; hold as above and
-        // let the editing-end flush restart us so we never load over a live edit.
-        if (editorRef.current?.getEditingShapeId()) {
-          state.deferred = true
-          break
-        }
-        const glowNow = state.pendingGlow
-        state.pendingGlow = false
-        const ed = editorRef.current
-        if (ed && projectIdRef.current === pid) {
-          const result = await resyncCanvas(ed, pid)
-          if (result.status === 'loaded' && glowNow && result.changedIds.length) {
-            markDoing(result.changedIds)
+  const activateCanvasMount = (mount: AppCanvasMount) => {
+    setCanvasWriteStatus('loading')
+    void mount.initialize()
+      .then((ready) => {
+        const ed = mount.editor
+        if (!ready || canvasMountRef.current !== mount || ed.isDisposed) return
+        if (editorRef.current === ed) return
+        mount.setSelectionStop(trackSelection(ed, { getProjectId: () => mount.project.id }))
+        ed.registerExternalContentHandler('files', async ({ files, point }) => {
+          for (const file of files) {
+            if (!file.type.startsWith('image/')) continue
+            await addImageCard(mount, file, point).catch((err) =>
+              console.error('Elves: dropped image command failed', err),
+            )
           }
-        }
-        if (!state.pendingGlow || projectIdRef.current !== pid) break
-      }
-      state.inFlight = false
-    })()
-  }
-
-  // Once the canvas has loaded, reconcile any change-sets that arrived — and were
-  // buffered — while it was still loading. Re-fetch once to tell two cases apart:
-  //  • The server persisted them (a project that already has a document): the
-  //    re-fetched snapshot is authoritative and already includes them, so reload
-  //    it rather than replay — replaying would mint duplicate cards, since create
-  //    ops assign fresh shape ids with nothing to dedupe against.
-  //  • The server only broadcast them (a brand-new project with no document yet):
-  //    nothing was persisted, so replay the buffered ops to materialise them; the
-  //    save then writes the now-real document to disk.
-  const reconcilePendingChangeSets = async (ed: Editor, pid: string) => {
-    const queued = pendingChangeSetsRef.current.filter((e) => e.projectId === pid)
-    // Reset unconditionally: anything not for `pid` is a straggler from a project
-    // whose load never finished, and can't belong to the canvas mounting now.
-    pendingChangeSetsRef.current = []
-    if (!queued.length) return
-    const result = await resyncCanvas(ed, pid)
-    if (result.status !== 'no-document') return // 'loaded' already includes them; 'stale' means nothing to do here
-    for (const { cs } of queued) applyAndPersist(ed, pid, cs)
+        })
+        ed.registerExternalContentHandler('url', async ({ url, point }) => {
+          await addReferenceFromUrl(mount, url, point).catch((err) =>
+            console.error('Elves: dropped link command failed', err),
+          )
+        })
+        editorRef.current = ed
+        setEditor(ed)
+      })
+      .catch((err) => {
+        if (canvasMountRef.current !== mount) return
+        setCanvasWriteStatus('error')
+        console.error('Elves: canvas coordinator initialization failed', err)
+      })
   }
 
   const handleMount = (ed: Editor) => {
-    editorRef.current = ed
-    setEditor(ed)
-    // Stop the previous editor's selection reporter before this one starts, so a
-    // project switch never leaves a reactor firing against the torn-down store.
-    selectionStopRef.current?.()
-    selectionStopRef.current = null
-    // A fresh mount hasn't loaded its canvas yet — hold off every save path.
-    canvasLoadedRef.current = false
-    // Drop the previous canvas's autosave so a resync can't flush a torn-down
-    // saver; handleMount rewires it once this canvas finishes loading.
-    autosaveRef.current = null
+    const project = projects?.find((candidate) => candidate.id === currentProjectId)
+    if (!project) return
+
+    canvasMountRef.current?.dispose()
+    editorRef.current = null
+    setEditor(null)
+    setCanvasWriteStatus('loading')
+
     // A click on empty canvas dismisses any open merged-card peek, like a popover.
     ed.on('event', (info) => {
       if (info.name === 'pointer_down' && info.target === 'canvas') collapseAll()
@@ -663,69 +524,36 @@ export default function App() {
       }
       return next
     })
-    // Flush a resync that was held while the user was editing (scheduleResync).
-    // The instant they leave edit mode it's safe to replace the document, so pull
-    // the server's authoritative snapshot — including any summary broadcast that
-    // arrived and was deferred mid-edit.
-    ed.sideEffects.registerAfterChangeHandler('instance_page_state', (prev, next) => {
-      if (prev.editingShapeId && !next.editingShapeId && resyncStateRef.current.deferred) {
-        resyncStateRef.current.deferred = false
-        const pid = projectIdRef.current
-        if (pid) scheduleResync(pid, false)
-      }
+
+    let mount!: AppCanvasMount
+    const writeCoordinator = createCanvasWriteCoordinator({
+      project,
+      editor: createTldrawCanvasWriteCoordinatorEditor(ed),
+      transport: canvasTransport,
+      onStatus: (status) => {
+        if (canvasMountRef.current === mount) setCanvasWriteStatus(status)
+      },
+      onRemoteChange: (changedIds, glow) => {
+        if (canvasMountRef.current === mount && glow) markDoing(changedIds as TLShapeId[])
+      },
     })
-    const pid = projectIdRef.current
-    if (!pid) return
-    const isCurrentMount = () =>
-      projectIdRef.current === pid && editorRef.current === ed && !ed.isDisposed
-    loadCanvas(pid)
-      .then((snapshot) => {
-        // This editor may have unmounted while its canvas request was in flight.
-        // A stale continuation must not load into the old store or replace the
-        // active project's autosave / selection ownership below.
-        if (!isCurrentMount()) return
-        if (snapshot?.document) loadSnapshot(ed.store, snapshot)
-        // Load succeeded — an empty-but-new project counts, since its file is
-        // legitimately empty. Only now is it safe to persist: wiring the save
-        // paths here (not in a .finally that also runs on failure) means a
-        // failed load leaves the canvas read-through and never overwrites disk.
-        canvasLoadedRef.current = true
-        const saver = createSaver(() => saveCanvas(pid, getSnapshot(ed.store)))
-        const save = debounce(saver.request, 500)
-        ed.store.listen(save, { source: 'user', scope: 'document' })
-        // Expose this canvas's autosave to the resync path (resyncCanvas), so it
-        // can flush a held save to the server before re-fetching over the store.
-        autosaveRef.current = { flush: save.flush, whenIdle: saver.whenIdle }
-        // Report this editor's selection to the server so the agent can resolve
-        // "this"/"these" (MCP read_selection). Tagged with the live project id so
-        // it's correct across switches; disposed on the next mount / unmount.
-        selectionStopRef.current = trackSelection(ed, { getProjectId: () => projectIdRef.current })
-        ed.registerExternalContentHandler('files', async ({ files, point }) => {
-          for (const file of files) {
-            if (file.type.startsWith('image/')) await addImageCard(ed, file, point)
-          }
-        })
-        // Pasting or dropping a URL becomes a reference card (instead of tldraw's
-        // default bookmark shape).
-        ed.registerExternalContentHandler('url', async ({ url, point }) => {
-          await addReferenceFromUrl(ed, url, point)
-        })
-        // Catch up on anything the agent did while the canvas was still loading.
-        void reconcilePendingChangeSets(ed, pid)
-      })
-      .catch((err) => {
-        if (!isCurrentMount()) return
-        // Load failed — persistence stays disabled to protect on-disk data, and
-        // buffered change-sets can't be safely applied onto an unloaded store, so
-        // drop this project's rather than let them accumulate.
-        pendingChangeSetsRef.current = pendingChangeSetsRef.current.filter(
-          (e) => e.projectId !== pid,
-        )
-        console.error(
-          'Elves: canvas load failed — persistence disabled to protect on-disk data',
-          err,
-        )
-      })
+    mount = createAppCanvasMount({
+      project,
+      editor: ed,
+      writeCoordinator,
+      listen: (listener) => ed.store.listen(listener, { source: 'user', scope: 'document' }),
+    })
+    canvasMountRef.current = mount
+    activateCanvasMount(mount)
+
+    return () => {
+      mount.dispose()
+      if (canvasMountRef.current === mount) {
+        canvasMountRef.current = null
+        editorRef.current = null
+        setEditor(null)
+      }
+    }
   }
 
   const addCard = (kind: 'prose' | 'note' | 'figure') => {
@@ -782,29 +610,66 @@ export default function App() {
   // "Adding…" state; closes it once the card lands.
   const submitLink = async (raw: string) => {
     const trimmed = raw.trim()
-    if (!editor || !trimmed) return
+    const mount = canvasMountRef.current
+    if (!mount || !trimmed) return
     const url = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
-    await addReferenceFromUrl(editor, url)
-    setLinkPromptOpen(false)
+    try {
+      await addReferenceFromUrl(mount, url)
+      if (canvasMountRef.current === mount) setLinkPromptOpen(false)
+    } catch (err) {
+      console.error('Elves: failed to add link', err)
+    }
   }
 
-  const switchProject = async (id: string) => {
-    if (id === currentProjectId) return
-    // Flush the outgoing project's latest edits before the editor unmounts —
-    // but only if it actually loaded, else we'd flush an empty store over it.
-    const ed = editorRef.current
-    if (ed && currentProjectId && canvasLoadedRef.current) {
-      try {
-        await saveCanvas(currentProjectId, getSnapshot(ed.store))
-      } catch (err) {
-        console.error('Elves: canvas save failed', err)
-      }
+  const runTransition = async (transition: () => Promise<void>) => {
+    const active = transitionRef.current
+    if (active) {
+      await active
+      return runTransition(transition)
     }
-    // Close the window between changing project and the new canvas mounting:
-    // no save path should fire against the old store under the new project id.
-    canvasLoadedRef.current = false
+    setTransitioning(true)
+    let running!: Promise<void>
+    running = (async () => {
+      try {
+        await transition()
+      } finally {
+        if (transitionRef.current === running) transitionRef.current = null
+        setTransitioning(false)
+      }
+    })()
+    transitionRef.current = running
+    await running
+  }
+
+  const switchProject = (id: string) => runTransition(async () => {
+    if (id === currentProjectId) return
+    const mount = canvasMountRef.current
+    if (mount) {
+      try {
+        await flushCanvasMountForSwitch(mount)
+      } catch (err) {
+        mount.openCommands()
+        console.error('Elves: project switch blocked by canvas save failure', err)
+        return
+      }
+      mount.dispose()
+      if (canvasMountRef.current === mount) canvasMountRef.current = null
+      editorRef.current = null
+      setEditor(null)
+    }
     localStorage.setItem(LAST_PROJECT_KEY, id)
     setCurrentProjectId(id)
+    setCanvasMountKey((key) => key + 1)
+  })
+
+  const adoptRenamedProject = (mount: AppCanvasMount, oldId: string, updated: Project) => {
+    mount.adoptProject(updated)
+    if (updated.id !== oldId) migrateProjectLocalStorage(oldId, updated.id)
+    localStorage.setItem(LAST_PROJECT_KEY, updated.id)
+    setCurrentProjectId(updated.id)
+    setProjects((current) => current?.map((project) =>
+      project.id === oldId ? updated : project,
+    ) ?? [])
   }
 
   const createFlow = async () => {
@@ -819,37 +684,50 @@ export default function App() {
     }
   }
 
-  const renameFlow = async () => {
+  const renameTo = (name: string) => runTransition(async () => {
     if (!currentProjectId) return
-    const cur = projects?.find((p) => p.id === currentProjectId)
-    const name = window.prompt('Rename project', cur?.name ?? '')?.trim()
-    if (!name) return
+    const mount = canvasMountRef.current
+    if (!mount) return
+    const ambiguousRetry = canvasWriteStatus === 'rename-ambiguous' &&
+      pendingRenameName === name
+    if (!ambiguousRetry && !mount.writeCoordinator.ownsProject(currentProjectId)) return
+    setPendingRenameName(name)
     try {
+      await mount.closeCommands()
+      mount.writeCoordinator.markDirty()
       const oldId = currentProjectId
-      const updated = await renameProject(oldId, name)
-      setProjects(await listProjects())
-      // The server re-slugs the folder to match the new name, so the id may have
-      // changed. Re-point the app at it: carry the browser state over, flush the
-      // live store to the new location (covering edits still inside the save
-      // debounce — the server already moved canvas.json there), and open the new
-      // id, which remounts the canvas and re-targets realtime via projectIdRef.
-      if (updated.id !== oldId) {
-        migrateProjectLocalStorage(oldId, updated.id)
-        const ed = editorRef.current
-        if (ed && canvasLoadedRef.current) {
-          try {
-            await saveCanvas(updated.id, getSnapshot(ed.store))
-          } catch (err) {
-            console.error('Elves: canvas save after rename failed', err)
-          }
-        }
-        canvasLoadedRef.current = false
-        localStorage.setItem(LAST_PROJECT_KEY, updated.id)
-        setCurrentProjectId(updated.id)
+      let updated: Project
+      try {
+        updated = await mount.writeCoordinator.renameProject(name)
+      } catch (err) {
+        const committed = committedRenameProject(err)
+        if (!committed) throw err
+        updated = committed
+      }
+      adoptRenamedProject(mount, oldId, updated)
+      setPendingRenameName(null)
+      try {
+        setProjects(await listProjects())
+      } catch (err) {
+        console.error('Elves: failed to refresh projects after rename', err)
       }
     } catch (err) {
       console.error('Elves: failed to rename project', err)
+    } finally {
+      if (mount.writeCoordinator.ownsProject(mount.project.id)) mount.openCommands()
     }
+  })
+
+  const renameFlow = () => {
+    if (!currentProjectId) return
+    const cur = projects?.find((p) => p.id === currentProjectId)
+    const name = window.prompt('Rename project', cur?.name ?? '')?.trim()
+    if (name) void renameTo(name)
+  }
+
+  const retryCanvasInitialization = () => {
+    const mount = canvasMountRef.current
+    if (mount) activateCanvasMount(mount)
   }
 
   // Still loading the project list.
@@ -876,6 +754,9 @@ export default function App() {
   // width so moving between states feels continuous rather than modal.
   const canvasWidth = view === 'canvas' ? '100%' : view === 'draft' ? '0%' : `${split * 100}%`
   const draftWidth = view === 'canvas' ? '0%' : view === 'draft' ? '100%' : `${(1 - split) * 100}%`
+  const writeStatusLabel = canvasWriteStatusLabel(canvasWriteStatus)
+  const canvasMutationsLocked = !editor || transitioning ||
+    canvasWriteStatus === 'renaming' || canvasWriteStatus === 'rename-ambiguous'
 
   return (
     <div id="app-root" className={showTools ? undefined : 'elves-hide-tools'}>
@@ -896,6 +777,7 @@ export default function App() {
           className="elves-tools-toggle"
           data-active={showTools}
           title="Show/hide drawing tools"
+          disabled={canvasMutationsLocked}
           onClick={() => setShowTools((v) => !v)}
         >
           <svg
@@ -912,6 +794,29 @@ export default function App() {
         </button>
       )}
       <div className="elves-topbar">
+        <div
+          className="elves-canvas-write-status"
+          role="status"
+          aria-live="polite"
+          aria-label={writeStatusLabel}
+          data-write-status={canvasWriteStatus}
+          title={writeStatusLabel}
+        />
+        {canvasWriteStatus === 'error' && !editor && (
+          <button className="elves-status-action" onClick={retryCanvasInitialization}>
+            Retry canvas
+          </button>
+        )}
+        {canvasWriteStatus === 'rename-ambiguous' && pendingRenameName && (
+          <button
+            className="elves-status-action"
+            aria-label={`Retry rename to ${pendingRenameName}`}
+            disabled={transitioning}
+            onClick={() => void renameTo(pendingRenameName)}
+          >
+            Retry rename
+          </button>
+        )}
         <div
           className="elves-realtime-status"
           data-status={realtimeStatus}
@@ -936,6 +841,8 @@ export default function App() {
         <ProjectSwitcher
           projects={projects}
           currentId={currentProjectId}
+          disabled={transitioning || canvasWriteStatus === 'renaming' ||
+            canvasWriteStatus === 'rename-ambiguous'}
           onSwitch={switchProject}
           onCreate={createFlow}
           onRename={renameFlow}
@@ -949,7 +856,7 @@ export default function App() {
           data-collapsed={view === 'draft'}
         >
           <Tldraw
-            key={currentProjectId ?? 'none'}
+            key={canvasMountKey}
             shapeUtils={shapeUtils}
             components={components}
             getShapeVisibility={getShapeVisibility}
@@ -960,39 +867,45 @@ export default function App() {
               can never spill in front of the prose. */}
           {view !== 'draft' && (
             <div className="elves-toolbar">
-              <button aria-label="New prose card" data-testid="new-prose" onClick={() => addCard('prose')}>
+              <button disabled={canvasMutationsLocked} aria-label="New prose card" data-testid="new-prose" onClick={() => addCard('prose')}>
                 <TextAUnderline className="elves-btn-icon" aria-hidden="true" />
                 <span className="elves-toolbar__label">Prose</span>
               </button>
-              <button aria-label="New note card" data-testid="new-note" onClick={() => addCard('note')}>
+              <button disabled={canvasMutationsLocked} aria-label="New note card" data-testid="new-note" onClick={() => addCard('note')}>
                 <Notepad className="elves-btn-icon" aria-hidden="true" />
                 <span className="elves-toolbar__label">Notes</span>
               </button>
-              <button aria-label="Add image" data-testid="new-image" onClick={() => fileInputRef.current?.click()}>
+              <button disabled={canvasMutationsLocked} aria-label="Add image" data-testid="new-image" onClick={() => fileInputRef.current?.click()}>
                 <ImagesSquare className="elves-btn-icon" aria-hidden="true" />
                 <span className="elves-toolbar__label">Image</span>
               </button>
-              <button aria-label="Add link" data-testid="new-reference" onClick={addReferenceFlow}>
+              <button disabled={canvasMutationsLocked} aria-label="Add link" data-testid="new-reference" onClick={addReferenceFlow}>
                 <Link className="elves-btn-icon" aria-hidden="true" />
                 <span className="elves-toolbar__label">Link</span>
               </button>
-              <button aria-label="New figure card" data-testid="new-figure" onClick={() => addCard('figure')}>
+              <button disabled={canvasMutationsLocked} aria-label="New figure card" data-testid="new-figure" onClick={() => addCard('figure')}>
                 <Slideshow className="elves-btn-icon" aria-hidden="true" />
                 <span className="elves-toolbar__label">Figure</span>
               </button>
-              <button aria-label="New section" data-testid="new-section" onClick={addSection}>
+              <button disabled={canvasMutationsLocked} aria-label="New section" data-testid="new-section" onClick={addSection}>
                 <SelectionPlus className="elves-btn-icon" aria-hidden="true" />
                 <span className="elves-toolbar__label">Section</span>
               </button>
               <input
                 ref={fileInputRef}
                 type="file"
+                disabled={canvasMutationsLocked}
                 accept="image/*"
                 style={{ display: 'none' }}
                 data-testid="image-input"
                 onChange={(e) => {
                   const file = e.target.files?.[0]
-                  if (file && editor) addImageCard(editor, file)
+                  const mount = canvasMountRef.current
+                  if (file && mount) {
+                    void addImageCard(mount, file).catch((err) =>
+                      console.error('Elves: failed to add image', err),
+                    )
+                  }
                   e.target.value = ''
                 }}
               />
