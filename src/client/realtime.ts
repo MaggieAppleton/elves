@@ -83,8 +83,9 @@ export function connectRealtime(
     onStatus?.(connectedBefore ? 'reconnecting' : 'connecting')
     const socket = createSocket(url)
     ws = socket
+    const isActive = () => !disposed && ws === socket
     socket.onopen = () => {
-      if (disposed) return
+      if (!isActive()) return
       attempt = 0
       onStatus?.('connected')
       // Only a RE-connection needs a resync; the first connect starts from
@@ -93,6 +94,7 @@ export function connectRealtime(
       connectedBefore = true
     }
     socket.onmessage = (e) => {
+      if (!isActive()) return
       try {
         const msg = JSON.parse(e.data)
         if (msg.changeSet) onChangeSet(msg.projectId, msg.changeSet)
@@ -102,10 +104,13 @@ export function connectRealtime(
         console.error('Elves: bad realtime message', err)
       }
     }
-    socket.onerror = (err) => console.error('Elves: realtime socket error', err)
+    socket.onerror = (err) => {
+      if (!isActive()) return
+      console.error('Elves: realtime socket error', err)
+    }
     socket.onclose = () => {
+      if (!isActive()) return
       ws = null
-      if (disposed) return
       onStatus?.('disconnected')
       scheduleReconnect()
     }
