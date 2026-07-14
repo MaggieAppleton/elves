@@ -211,6 +211,72 @@ test('versioned clear writes a revisioned tombstone and rotates epoch across res
   })
 })
 
+test('legacy clear keeps its response while atomically persisting a backed-up tombstone', async () => {
+  const { root, app } = await setup()
+  const path = await seed(root)
+  const loaded = await request(app).get('/projects/essay/canvas?protocol=2')
+  const move = {
+    id: 'before-legacy-clear', author: 'claude',
+    ops: [{ kind: 'move_cards', moves: [{ cardId: 'shape:a', x: 25, y: 0 }] }],
+  }
+  await request(app).post('/projects/essay/changeset?protocol=2').send({
+    token: loaded.body.nextChangeSetToken,
+    changeSet: move,
+  })
+  const before = await readCanvas(path) as any
+  expect(before[SERVER_CANVAS_METADATA_KEY]).toMatchObject({ revision: 1, nextSequence: 1 })
+
+  const cleared = await request(app).delete('/projects/essay/canvas')
+  expect(cleared.status).toBe(200)
+  expect(cleared.body).toEqual({ ok: true })
+  const stored = await readCanvas(path) as any
+  expect(stored.document).toBeNull()
+  expect(stored[SERVER_CANVAS_METADATA_KEY]).toMatchObject({ revision: 2, nextSequence: 0 })
+  expect(stored[SERVER_CANVAS_METADATA_KEY].epoch).not.toBe(loaded.body.nextChangeSetToken.epoch)
+  const backup = await readCanvas(`${path}.bak`) as any
+  expect(backup.document).toEqual(before.document)
+  expect(backup[SERVER_CANVAS_METADATA_KEY]).toEqual(before[SERVER_CANVAS_METADATA_KEY])
+})
+
+test('legacy clear tombstone rejects the old epoch and revision zero after restart', async () => {
+  const { root, app } = await setup()
+  await seed(root)
+  const loaded = await request(app).get('/projects/essay/canvas?protocol=2')
+  await request(app).delete('/projects/essay/canvas')
+  const restarted = createServer(root)
+
+  const oldToken = await request(restarted).post('/projects/essay/changeset?protocol=2').send({
+    token: loaded.body.nextChangeSetToken,
+    changeSet: {
+      id: 'old-token', author: 'claude',
+      ops: [{ kind: 'create_note_card', text: 'must not queue', x: 0, y: 0 }],
+    },
+  })
+  expect(oldToken.status).toBe(409)
+  expect(oldToken.body).toMatchObject({ code: 'epoch-mismatch', revision: 1 })
+
+  const oldRevision = await request(restarted).post('/projects/essay/canvas?protocol=2')
+    .set(REVISION_HEADER, '0').send(snapshot({ stale: true }))
+  expect(oldRevision.status).toBe(409)
+  expect(oldRevision.body).toMatchObject({ code: 'canvas-revision-conflict', revision: 1 })
+})
+
+test('legacy clear of a missing canvas durably records revision one', async () => {
+  const { root, app } = await setup()
+  const path = canvasPathFor(root, 'essay')!
+  expect(await bytes(path)).toBeNull()
+  const cleared = await request(app).delete('/projects/essay/canvas')
+  expect(cleared.status).toBe(200)
+  expect(cleared.body).toEqual({ ok: true })
+  expect(await bytes(path)).not.toBeNull()
+  const stored = await readCanvas(path) as any
+  expect(stored).toMatchObject({
+    document: null,
+    session: null,
+    [SERVER_CANVAS_METADATA_KEY]: { revision: 1, nextSequence: 0 },
+  })
+})
+
 test('stale versioned clear leaves main and backup bytes untouched', async () => {
   const { root, app } = await setup()
   const path = await seed(root)

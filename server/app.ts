@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express'
 import cors from 'cors'
 import {
-  readCanvas, withCanvasLock, clearCanvas, replaceCanvasWithTombstone,
+  readCanvas, withCanvasLock, replaceCanvasWithTombstone,
   EmptyCanvasOverwriteError, CanvasSnapshot,
 } from './store'
 import {
@@ -559,12 +559,26 @@ export function createServer(
         }
         return
       }
-      const cleared = await withProjectMutation(req.params.id, res, async (paths) => {
-        await clearCanvas(paths.canvasPath)
-        return true
-      })
-      if (cleared === null) return
-      res.json({ ok: true })
+      let observedRevision = 0
+      try {
+        const cleared = await withProjectMutation(req.params.id, res, async (paths) =>
+          replaceCanvasWithTombstone(paths.canvasPath, (current) => {
+            observedRevision = canvasRevision(current)
+            return clearCanvasSnapshot(current)
+          }))
+        if (cleared === null) return
+        res.json({ ok: true })
+      } catch (error) {
+        if (error instanceof CanvasRevisionExhaustedError) {
+          res.status(507).json({
+            code: 'canvas-revision-exhausted',
+            error: error.message,
+            revision: observedRevision,
+          })
+          return
+        }
+        throw error
+      }
     }),
   )
 
