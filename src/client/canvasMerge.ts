@@ -1,3 +1,9 @@
+import {
+  atomicFieldGroupsAt,
+  canvasMergeDomainContext,
+  type CanvasMergeDomainContext,
+} from './canvasMergeDomain'
+
 export type DocumentRecordType = 'asset' | 'binding' | 'document' | 'page' | 'shape'
 
 export interface DocumentRecord {
@@ -22,6 +28,11 @@ export type CanvasMergeConflict =
     }
   | {
       kind: 'field-value-conflict'
+      recordId: string
+      path: string[]
+    }
+  | {
+      kind: 'atomic-field-conflict'
       recordId: string
       path: string[]
     }
@@ -91,6 +102,18 @@ function slot(object: Record<string, unknown>, key: string): Slot {
   return Object.prototype.hasOwnProperty.call(object, key) ? object[key] : MISSING
 }
 
+function selectFields(
+  object: Record<string, unknown> | undefined,
+  keys: readonly string[],
+): Record<string, unknown> {
+  const selected: Record<string, unknown> = {}
+  if (!object) return selected
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(object, key)) setOwn(selected, key, object[key])
+  }
+  return selected
+}
+
 function mergeObject(
   base: Record<string, unknown> | undefined,
   local: Record<string, unknown>,
@@ -98,6 +121,7 @@ function mergeObject(
   recordId: string,
   path: string[],
   conflicts: CanvasMergeConflict[],
+  domain: CanvasMergeDomainContext,
 ): Record<string, unknown> {
   const merged: Record<string, unknown> = {}
   const keys = [...new Set([
@@ -105,7 +129,28 @@ function mergeObject(
     ...Object.keys(local),
     ...Object.keys(remote),
   ])].sort()
+  const values = new Map<string, Slot>()
+  const groupedKeys = new Set<string>()
+  for (const group of atomicFieldGroupsAt(domain, path)) {
+    group.keys.forEach((key) => groupedKeys.add(key))
+    const baseFields = selectFields(base, group.keys)
+    const localFields = selectFields(local, group.keys)
+    const remoteFields = selectFields(remote, group.keys)
+    let selected: Record<string, unknown> | null = null
+    if (structuralEqual(localFields, remoteFields)) selected = localFields
+    else if (structuralEqual(localFields, baseFields)) selected = remoteFields
+    else if (structuralEqual(remoteFields, baseFields)) selected = localFields
+    else conflicts.push({ kind: 'atomic-field-conflict', recordId, path: group.conflictPath })
+    if (selected) {
+      for (const key of group.keys) {
+        if (Object.prototype.hasOwnProperty.call(selected, key)) {
+          values.set(key, cloneValue(selected[key]))
+        }
+      }
+    }
+  }
   for (const key of keys) {
+    if (groupedKeys.has(key)) continue
     const value = mergeSlot(
       base ? slot(base, key) : MISSING,
       slot(local, key),
@@ -113,7 +158,12 @@ function mergeObject(
       recordId,
       [...path, key],
       conflicts,
+      domain,
     )
+    values.set(key, value)
+  }
+  for (const key of keys) {
+    const value = values.has(key) ? values.get(key)! : MISSING
     if (value !== MISSING) setOwn(merged, key, value)
   }
   return merged
@@ -126,6 +176,7 @@ function mergeSlot(
   recordId: string,
   path: string[],
   conflicts: CanvasMergeConflict[],
+  domain: CanvasMergeDomainContext,
 ): Slot {
   if (structuralEqual(local, remote)) return local === MISSING ? MISSING : cloneValue(local)
   if (structuralEqual(local, base)) return remote === MISSING ? MISSING : cloneValue(remote)
@@ -133,7 +184,15 @@ function mergeSlot(
 
   if (local !== MISSING && remote !== MISSING && isPlainObject(local) && isPlainObject(remote) &&
     (base === MISSING || isPlainObject(base))) {
-    return mergeObject(base === MISSING ? undefined : base, local, remote, recordId, path, conflicts)
+    return mergeObject(
+      base === MISSING ? undefined : base,
+      local,
+      remote,
+      recordId,
+      path,
+      conflicts,
+      domain,
+    )
   }
 
   conflicts.push({ kind: 'field-value-conflict', recordId, path })
@@ -205,7 +264,12 @@ export function mergeCanvasRecords(input: CanvasMergeInput): CanvasMergeResult {
       continue
     }
 
-    const merged = mergeSlot(base, local, remote, recordId, [], conflicts)
+    const domain = canvasMergeDomainContext(
+      base as Record<string, unknown>,
+      local as Record<string, unknown>,
+      remote as Record<string, unknown>,
+    )
+    const merged = mergeSlot(base, local, remote, recordId, [], conflicts, domain)
     if (merged !== MISSING) setOwn(document, recordId, merged as DocumentRecord)
   }
 
