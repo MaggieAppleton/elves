@@ -19,6 +19,7 @@ async function resetReviews(request: APIRequestContext): Promise<void> {
 async function openCanvas(page: Page): Promise<void> {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await expect(page.getByTestId('new-prose')).toBeEnabled()
 }
 
 test.beforeEach(async ({ request }) => {

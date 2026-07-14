@@ -140,6 +140,7 @@ test('the busy link prompt contains cancellation, focus, and global shortcuts', 
 test('closing the link prompt does not also close an AgentBox behind it', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await expect(page.getByTestId('new-prose')).toBeEnabled()
 
   await page.keyboard.press('/')
   const agentBox = page.locator('.elves-agentbox')

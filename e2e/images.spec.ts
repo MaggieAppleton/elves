@@ -1,11 +1,12 @@
 import { test, expect } from '@playwright/test'
-import { resetProject } from './helpers'
+import { resetProject, serverCardIds } from './helpers'
 
+let projectId: string
 test.beforeEach(async ({ request }) => {
-  await resetProject(request)
+  projectId = await resetProject(request)
 })
 
-test('adding an image creates an image note card that renders and persists', async ({ page }) => {
+test('adding an image creates an image note card that renders and persists', async ({ page, request }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
 
@@ -15,7 +16,7 @@ test('adding an image creates an image note card that renders and persists', asy
   await expect(img).toBeVisible({ timeout: 10000 })
   await expect(img).toHaveAttribute('src', /\/projects\/.+\/assets\/.+\.png$/)
 
-  await page.waitForTimeout(800) // debounced save
+  await expect.poll(async () => (await serverCardIds(request, projectId)).length).toBe(1)
   await page.reload()
   await expect(page.locator('img.elves-card__image')).toBeVisible({ timeout: 15000 })
 })

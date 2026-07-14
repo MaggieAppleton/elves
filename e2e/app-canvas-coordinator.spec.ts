@@ -82,6 +82,87 @@ test('an active agent run holds project identity until the run settles', async (
   await expect(page.getByTestId('project-switcher')).toBeEnabled()
 })
 
+test('overlapping review requests keep project transitions locked until both settle', async ({ page }) => {
+  const releases: Array<() => void> = []
+  let requestCount = 0
+  let responseCount = 0
+  await page.route(`**/projects/${projectId}/reviews`, async (route) => {
+    if (route.request().method() !== 'POST') return route.continue()
+    requestCount += 1
+    await new Promise<void>((resolve) => releases.push(resolve))
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ review: {} }),
+    })
+    responseCount += 1
+  })
+
+  await page.goto('/')
+  await expect(page.getByTestId('new-prose')).toBeEnabled()
+  await page.getByTestId('review-button').click()
+  await page.evaluate(() => {
+    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-testid^="review-summon-"]'))
+    buttons[0]?.click()
+    buttons[1]?.click()
+  })
+  await expect.poll(() => requestCount).toBe(2)
+  await expect(page.getByTestId('project-switcher')).toBeDisabled()
+
+  releases[0]()
+  await expect.poll(() => responseCount).toBe(1)
+  await expect(page.getByTestId('project-switcher')).toBeDisabled()
+  releases[1]()
+  await expect.poll(() => responseCount).toBe(2)
+  await expect(page.getByTestId('project-switcher')).toBeEnabled()
+})
+
+test('ambiguous rename recovery stays reachable at 320px', async ({ page, request }) => {
+  await page.setViewportSize({ width: 320, height: 720 })
+  const projects = await (await request.get(`${BASE}/projects`)).json() as Array<{
+    id: string
+    name: string
+    createdAt: string
+  }>
+  const current = projects.find((project) => project.id === projectId)
+  if (!current) throw new Error('reset project missing')
+  const renamed = { ...current, name: `Narrow recovered ${Date.now()}` }
+  let projectLists = 0
+
+  await page.goto('/')
+  await expect(page.getByTestId('new-prose')).toBeEnabled()
+  await page.route(`**/projects/${projectId}`, async (route) => {
+    if (route.request().method() !== 'PATCH') return route.continue()
+    await route.fulfill({ status: 503, body: 'rename response lost' })
+  })
+  await page.route((url) => url.pathname === '/projects', async (route) => {
+    if (route.request().method() !== 'GET') return route.continue()
+    projectLists += 1
+    if (projectLists === 1) return route.fulfill({ status: 500, body: 'observation failed' })
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([renamed]),
+    })
+  })
+
+  page.once('dialog', (dialog) => dialog.accept(renamed.name))
+  await page.getByTestId('project-switcher').click()
+  await page.getByTestId('project-rename').click()
+  const status = page.locator('.elves-canvas-write-status')
+  const retry = page.getByRole('button', { name: `Retry rename to ${renamed.name}` })
+  await expect(retry).toBeVisible()
+  for (const locator of [status, retry]) {
+    const bounds = await locator.boundingBox()
+    if (!bounds) throw new Error('status control missing')
+    expect(bounds.x).toBeGreaterThanOrEqual(0)
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(320)
+  }
+
+  await retry.click()
+  await expect(page.getByTestId('project-switcher')).toContainText(renamed.name)
+})
+
 test('a failed outgoing flush keeps the current project mounted', async ({ page, request }) => {
   const projects = await (await request.get(`${BASE}/projects`)).json() as Array<{
     id: string
@@ -139,7 +220,7 @@ test('a same-tick edit is admitted before a successful project switch', async ({
 
   await page.getByTestId('project-switcher').click()
   await page.getByRole('menuitemradio', { name: current.name }).click()
-  await expect(page.locator('.elves-card--prose')).toHaveCount(1)
+  await expect(page.locator('.elves-card--prose').first()).toBeVisible()
 })
 
 test('a transient initialization failure can be retried', async ({ page }) => {

@@ -130,7 +130,7 @@ export default function App() {
   const [linkPromptOpen, setLinkPromptOpen] = useState(false)
   const [agentBoxOpen, setAgentBoxOpen] = useState(false)
   const [agentRunning, setAgentRunning] = useState(false)
-  const [reviewRequestPending, setReviewRequestPending] = useState(false)
+  const [reviewRequestCount, setReviewRequestCount] = useState(0)
   // How many shapes are selected right now, kept live so the agent box can show
   // its scope ("N selected" vs "Whole canvas") and tell the agent whether to
   // read_selection or read_map.
@@ -143,7 +143,7 @@ export default function App() {
     canvasWriteStatus === 'renaming' || canvasWriteStatus === 'rename-ambiguous'
   // Server-side agent/review runs cannot join the local canvas drain. Keep the
   // project identity fixed until they settle or the user cancels them.
-  const activeServerMutation = agentRunning || reviewRequestPending || reviews.some(
+  const activeServerMutation = agentRunning || reviewRequestCount > 0 || reviews.some(
     (review) => review.status === 'pending' || review.status === 'in-progress',
   )
   // Project ids can repeat across an A → B → A switch, so id equality alone
@@ -272,13 +272,13 @@ export default function App() {
     const pid = currentProjectId
     if (!pid) return
     const visit = reviewVisitRef.current
-    setReviewRequestPending(true)
+    setReviewRequestCount((count) => count + 1)
     // The websocket echo will also land; setting from the fetch keeps the panel
     // truthful even if the socket is down.
     summonReview(pid, personality, focus)
       .then(() => refreshReviewsForVisit(pid, visit))
       .catch((err) => console.error('Elves: failed to summon review', err))
-      .finally(() => setReviewRequestPending(false))
+      .finally(() => setReviewRequestCount((count) => Math.max(0, count - 1)))
   }
 
   const handleDismissReview = (reviewId: string) => {
@@ -286,11 +286,11 @@ export default function App() {
     const pid = currentProjectId
     if (!pid) return
     const visit = reviewVisitRef.current
-    setReviewRequestPending(true)
+    setReviewRequestCount((count) => count + 1)
     dismissReview(pid, reviewId)
       .then(() => refreshReviewsForVisit(pid, visit))
       .catch((err) => console.error('Elves: failed to dismiss review', err))
-      .finally(() => setReviewRequestPending(false))
+      .finally(() => setReviewRequestCount((count) => Math.max(0, count - 1)))
   }
 
   const handleRetryReview = (reviewId: string) => {
@@ -300,11 +300,11 @@ export default function App() {
     // The launch itself is fire-and-forget on the server; the WS broadcast
     // carries the resulting pending → in-progress transition to the panel.
     const visit = reviewVisitRef.current
-    setReviewRequestPending(true)
+    setReviewRequestCount((count) => count + 1)
     retryReview(pid, reviewId)
       .then(() => refreshReviewsForVisit(pid, visit))
       .catch((err) => console.error('Elves: failed to retry review', err))
-      .finally(() => setReviewRequestPending(false))
+      .finally(() => setReviewRequestCount((count) => Math.max(0, count - 1)))
   }
 
   // Presence is keyed by shape id; dropping it on project switch is cheap
@@ -872,7 +872,7 @@ export default function App() {
           projectId={currentProjectId}
           editor={editor}
           reviews={reviews}
-          disabled={canvasMutationsLocked}
+          disabled={canvasMutationsLocked || reviewRequestCount > 0}
           onSummon={handleSummonReview}
           onDismiss={handleDismissReview}
           onRetry={handleRetryReview}
