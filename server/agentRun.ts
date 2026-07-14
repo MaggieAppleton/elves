@@ -216,10 +216,10 @@ export interface AgentRunnerDeps {
   spawn?: SpawnFn
   /** Grace period before an ignored SIGTERM escalates to SIGKILL. */
   cancelGraceMs?: number
-  /** Injectable monotonic-ish clock for bounded abandonment tombstones. */
+  /** Injectable monotonic-ish clock for bounded prepared admissions. */
   nowMs?: () => number
-  tombstoneTtlMs?: number
-  tombstoneLimit?: number
+  preparedTtlMs?: number
+  preparedLimit?: number
 }
 
 export interface AgentRunReservation {
@@ -241,6 +241,13 @@ export interface AgentRunner {
   ): Promise<void>
   releaseProjectRun(reservation: AgentRunReservation): void
   abandon(key: string, runId: string): AgentAbandonResult
+  prepare(key: string, runId: string, projectId: string): AgentPrepareResult
+  claimPrepared(key: string, input: AgentRunInput): AgentRunReservation | null
+  runPrepared(
+    key: string,
+    input: AgentRunInput,
+    onEvent: (e: AgentEvent) => void,
+  ): Promise<void> | null
   cancelAndWait(key: string, runId: string): Promise<AgentCancelResult>
   /** Atomically exclude new runs for a project while a structural transition runs. */
   tryLockProject(projectId: string): (() => void) | null
@@ -253,6 +260,9 @@ export type AgentCancelResult =
   | { status: 'signal-failed' }
 
 export type AgentAbandonResult = AgentCancelResult | { status: 'prevented' }
+export type AgentPrepareResult = {
+  status: 'accepted' | 'duplicate' | 'conflict' | 'capacity'
+}
 
 /** ENOENT means the CLI isn't installed / not on PATH — the single most likely
  * failure, so name it plainly instead of leaking a raw errno. */
@@ -269,51 +279,52 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
   // Concurrent runs, keyed by caller: 'chat' for the chat box, 'review:<id>'
   // for an in-app review run. A key is single-flight (see run() below); across
   // keys there's no coordination at all — that's the whole point of the map.
-  const active = new Map<string, {
+  type ActiveRun = {
     runId: string
     projectId: string
     child: ChildLike
     stopped: Promise<void>
     resolveStopped: () => void
-  }>()
+    cancelTimer?: ReturnType<typeof setTimeout>
+  }
+  const active = new Map<string, ActiveRun>()
   const projectLocks = new Map<string, symbol>()
   const reservationTokens = new WeakMap<AgentRunReservation, symbol>()
-  const reservations = new Map<symbol, { projectId: string; key?: string; runId?: string }>()
-  const tombstones = new Map<string, number>()
+  const reservations = new Map<symbol, {
+    projectId: string
+    key?: string
+    runId?: string
+    cancelled: boolean
+  }>()
+  const prepared = new Map<string, {
+    key: string
+    runId: string
+    projectId: string
+    expiresAt: number
+  }>()
   const cancelled = new WeakSet<ChildLike>()
   const cancelGraceMs = deps.cancelGraceMs ?? 5_000
   const nowMs = deps.nowMs ?? Date.now
-  const tombstoneTtlMs = deps.tombstoneTtlMs ?? 10 * 60_000
-  const tombstoneLimit = deps.tombstoneLimit ?? 1_024
+  const preparedTtlMs = deps.preparedTtlMs ?? 10 * 60_000
+  const preparedLimit = deps.preparedLimit ?? 1_024
 
-  const tombstoneKey = (key: string, runId: string) => `${key}\0${runId}`
-  const pruneTombstones = () => {
+  const admissionKey = (key: string, runId: string) => `${key}\0${runId}`
+  const prunePrepared = () => {
     const now = nowMs()
-    for (const [key, expiresAt] of tombstones) {
-      if (expiresAt <= now) tombstones.delete(key)
+    for (const [id, admission] of prepared) {
+      if (admission.expiresAt <= now) prepared.delete(id)
     }
-    while (tombstones.size >= tombstoneLimit) {
-      const oldest = tombstones.keys().next().value as string | undefined
-      if (oldest === undefined) break
-      tombstones.delete(oldest)
-    }
-  }
-  const installTombstone = (key: string, runId: string) => {
-    pruneTombstones()
-    tombstones.set(tombstoneKey(key, runId), nowMs() + tombstoneTtlMs)
-  }
-  const isTombstoned = (key: string, runId: string) => {
-    pruneTombstones()
-    return tombstones.has(tombstoneKey(key, runId))
   }
 
   const reserveProjectRun = (projectId: string, key?: string, runId?: string): AgentRunReservation | null => {
+    prunePrepared()
     if (projectLocks.has(projectId)) return null
-    if (key && (active.has(key) || [...reservations.values()].some((entry) => entry.key === key))) return null
+    if (key && (active.has(key) ||
+      [...reservations.values()].some((entry) => entry.key === key))) return null
     const reservation = Object.freeze({ projectId })
     const token = Symbol(projectId)
     reservationTokens.set(reservation, token)
-    reservations.set(token, { projectId, key, runId })
+    reservations.set(token, { projectId, key, runId, cancelled: false })
     return reservation
   }
 
@@ -326,12 +337,22 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
     const current = active.get(key)
     if (!current) return { status: 'not-running' }
     if (current.runId !== runId) return { status: 'run-mismatch' }
+    if (cancelled.has(current.child)) return { status: 'accepted' }
     try {
       if (!current.child.kill('SIGTERM')) return { status: 'signal-failed' }
     } catch {
       return { status: 'signal-failed' }
     }
     cancelled.add(current.child)
+    current.cancelTimer = setTimeout(() => {
+      if (active.get(key)?.child !== current.child) return
+      try {
+        current.child.kill('SIGKILL')
+      } catch {
+        // The run remains active until close; callers stay fail-closed.
+      }
+    }, cancelGraceMs)
+    current.cancelTimer.unref?.()
     return { status: 'accepted' }
   }
 
@@ -349,7 +370,7 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
       onEvent({ type: 'error', message: 'the agent run reservation is no longer valid.' })
       return Promise.resolve()
     }
-    if (isTombstoned(key, input.runId)) {
+    if (held.cancelled) {
       onEvent({ type: 'error', message: 'the agent run was abandoned before it could start.' })
       return Promise.resolve()
     }
@@ -381,7 +402,14 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
 
     let resolveStopped!: () => void
     const stopped = new Promise<void>((resolve) => { resolveStopped = resolve })
-    active.set(key, { runId: input.runId, projectId: input.projectId, child, stopped, resolveStopped })
+    const currentEntry: ActiveRun = {
+      runId: input.runId,
+      projectId: input.projectId,
+      child,
+      stopped,
+      resolveStopped,
+    }
+    active.set(key, currentEntry)
     onEvent({ type: 'started' })
 
     let sawTerminal = false
@@ -411,6 +439,7 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
     return new Promise<void>((resolve) => {
       const finish = () => {
         if (active.get(key)?.child === child) active.delete(key)
+        if (currentEntry.cancelTimer) clearTimeout(currentEntry.cancelTimer)
         resolveStopped()
         resolve()
       }
@@ -436,35 +465,66 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
       [...active.values()].some((run) => run.projectId === projectId),
     reserveProjectRun,
     isRunAdmitted(key, runId) {
+      prunePrepared()
       if (active.get(key)?.runId === runId) return true
-      return [...reservations.values()].some((entry) => entry.key === key && entry.runId === runId)
+      return [...reservations.values()].some((entry) => entry.key === key && entry.runId === runId) ||
+        prepared.has(admissionKey(key, runId))
     },
     runReserved,
     releaseProjectRun,
     abandon(key, runId) {
-      installTombstone(key, runId)
+      prunePrepared()
+      if (prepared.delete(admissionKey(key, runId))) return { status: 'prevented' }
       const current = active.get(key)
-      if (!current || current.runId !== runId) return { status: 'prevented' }
-      return signalCancel(key, runId)
+      if (current?.runId === runId) return signalCancel(key, runId)
+      const reservation = [...reservations.values()]
+        .find((entry) => entry.key === key && entry.runId === runId)
+      if (reservation) reservation.cancelled = true
+      return { status: 'prevented' }
+    },
+    prepare(key, runId, projectId) {
+      prunePrepared()
+      const id = admissionKey(key, runId)
+      const existing = prepared.get(id)
+      if (existing?.projectId === projectId) {
+        existing.expiresAt = nowMs() + preparedTtlMs
+        return { status: 'duplicate' }
+      }
+      if (active.has(key) || [...reservations.values()].some((entry) => entry.key === key)) {
+        return { status: 'conflict' }
+      }
+      if (prepared.size >= preparedLimit) return { status: 'capacity' }
+      prepared.set(id, { key, runId, projectId, expiresAt: nowMs() + preparedTtlMs })
+      return { status: 'accepted' }
+    },
+    claimPrepared(key, input) {
+      prunePrepared()
+      const id = admissionKey(key, input.runId)
+      const admission = prepared.get(id)
+      if (!admission || admission.projectId !== input.projectId) return null
+      prepared.delete(id)
+      return reserveProjectRun(input.projectId, key, input.runId)
+    },
+    runPrepared(key, input, onEvent) {
+      const reservation = runner.claimPrepared(key, input)
+      if (!reservation) return null
+      return runReserved(reservation, key, input, onEvent)
+        .finally(() => releaseProjectRun(reservation))
     },
     async cancelAndWait(key, runId) {
-      installTombstone(key, runId)
       const current = active.get(key)
       const result = signalCancel(key, runId)
-      if (result.status !== 'accepted' || !current) return result
-      const escalation = setTimeout(() => {
-        if (active.get(key)?.child !== current.child) return
-        try {
-          current.child.kill('SIGKILL')
-        } catch {
-          // Keep waiting for a truthful close; the caller must remain locked.
-        }
-      }, cancelGraceMs)
+      if (result.status !== 'accepted' || !current) {
+        const reservation = [...reservations.values()]
+          .find((entry) => entry.key === key && entry.runId === runId)
+        if (reservation) reservation.cancelled = true
+        return result
+      }
       await current.stopped
-      clearTimeout(escalation)
       return result
     },
     tryLockProject(projectId) {
+      prunePrepared()
       if (projectLocks.has(projectId) ||
         [...reservations.values()].some((reservation) => reservation.projectId === projectId) ||
         [...active.values()].some((run) => run.projectId === projectId)) {

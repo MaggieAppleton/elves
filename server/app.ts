@@ -230,6 +230,15 @@ export interface CanvasServer extends express.Express {
   runSummaries(projectId: string): Promise<void>
 }
 
+export interface ReviewSettlementConfig {
+  retryDelayMs?: number
+  beforePersist?: (
+    kind: 'launch' | 'dismiss',
+    projectId: string,
+    reviewId: string,
+  ) => void | Promise<void>
+}
+
 export function createServer(
   dataRoot: string,
   onChangeSet?: (projectId: string, cs: ChangeSet) => void,
@@ -238,6 +247,7 @@ export function createServer(
   selection?: SelectionStore,
   agent?: AgentRunner,
   onReviews?: (projectId: string, reviews: Review[]) => void,
+  reviewSettlement?: ReviewSettlementConfig,
 ): CanvasServer {
   const app = express()
   // Origin allowlist (see server/origins.ts): only same-origin/no-Origin
@@ -721,7 +731,34 @@ export function createServer(
     res.json({ active: agent?.isRunning('chat', req.params.runId) ?? false })
   })
 
-  app.post('/agent/run', (req, res) => {
+  app.post('/agent/prepare', (req, res) => {
+    if (!agent) {
+      res.status(501).json({ error: 'agent runs are not configured on this server' })
+      return
+    }
+    const projectId = req.body?.projectId
+    const runId = req.body?.runId
+    if (typeof projectId !== 'string' || !projectId) {
+      res.status(400).json({ error: 'projectId is required' })
+      return
+    }
+    if (typeof runId !== 'string' || !runId) {
+      res.status(400).json({ error: 'runId is required' })
+      return
+    }
+    const result = agent.prepare('chat', runId, projectId)
+    if (result.status === 'accepted' || result.status === 'duplicate') {
+      res.json({ ok: true, status: result.status })
+      return
+    }
+    if (result.status === 'capacity') {
+      res.status(503).json({ error: 'agent admission is temporarily at capacity', code: result.status })
+      return
+    }
+    res.status(409).json({ error: 'an agent is already running or the project is changing', code: result.status })
+  })
+
+  app.post('/agent/run', wrap(async (req, res) => {
     if (!agent) {
       res.status(501).json({ error: 'agent runs are not configured on this server' })
       return
@@ -742,9 +779,36 @@ export function createServer(
       res.status(400).json({ error: 'runId is required' })
       return
     }
-    if (agent.isRunning('chat')) {
-      res.status(409).json({ error: 'an agent is already running' })
+    const buffered: AgentEvent[] = []
+    let streamReady = false
+    const send = (e: AgentEvent) => {
+      if (!streamReady) buffered.push(e)
+      else if (res.writable && !res.writableEnded) res.write(`data: ${JSON.stringify(e)}\n\n`)
+    }
+    const input = { runId, prompt, projectId, hasSelection }
+    const reservation = agent.claimPrepared('chat', input)
+    if (!reservation) {
+      res.status(409).json({ error: 'the agent run was not prepared or its admission expired' })
       return
+    }
+    let project
+    try {
+      project = await requireProject(projectId, res)
+    } catch (error) {
+      agent.releaseProjectRun(reservation)
+      throw error
+    }
+    if (!project) {
+      agent.releaseProjectRun(reservation)
+      return
+    }
+    let run: Promise<void>
+    try {
+      run = agent.runReserved(reservation, 'chat', input, send)
+        .finally(() => agent.releaseProjectRun(reservation))
+    } catch (error) {
+      agent.releaseProjectRun(reservation)
+      throw error
     }
     // SSE: keep the socket open and push events as they arrive. `no-transform`
     // + `X-Accel-Buffering: no` stop any intermediary from buffering the stream.
@@ -755,20 +819,18 @@ export function createServer(
       'X-Accel-Buffering': 'no',
     })
     res.flushHeaders?.()
-    const send = (e: AgentEvent) => {
-      if (res.writable && !res.writableEnded) res.write(`data: ${JSON.stringify(e)}\n\n`)
-    }
+    streamReady = true
+    for (const event of buffered) send(event)
     // If the user closes the box mid-run we stop streaming, but let the agent
     // finish — its canvas edits are still wanted, and a run is short. The box's
-    // Cancel button (POST /agent/cancel) is how you actually kill it. Detect that
+    // Cancel button uses the atomic abandon route to kill it. Detect disconnect
     // on the RESPONSE, and only when it closes BEFORE we finished writing — the
     // request object's own 'close' fires the moment its body is read (normal
     // completion), which is not a disconnect.
     res.on('close', () => {
       if (!res.writableFinished) console.warn('[elves] agent run stream closed by client before completion')
     })
-    agent
-      .run('chat', { runId, prompt, projectId, hasSelection }, send)
+    run
       .catch((err) => {
         console.error('[elves] agent run failed:', err)
         send({ type: 'error', message: 'the agent run failed unexpectedly' })
@@ -778,7 +840,7 @@ export function createServer(
         if (res.writable && !res.writableEnded) res.write('event: end\ndata: {}\n\n')
         res.end()
       })
-  })
+  }))
 
   // Kill the specifically requested active run (the box's Cancel button).
   app.post('/agent/cancel', (req, res) => {
@@ -804,9 +866,9 @@ export function createServer(
     res.status(result.status === 'signal-failed' ? 503 : 409).json({ code: result.status, error: message })
   })
 
-  // Settle an ambiguous initial POST. This is atomic with runner admission:
-  // either the run already exists and is signalled, or its id is tombstoned so
-  // a delayed copy of the POST can never spawn invisibly.
+  // Settle an admitted or active run. Preparation is acknowledged before the
+  // stream POST, so removing that admission makes cancellation atomic without
+  // retaining unbounded unknown-run tombstones.
   app.post('/agent/abandon', (req, res) => {
     if (!agent) {
       res.status(501).json({ error: 'agent runs are not configured on this server' })
@@ -1057,6 +1119,37 @@ export function createServer(
     if (onReviews) onReviews(id, await readReviews(reviewsPath(id)))
   }
 
+  const reviewSettlementRetryMs = reviewSettlement?.retryDelayMs ?? 250
+  const retryReviewPersistence = async <T>(label: string, task: () => Promise<T>): Promise<T> => {
+    let delayMs = reviewSettlementRetryMs
+    for (;;) {
+      try {
+        return await task()
+      } catch (error) {
+        if (error instanceof ReviewError) throw error
+        console.error(`[elves] ${label}; retrying:`, error)
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs))
+        delayMs = Math.min(delayMs * 2, 5_000)
+      }
+    }
+  }
+  const persistReviewSettlement = <T>(
+    kind: 'launch' | 'dismiss',
+    projectId: string,
+    reviewId: string,
+    task: () => Promise<T>,
+  ): Promise<T> => retryReviewPersistence(`${kind} review settlement failed`, async () => {
+    await reviewSettlement?.beforePersist?.(kind, projectId, reviewId)
+    return task()
+  })
+  const broadcastReviewsBestEffort = async (id: string, reviews?: Review[]): Promise<void> => {
+    try {
+      if (onReviews) onReviews(id, reviews ?? await readReviews(reviewsPath(id)))
+    } catch (error) {
+      console.error('[elves] review broadcast failed:', error)
+    }
+  }
+
   // Fire-and-forget: spawn an in-app agent to claim and run review <reviewId>,
   // reusing the SAME headless runner the chat box drives (server/agentRun.ts).
   // The spawned agent is "just another MCP client" — it calls start_review,
@@ -1074,6 +1167,7 @@ export function createServer(
     if (!agent) return
     let lastError: string | null = null
     let durablySettled = false
+    let updated: Review[] | null = null
     const prompt =
       `A review pass is waiting for you on this canvas, id \`${reviewId}\`. Call \`start_review\` with ` +
       `reviewId \`${reviewId}\`, follow the returned brief exactly, leave your comments tagged with that ` +
@@ -1084,25 +1178,25 @@ export function createServer(
       })
       // The child exited. Keep the reservation until an unfinished pass is
       // durably failed, so rename cannot move the project between those steps.
-      const updated = await withProjectLock(dataRoot, projectId, async () => {
-        if (!(await getProject(dataRoot, projectId))) return null
-        const path = reviewsPath(projectId)
-        const reviews = await readReviews(path)
-        const review = reviews.find((r) => r.id === reviewId)
-        if (review && (review.attemptId ?? review.id) === runId &&
-          (review.status === 'pending' || review.status === 'in-progress')) {
-          await transitionReview(
-            path,
-            reviewId,
-            { status: 'failed', error: lastError ?? 'the review agent stopped before finishing' },
-            new Date().toISOString(),
-          )
-          return readReviews(path)
-        }
-        return null
-      })
+      updated = await persistReviewSettlement('launch', projectId, reviewId, () =>
+        withProjectLock(dataRoot, projectId, async () => {
+          if (!(await getProject(dataRoot, projectId))) return null
+          const path = reviewsPath(projectId)
+          const reviews = await readReviews(path)
+          const review = reviews.find((r) => r.id === reviewId)
+          if (review && (review.attemptId ?? review.id) === runId &&
+            (review.status === 'pending' || review.status === 'in-progress')) {
+            const transitioned = await transitionReview(
+              path,
+              reviewId,
+              { status: 'failed', error: lastError ?? 'the review agent stopped before finishing' },
+              new Date().toISOString(),
+            )
+            return reviews.map((candidate) => candidate.id === reviewId ? transitioned : candidate)
+          }
+          return null
+        }))
       durablySettled = true
-      if (updated && onReviews) onReviews(projectId, updated)
     } catch (err) {
       // Lost the race to done/dismissed between the read above and this write
       // (ReviewError 409) — the pass finished or was cancelled on its own
@@ -1114,6 +1208,7 @@ export function createServer(
       // rename must not move a still-pending review away from its run identity.
       if (durablySettled) agent.releaseProjectRun(reservation)
     }
+    if (updated) await broadcastReviewsBestEffort(projectId, updated)
   }
 
   async function settleReviewDismissal(
@@ -1132,7 +1227,10 @@ export function createServer(
         safelySettled = true
         return null
       }
-      const before = (await readReviews(reviewsPath(projectId)))
+      const before = (await retryReviewPersistence(
+        'reading review before dismissal failed',
+        () => readReviews(reviewsPath(projectId)),
+      ))
         .find((review) => review.id === reviewId)
       if (!before) {
         safelySettled = true
@@ -1157,20 +1255,23 @@ export function createServer(
           return null
         }
       }
-      const dismissed = await withProjectMutation(projectId, res, async () => {
-        const current = (await readReviews(reviewsPath(projectId)))
-          .find((review) => review.id === reviewId)
-        if (!current) throw new ReviewError('unknown review', 404)
-        if (current.status === 'dismissed') return current
-        return transitionReview(
-          reviewsPath(projectId),
-          reviewId,
-          { status: 'dismissed' },
-          new Date().toISOString(),
-        )
-      })
-      if (dismissed === null) return null
-      await broadcastReviews(projectId)
+      const dismissed = await persistReviewSettlement('dismiss', projectId, reviewId, () =>
+        withProjectMutation(projectId, res, async () => {
+          const current = (await readReviews(reviewsPath(projectId)))
+            .find((review) => review.id === reviewId)
+          if (!current) throw new ReviewError('unknown review', 404)
+          if (current.status === 'dismissed') return current
+          return transitionReview(
+            reviewsPath(projectId),
+            reviewId,
+            { status: 'dismissed' },
+            new Date().toISOString(),
+          )
+        }))
+      if (dismissed === null) {
+        safelySettled = true
+        return null
+      }
       safelySettled = true
       return dismissed
     } finally {
@@ -1353,6 +1454,7 @@ export function createServer(
         if (status === 'dismissed') {
           const dismissed = await settleReviewDismissal(req.params.id, req.params.reviewId, res)
           if (!dismissed) return
+          await broadcastReviewsBestEffort(req.params.id)
           res.json({ review: dismissed })
           return
         }

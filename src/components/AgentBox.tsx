@@ -78,6 +78,13 @@ export function AgentBox({
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
+  useEffect(() => () => {
+    const handle = handleRef.current
+    handleRef.current = null
+    handle?.dispose()
+    void handle?.requestCancel().catch(() => {})
+  }, [])
+
   // A fresh open expands to the full box and focuses the field (after paint, so
   // the freshly-shown element is focusable).
   useEffect(() => {
@@ -171,7 +178,7 @@ export function AgentBox({
   // input, then close — unlike plain close, which preserves the chat.
   const closeAndClear = () => {
     const handle = handleRef.current
-    handle?.dispose()
+    handle?.suppressCallbacks()
     if (handle) {
       setRunPhase('cancelling')
       void handle.requestCancel().catch((err) => {

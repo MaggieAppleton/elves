@@ -60,6 +60,9 @@ test('an active agent run holds project identity until the run settles', async (
   const runCaptured = new Promise<void>((resolve) => {
     captureRun = resolve
   })
+  await page.route('**/agent/prepare', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }),
+  )
   await page.route('**/agent/run', async (route) => {
     captureRun()
     await runGate
@@ -97,7 +100,7 @@ test('overlapping review requests keep project transitions locked until both set
       contentType: 'application/json',
       body: JSON.stringify({
         review: {
-          id: `rev-overlap-${requestNumber}`,
+          id: (route.request().postDataJSON() as { reviewId: string }).reviewId,
           personality,
           status: 'dismissed',
           focus: null,

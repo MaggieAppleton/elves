@@ -19,37 +19,40 @@ async function installAgentStream(page: import('@playwright/test').Page) {
     const originalFetch = fetch.bind(globalThis)
     const encoder = new TextEncoder()
     let controller: ReadableStreamDefaultController<Uint8Array> | undefined
-    let cancelStatus = 200
+    let abandonStatus = 200
     let releaseRunResponse: (() => void) | undefined
     let runResponseGate: Promise<void> | undefined
-    const cancelBodies: Array<{ runId: string }> = []
+    const abandonBodies: Array<{ runId: string }> = []
     ;(window as any).__agentTest = {
       push: (event: unknown) => controller?.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`)),
       end: () => {
         controller?.enqueue(encoder.encode('event: end\ndata: {}\n\n'))
         controller?.close()
       },
-      setCancelStatus: (status: number) => { cancelStatus = status },
+      setAbandonStatus: (status: number) => { abandonStatus = status },
       holdRunResponse: () => {
         runResponseGate = new Promise<void>((resolve) => { releaseRunResponse = resolve })
       },
       releaseRunResponse: () => releaseRunResponse?.(),
-      cancelBodies,
+      abandonBodies,
     }
     globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
+      if (url.endsWith('/agent/prepare')) {
+        return new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } })
+      }
       if (url.endsWith('/agent/run')) {
         await runResponseGate
         return new Response(new ReadableStream<Uint8Array>({ start(c) { controller = c } }), {
           headers: { 'content-type': 'text/event-stream' },
         })
       }
-      if (url.endsWith('/agent/cancel')) {
-        cancelBodies.push(JSON.parse(String(init?.body)))
-        return new Response(JSON.stringify(cancelStatus === 200
+      if (url.endsWith('/agent/abandon')) {
+        abandonBodies.push(JSON.parse(String(init?.body)))
+        return new Response(JSON.stringify(abandonStatus === 200
           ? { ok: true }
           : { code: 'signal-failed', error: 'could not signal the active agent run' }), {
-          status: cancelStatus,
+          status: abandonStatus,
           headers: { 'content-type': 'application/json' },
         })
       }
@@ -58,8 +61,11 @@ async function installAgentStream(page: import('@playwright/test').Page) {
   })
 }
 
-test.beforeEach(async ({ request }) => {
+test.beforeEach(async ({ request, page }) => {
   await resetProject(request)
+  await page.route('**/agent/prepare', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }),
+  )
 })
 
 test('pressing / opens the box and streams a transcript', async ({ page }) => {
@@ -233,9 +239,9 @@ test('Cancel stays cancelling and blocks resubmission until the run stream ends'
       ]),
     })
   })
-  let cancelHit = false
-  await page.route('**/agent/cancel', (route) => {
-    cancelHit = true
+  let abandonHit = false
+  await page.route('**/agent/abandon', (route) => {
+    abandonHit = true
     return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' })
   })
 
@@ -252,7 +258,7 @@ test('Cancel stays cancelling and blocks resubmission until the run stream ends'
   await expect(cancel).toBeDisabled()
   await expect(page.getByTestId('agent-input')).toBeDisabled()
   await expect(page.getByTestId('agent-send')).toBeHidden()
-  await expect.poll(() => cancelHit).toBe(true)
+  await expect.poll(() => abandonHit).toBe(true)
 
   endRun()
   await expect(page.getByTestId('agent-send')).toBeVisible()
@@ -344,7 +350,7 @@ test('clear and reopen stays locked to the live run until its stream ends', asyn
   await expect(page.getByTestId('agent-input')).toBeDisabled()
   await page.evaluate(() => (window as any).__agentTest.push({ type: 'text', text: 'stale reply' }))
   await expect(page.getByTestId('agent-transcript')).not.toContainText('stale reply')
-  expect(await page.evaluate(() => (window as any).__agentTest.cancelBodies)).toEqual([
+  expect(await page.evaluate(() => (window as any).__agentTest.abandonBodies)).toEqual([
     { runId: expect.stringMatching(/^[0-9a-f-]{36}$/) },
   ])
 
@@ -372,23 +378,22 @@ test('clear before the run response still stays locked until the eventual stream
   await expect(page.getByTestId('agent-send')).toBeVisible()
 })
 
-test('a failed cancel is shown and can be retried while the stream stays live', async ({ page }) => {
+test('a transient failed abandon retries while the stream stays live', async ({ page }) => {
   await installAgentStream(page)
   await openReadyCanvas(page)
-  await page.evaluate(() => (window as any).__agentTest.setCancelStatus(503))
+  await page.evaluate(() => (window as any).__agentTest.setAbandonStatus(503))
   await page.keyboard.press('/')
   await page.getByTestId('agent-input').fill('try to stop')
   await page.getByTestId('agent-send').click()
   await page.evaluate(() => (window as any).__agentTest.push({ type: 'started' }))
 
   await page.getByTestId('agent-cancel').click()
-  await expect(page.getByTestId('agent-transcript')).toContainText('could not signal the active agent run')
-  await expect(page.getByTestId('agent-cancel')).toHaveText('Cancel')
-  await expect(page.getByTestId('agent-cancel')).toBeEnabled()
-
-  await page.evaluate(() => (window as any).__agentTest.setCancelStatus(200))
-  await page.getByTestId('agent-cancel').click()
   await expect(page.getByTestId('agent-cancel')).toHaveText('Cancelling…')
+  await expect(page.getByTestId('agent-cancel')).toBeDisabled()
+  await expect.poll(() => page.evaluate(() => (window as any).__agentTest.abandonBodies.length)).toBe(1)
+
+  await page.evaluate(() => (window as any).__agentTest.setAbandonStatus(200))
+  await expect.poll(() => page.evaluate(() => (window as any).__agentTest.abandonBodies.length)).toBe(2)
   await page.evaluate(() => {
     ;(window as any).__agentTest.push({ type: 'done', reply: 'Cancelled.' })
     ;(window as any).__agentTest.end()

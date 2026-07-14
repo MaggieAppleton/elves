@@ -139,6 +139,7 @@ export default function App() {
   const editorRef = useRef<Editor | null>(null)
   const canvasMountRef = useRef<AppCanvasMount | null>(null)
   const transitionRef = useRef<Promise<void> | null>(null)
+  const reviewMutationControllersRef = useRef(new Set<AbortController>())
   const canvasMutationsLocked = !editor || transitioning ||
     canvasWriteStatus === 'renaming' || canvasWriteStatus === 'rename-ambiguous'
   // Server-side agent/review runs cannot join the local canvas drain. Keep the
@@ -292,16 +293,23 @@ export default function App() {
     const pid = currentProjectId
     if (!pid) return
     const visit = reviewVisitRef.current
+    const controller = new AbortController()
+    reviewMutationControllersRef.current.add(controller)
     setReviewRequestCount((count) => count + 1)
     // The websocket echo will also land; setting from the fetch keeps the panel
     // truthful even if the socket is down.
-    summonReview(pid, personality, focus)
+    summonReview(pid, personality, focus, controller.signal)
       .then((review) => {
         mergeReviewForVisit(pid, visit, review)
         return refreshReviewsAfterMutation(pid, visit)
       })
-      .catch((err) => console.error('Elves: failed to summon review', err))
-      .finally(() => setReviewRequestCount((count) => Math.max(0, count - 1)))
+      .catch((err) => {
+        if (!controller.signal.aborted) console.error('Elves: failed to summon review', err)
+      })
+      .finally(() => {
+        reviewMutationControllersRef.current.delete(controller)
+        setReviewRequestCount((count) => Math.max(0, count - 1))
+      })
   }
 
   const handleDismissReview = (reviewId: string) => {
@@ -309,14 +317,21 @@ export default function App() {
     const pid = currentProjectId
     if (!pid) return
     const visit = reviewVisitRef.current
+    const controller = new AbortController()
+    reviewMutationControllersRef.current.add(controller)
     setReviewRequestCount((count) => count + 1)
-    dismissReview(pid, reviewId)
+    dismissReview(pid, reviewId, controller.signal)
       .then((review) => {
         mergeReviewForVisit(pid, visit, review)
         return refreshReviewsAfterMutation(pid, visit)
       })
-      .catch((err) => console.error('Elves: failed to dismiss review', err))
-      .finally(() => setReviewRequestCount((count) => Math.max(0, count - 1)))
+      .catch((err) => {
+        if (!controller.signal.aborted) console.error('Elves: failed to dismiss review', err)
+      })
+      .finally(() => {
+        reviewMutationControllersRef.current.delete(controller)
+        setReviewRequestCount((count) => Math.max(0, count - 1))
+      })
   }
 
   const handleRetryReview = (reviewId: string) => {
@@ -326,14 +341,21 @@ export default function App() {
     // The launch itself is fire-and-forget on the server; the WS broadcast
     // carries the resulting pending → in-progress transition to the panel.
     const visit = reviewVisitRef.current
+    const controller = new AbortController()
+    reviewMutationControllersRef.current.add(controller)
     setReviewRequestCount((count) => count + 1)
-    retryReview(pid, reviewId)
+    retryReview(pid, reviewId, controller.signal)
       .then((review) => {
         mergeReviewForVisit(pid, visit, review)
         return refreshReviewsAfterMutation(pid, visit)
       })
-      .catch((err) => console.error('Elves: failed to retry review', err))
-      .finally(() => setReviewRequestCount((count) => Math.max(0, count - 1)))
+      .catch((err) => {
+        if (!controller.signal.aborted) console.error('Elves: failed to retry review', err)
+      })
+      .finally(() => {
+        reviewMutationControllersRef.current.delete(controller)
+        setReviewRequestCount((count) => Math.max(0, count - 1))
+      })
   }
 
   // Presence is keyed by shape id; dropping it on project switch is cheap
@@ -343,6 +365,8 @@ export default function App() {
   }, [currentProjectId])
 
   useEffect(() => () => {
+    for (const controller of reviewMutationControllersRef.current) controller.abort()
+    reviewMutationControllersRef.current.clear()
     canvasMountRef.current?.dispose()
     canvasMountRef.current = null
   }, [])

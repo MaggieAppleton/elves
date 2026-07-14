@@ -99,3 +99,93 @@ test('a truncated success body retries with the same mutation id', async () => {
   await expect(result).resolves.toMatchObject({ status: 'dismissed' })
   expect(bodies[1]).toEqual(bodies[0])
 })
+
+test('summon rejects partial and wrong-id 2xx bodies as ambiguous', async () => {
+  vi.useFakeTimers()
+  const bodies: any[] = []
+  vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body))
+    bodies.push(body)
+    if (bodies.length === 1) {
+      return new Response(JSON.stringify({ review: { id: body.reviewId } }), { status: 200 })
+    }
+    if (bodies.length === 2) {
+      return new Response(JSON.stringify({ review: review({ id: 'rev-wrong' }) }), { status: 200 })
+    }
+    return new Response(JSON.stringify({ review: review({ id: body.reviewId }) }), { status: 200 })
+  }))
+
+  const result = summonReview('essay', 'trimmer', null)
+  await vi.waitFor(() => expect(bodies).toHaveLength(1))
+  await vi.advanceTimersByTimeAsync(750)
+
+  await expect(result).resolves.toMatchObject({ id: bodies[0].reviewId })
+  expect(bodies).toHaveLength(3)
+  expect(bodies[1]).toEqual(bodies[0])
+  expect(bodies[2]).toEqual(bodies[0])
+})
+
+test('retry requires the exact review and attempt id in a 2xx body', async () => {
+  vi.useFakeTimers()
+  const bodies: any[] = []
+  vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body))
+    bodies.push(body)
+    const attemptId = bodies.length === 1 ? 'attempt-wrong' : body.attemptId
+    return new Response(JSON.stringify({
+      review: review({ id: 'rev-client-a', status: 'pending', attemptId }),
+    }), { status: 202 })
+  }))
+
+  const result = retryReview('essay', 'rev-client-a')
+  await vi.waitFor(() => expect(bodies).toHaveLength(1))
+  await vi.advanceTimersByTimeAsync(250)
+
+  await expect(result).resolves.toMatchObject({ id: 'rev-client-a', attemptId: bodies[0].attemptId })
+  expect(bodies).toHaveLength(2)
+})
+
+test('dismiss requires the exact review id and dismissed status in a 2xx body', async () => {
+  vi.useFakeTimers()
+  let attempts = 0
+  vi.stubGlobal('fetch', vi.fn(async () => {
+    attempts += 1
+    const returned = attempts === 1
+      ? review({ id: 'rev-client-a', status: 'done' })
+      : review({ id: 'rev-client-a', status: 'dismissed' })
+    return new Response(JSON.stringify({ review: returned }), { status: 200 })
+  }))
+
+  const result = dismissReview('essay', 'rev-client-a')
+  await vi.waitFor(() => expect(attempts).toBe(1))
+  await vi.advanceTimersByTimeAsync(250)
+
+  await expect(result).resolves.toMatchObject({ id: 'rev-client-a', status: 'dismissed' })
+  expect(attempts).toBe(2)
+})
+
+test('review mutation retries back off and abort without leaving a timer', async () => {
+  vi.useFakeTimers()
+  let attempts = 0
+  vi.stubGlobal('fetch', vi.fn(async () => {
+    attempts += 1
+    return new Response('unavailable', { status: 503 })
+  }))
+  const controller = new AbortController()
+
+  const result = dismissReview('essay', 'rev-client-a', controller.signal)
+  void result.catch(() => {})
+  await vi.waitFor(() => expect(attempts).toBe(1))
+  await vi.advanceTimersByTimeAsync(249)
+  expect(attempts).toBe(1)
+  await vi.advanceTimersByTimeAsync(1)
+  expect(attempts).toBe(2)
+  await vi.advanceTimersByTimeAsync(499)
+  expect(attempts).toBe(2)
+  await vi.advanceTimersByTimeAsync(1)
+  expect(attempts).toBe(3)
+
+  controller.abort()
+  await expect(result).rejects.toMatchObject({ name: 'AbortError' })
+  expect(vi.getTimerCount()).toBe(0)
+})

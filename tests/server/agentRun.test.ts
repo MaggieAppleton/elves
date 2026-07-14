@@ -277,22 +277,6 @@ test('a project transition excludes new runs and cannot begin while a run is act
   await second
 })
 
-test('an abandoned unknown run id tombstones late admission', async () => {
-  let spawned = 0
-  const runner = createAgentRunner(deps(() => {
-    spawned += 1
-    return new FakeChild()
-  }))
-
-  expect(runner.abandon('chat', 'run-late')).toEqual({ status: 'prevented' })
-  const events: AgentEvent[] = []
-  await runner.run('chat', input('run-late'), (event) => events.push(event))
-
-  expect(spawned).toBe(0)
-  expect(runner.isRunning('chat', 'run-late')).toBe(false)
-  expect(events).toEqual([{ type: 'error', message: expect.stringContaining('abandoned') }])
-})
-
 test('abandon atomically cancels a run that won admission first', async () => {
   const child = new FakeChild()
   const runner = createAgentRunner(deps(() => child))
@@ -373,7 +357,23 @@ test('cancelAndWait escalates an ignored SIGTERM to SIGKILL', async () => {
   await run
 })
 
-test('cancelAndWait tombstones a not-yet-active run before reporting not-running', async () => {
+test.each([
+  ['cancel', (runner: ReturnType<typeof createAgentRunner>) => runner.cancel('chat', 'run-a')],
+  ['abandon', (runner: ReturnType<typeof createAgentRunner>) => runner.abandon('chat', 'run-a')],
+] as const)('%s escalates an ignored SIGTERM to SIGKILL', async (_label, cancel) => {
+  const child = new FakeChild()
+  const runner = createAgentRunner({ ...deps(() => child), cancelGraceMs: 1 })
+  const run = runner.run('chat', input('run-a'), () => {})
+
+  expect(cancel(runner)).toEqual({ status: 'accepted' })
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  expect(child.killed).toBe('SIGKILL')
+
+  child.emitClose(null)
+  await run
+})
+
+test('cancelAndWait cancels a reserved not-yet-active run before reporting not-running', async () => {
   let spawned = 0
   const child = new FakeChild()
   const runner = createAgentRunner(deps(() => {
@@ -403,6 +403,80 @@ test('project reservations uniquely admit one key and run id', () => {
   runner.releaseProjectRun(reservation!)
   expect(runner.isRunAdmitted('review:rev-1', 'attempt-a')).toBe(false)
   expect(runner.reserveProjectRun('p', 'review:rev-1', 'attempt-b')).not.toBeNull()
+})
+
+test('prepared chat admission is required and consumed exactly once', async () => {
+  const children = [new FakeChild(), new FakeChild()]
+  let spawned = 0
+  const runner = createAgentRunner(deps(() => children[spawned++]))
+
+  expect(runner.runPrepared('chat', input('run-a'), () => {})).toBeNull()
+  expect(spawned).toBe(0)
+  expect(runner.prepare('chat', 'run-a', 'p')).toEqual({ status: 'accepted' })
+  expect(runner.prepare('chat', 'run-a', 'p')).toEqual({ status: 'duplicate' })
+
+  const run = runner.runPrepared('chat', input('run-a'), () => {})
+  expect(run).not.toBeNull()
+  expect(spawned).toBe(1)
+  expect(runner.runPrepared('chat', input('run-a'), () => {})).toBeNull()
+
+  children[0].emitClose(0)
+  await run
+})
+
+test.each([
+  ['run-b', 'run-a'],
+  ['run-a', 'run-b'],
+] as const)('late %s preparation cannot clobber prepared %s', async (lateId, firstId) => {
+  const child = new FakeChild()
+  const runner = createAgentRunner(deps(() => child))
+  expect(runner.prepare('chat', firstId, 'p')).toEqual({ status: 'accepted' })
+  expect(runner.prepare('chat', lateId, 'p')).toEqual({ status: 'accepted' })
+
+  const unlock = runner.tryLockProject('p')
+  expect(unlock).not.toBeNull()
+  unlock?.()
+  const run = runner.runPrepared('chat', input(firstId), () => {})
+  expect(run).not.toBeNull()
+  expect(runner.runPrepared('chat', input(lateId), () => {})).toBeNull()
+
+  child.emitClose(0)
+  await run
+})
+
+test('abandon removes prepared admission so a delayed run cannot spawn', () => {
+  let spawned = 0
+  const runner = createAgentRunner(deps(() => {
+    spawned += 1
+    return new FakeChild()
+  }))
+  runner.prepare('chat', 'run-a', 'p')
+
+  expect(runner.abandon('chat', 'run-a')).toEqual({ status: 'prevented' })
+  expect(runner.runPrepared('chat', input('run-a'), () => {})).toBeNull()
+  expect(spawned).toBe(0)
+})
+
+test('expired and over-capacity preparation rejects instead of evicting into spawn', () => {
+  let now = 0
+  let spawned = 0
+  const runner = createAgentRunner({
+    ...deps(() => {
+      spawned += 1
+      return new FakeChild()
+    }),
+    nowMs: () => now,
+    preparedTtlMs: 10,
+    preparedLimit: 1,
+  })
+
+  expect(runner.prepare('chat', 'run-a', 'p')).toEqual({ status: 'accepted' })
+  expect(runner.prepare('chat', 'run-c', 'p')).toEqual({ status: 'capacity' })
+  expect(runner.prepare('other', 'run-b', 'p')).toEqual({ status: 'capacity' })
+  now = 11
+  expect(runner.runPrepared('chat', input('run-a'), () => {})).toBeNull()
+  expect(spawned).toBe(0)
+  expect(runner.prepare('other', 'run-b', 'p')).toEqual({ status: 'accepted' })
 })
 
 test('cancel(key) kills only that key\'s child', async () => {

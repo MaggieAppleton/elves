@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'vitest'
+import { afterAll, afterEach, beforeAll, expect, test } from 'vitest'
 import http from 'node:http'
 import { tmpdir } from 'node:os'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -26,6 +26,8 @@ function fakeAgent(
     isProjectRunning: (projectId: string) => running && projectId === 'essay',
     reserveProjectRun: (projectId: string) => ({ projectId }),
     isRunAdmitted: () => false,
+    prepare: () => running ? { status: 'conflict' as const } : { status: 'accepted' as const },
+    claimPrepared: (key: string, input: any) => running ? null : ({ projectId: input.projectId, key }),
     releaseProjectRun: () => {},
     abandon(key: string, runId: string) {
       impl.abandoned.push({ key, runId })
@@ -36,6 +38,9 @@ function fakeAgent(
     },
     async runReserved(_reservation: unknown, key: string, input: unknown, onEvent: (e: AgentEvent) => void) {
       return impl.run(key, input, onEvent)
+    },
+    runPrepared(key: string, input: unknown, onEvent: (e: AgentEvent) => void) {
+      return running ? null : impl.run(key, input, onEvent)
     },
     tryLockProject: (_projectId: string) => running ? null : () => {},
     cancel(key: string, runId: string) {
@@ -49,8 +54,15 @@ function fakeAgent(
   return impl
 }
 
-// The agent routes never touch disk (no requireProject), so a bogus data root is fine.
-const app = (agent?: AgentRunner) => createServer(tmpdir(), undefined, undefined, undefined, undefined, agent)
+let agentRoot: string
+beforeAll(async () => {
+  agentRoot = await mkdtemp(join(tmpdir(), 'elves-agent-routes-'))
+  await request(createServer(agentRoot)).post('/projects').send({ name: 'Essay' }).expect(200)
+})
+afterAll(async () => {
+  await rm(agentRoot, { recursive: true, force: true })
+})
+const app = (agent?: AgentRunner) => createServer(agentRoot, undefined, undefined, undefined, undefined, agent)
 
 // SSE responses don't resolve cleanly under supertest/superagent, so the
 // streaming case runs against a real listening server and reads the raw body.
@@ -106,6 +118,34 @@ test('POST /agent/run streams SSE events then an end marker', async () => {
   expect(res.text).toContain('data: {"type":"tool","name":"read_selection","summary":"2 cards"}')
   expect(res.text).toContain('data: {"type":"done","reply":"Critiqued."}')
   expect(res.text).toContain('event: end')
+})
+
+test('POST /agent/prepare acknowledges a bounded run admission', async () => {
+  const res = await request(app(fakeAgent())).post('/agent/prepare').send({
+    projectId: 'essay', runId: 'run-a',
+  })
+
+  expect(res.status).toBe(200)
+  expect(res.body).toEqual({ ok: true, status: 'accepted' })
+})
+
+test('POST /agent/run refuses an absent or expired preparation before streaming', async () => {
+  const agent = fakeAgent()
+  agent.claimPrepared = () => null
+  const res = await request(app(agent)).post('/agent/run').send({
+    prompt: 'hi', projectId: 'essay', runId: 'run-a',
+  })
+
+  expect(res.status).toBe(409)
+  expect(res.headers['content-type']).toContain('application/json')
+})
+
+test('POST /agent/run validates the project after claiming its preparation', async () => {
+  const res = await request(app(fakeAgent())).post('/agent/run').send({
+    prompt: 'hi', projectId: 'definitely-missing-project', runId: 'run-a',
+  })
+
+  expect(res.status).toBe(404)
 })
 
 test('POST /agent/run rejects a missing prompt', async () => {
@@ -187,12 +227,15 @@ test('a review run in progress does not 409 a chat run', async () => {
     isProjectRunning: () => false,
     reserveProjectRun: (projectId) => ({ projectId }),
     isRunAdmitted: () => false,
+    prepare: () => ({ status: 'accepted' }),
+    claimPrepared: (_key, input) => ({ projectId: input.projectId }),
     releaseProjectRun: () => {},
     abandon: () => ({ status: 'prevented' }),
     cancelAndWait: async () => ({ status: 'not-running' }),
     runReserved: async (_reservation, key, input, onEvent) => {
       await agent.run(key, input, onEvent)
     },
+    runPrepared: (_key, input, onEvent) => agent.run('chat', input, onEvent),
     tryLockProject: () => () => {},
     cancel: () => ({ status: 'not-running' }),
     async run(_key, _input, onEvent) {
