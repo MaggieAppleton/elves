@@ -1,4 +1,4 @@
-import { generateNKeysBetween } from 'fractional-indexing-jittered'
+import { generateKeyBetween, generateNKeysBetween } from 'fractional-indexing-jittered'
 import type {
   CanvasMergeInput,
   DocumentRecord,
@@ -17,6 +17,15 @@ function hasOwn(object: object, key: string): boolean {
 
 function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0
+}
+
+function isValidIndexKey(index: string): boolean {
+  try {
+    generateKeyBetween(index, null)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function setIndex(record: DocumentRecord, index: string): void {
@@ -40,12 +49,32 @@ function siblingGroups(document: DocumentRecords): Map<string, IndexedShape[]> {
     const record = hasOwn(document, recordId) ? document[recordId] : undefined
     if (record?.typeName !== 'shape' || !hasOwn(record, 'parentId') ||
       typeof record.parentId !== 'string' || !hasOwn(record, 'index') ||
-      typeof record.index !== 'string') continue
+      typeof record.index !== 'string' || !isValidIndexKey(record.index)) continue
     const siblings = groups.get(record.parentId) ?? []
     siblings.push({ id: recordId, index: record.index, record })
     groups.set(record.parentId, siblings)
   }
   return groups
+}
+
+function safelyGenerateKeys(
+  lower: string | null,
+  upper: string | null,
+  count: number,
+): string[] | null {
+  try {
+    const generated = generateNKeysBetween(lower, upper, count)
+    if (generated.length !== count) return null
+    let previous = lower
+    for (const key of generated) {
+      if (!isValidIndexKey(key) || (previous !== null && compareText(previous, key) >= 0) ||
+        (upper !== null && compareText(key, upper) >= 0)) return null
+      previous = key
+    }
+    return generated
+  } catch {
+    return null
+  }
 }
 
 function indexRuns(siblings: IndexedShape[]): IndexedShape[][] {
@@ -73,7 +102,11 @@ function repairSiblingGroup(siblings: IndexedShape[], input: CanvasMergeInput): 
     const ordered = [...run].sort((left, right) =>
       provenanceRank(left.id, input) - provenanceRank(right.id, input) ||
       compareText(left.id, right.id))
-    const generated = generateNKeysBetween(lower, upper, ordered.length)
+    const generated = safelyGenerateKeys(lower, upper, ordered.length)
+    if (!generated) {
+      lower = run[0].index
+      continue
+    }
     ordered.forEach((sibling, position) => setIndex(sibling.record, generated[position]))
     lower = generated[generated.length - 1]
   }

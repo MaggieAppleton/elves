@@ -157,6 +157,38 @@ test('missing and non-string indices are ignored without throwing', () => {
   expect(merged['shape:valid'].index).toBe('a1')
 })
 
+test('a malformed string bound is ignored while a valid collision is repaired', () => {
+  const invalid = shape('shape:invalid', 'page:page', '')
+  const a = shape('shape:a', 'page:page', 'a1')
+  const b = shape('shape:b', 'page:page', 'a1')
+  const document = complete(invalid, a, b)
+  let merged: DocumentRecords | undefined
+
+  expect(() => {
+    merged = successful({ base: document, local: document, remote: document })
+  }).not.toThrow()
+
+  expect(merged!['shape:invalid'].index).toBe('')
+  expect(merged!['shape:a'].index).toBe('a0')
+  expect(merged!['shape:b'].index).toBe('a1')
+})
+
+test('duplicate malformed string indices stay unchanged without throwing', () => {
+  const invalidA = shape('shape:invalid-a', 'page:page', '')
+  const invalidB = shape('shape:invalid-b', 'page:page', '')
+  const valid = shape('shape:valid', 'page:page', 'a1')
+  const document = complete(invalidA, invalidB, valid)
+  let merged: DocumentRecords | undefined
+
+  expect(() => {
+    merged = successful({ base: document, local: document, remote: document })
+  }).not.toThrow()
+
+  expect(merged!['shape:invalid-a'].index).toBe('')
+  expect(merged!['shape:invalid-b'].index).toBe('')
+  expect(merged!['shape:valid'].index).toBe('a1')
+})
+
 function provenanceInput(reverse: boolean) {
   const lower = shape('shape:lower', 'page:page', 'a0')
   const upper = shape('shape:upper', 'page:page', 'a5')
