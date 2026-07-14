@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useValue, type Editor } from 'tldraw'
 import type { CardShape } from '../shapes/CardShapeUtil'
 import type { SectionShape } from '../shapes/SectionShapeUtil'
@@ -65,16 +65,39 @@ export function DraftPane({
   const [editingId, setEditingId] = useState<string | null>(null)
 
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle')
+  const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const copyAttemptRef = useRef(0)
+
+  useEffect(() => () => {
+    copyAttemptRef.current += 1
+    if (copyResetTimerRef.current !== null) {
+      clearTimeout(copyResetTimerRef.current)
+      copyResetTimerRef.current = null
+    }
+  }, [])
+
   const copy = async () => {
+    const attempt = ++copyAttemptRef.current
+    if (copyResetTimerRef.current !== null) {
+      clearTimeout(copyResetTimerRef.current)
+      copyResetTimerRef.current = null
+    }
+    let nextStatus: 'copied' | 'error'
     try {
       await navigator.clipboard.writeText(draftToMarkdown(blocks))
-      setCopyStatus('copied')
-      setTimeout(() => setCopyStatus('idle'), 1400)
+      nextStatus = 'copied'
     } catch (err) {
+      if (copyAttemptRef.current !== attempt) return
       console.error('Elves: copy draft failed', err)
-      setCopyStatus('error')
-      setTimeout(() => setCopyStatus('idle'), 1400)
+      nextStatus = 'error'
     }
+    if (copyAttemptRef.current !== attempt) return
+    setCopyStatus(nextStatus)
+    copyResetTimerRef.current = setTimeout(() => {
+      if (copyAttemptRef.current !== attempt) return
+      copyResetTimerRef.current = null
+      setCopyStatus('idle')
+    }, 1400)
   }
 
   const startEditing = (cardId: string) => {
