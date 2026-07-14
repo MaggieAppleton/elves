@@ -20,8 +20,8 @@ import {
   recordLegacyChangeSetReceipt,
   type ChangeSetToken,
 } from './canvasMetadata'
-import { snapshotToCards, snapshotToGroupIds, snapshotToSections } from './digest'
 import type { CanvasSnapshot } from './store'
+import { addressableShapeRecord, globalStoreIdentity } from './storeIdentity'
 
 interface ProtocolState {
   revision: number
@@ -64,34 +64,32 @@ function targetValidation(
   snapshot: CanvasSnapshot,
   changeSet: ChangeSet,
 ): { missing: string[]; invalidMergeReps: string[] } {
-  const cards = snapshotToCards(snapshot)
-  const cardIds = new Set(cards.map((card) => card.id))
-  const cardsById = new Map(cards.map((card) => [card.id, card]))
-  const sectionIds = new Set(snapshotToSections(snapshot).map((section) => section.id))
-  const groupIds = new Set(snapshotToGroupIds(snapshot))
-  const store = (snapshot as any)?.document?.store
-  const questionIds = new Set(
-    store && typeof store === 'object'
-      ? Object.values(store)
-        .filter((record: any) => record?.typeName === 'shape' && record.type === 'question')
-        .map((record: any) => record.id as string)
-      : [],
-  )
+  const identity = globalStoreIdentity(snapshot)
+  const isShape = (id: string, type: string) =>
+    addressableShapeRecord(identity, id, type) !== null
   const missing = [...new Set([
-    ...referencedCardIds(changeSet).filter((id) => !cardIds.has(id)),
-    ...referencedSectionIds(changeSet).filter((id) => !sectionIds.has(id)),
-    ...referencedGroupIds(changeSet).filter((id) => !groupIds.has(id)),
-    ...referencedQuestionIds(changeSet).filter((id) => !questionIds.has(id)),
+    ...referencedCardIds(changeSet).filter((id) => !isShape(id, 'card')),
+    ...referencedSectionIds(changeSet).filter((id) => !isShape(id, 'section')),
+    ...referencedGroupIds(changeSet).filter((id) => !isShape(id, 'group')),
+    ...referencedQuestionIds(changeSet).filter((id) => !isShape(id, 'question')),
     ...changeSet.ops.flatMap((op) => {
       if (op.kind !== 'set_comment_summary') return []
-      const card = cardsById.get(op.cardId)
-      if (!card || card.comments.some((comment) => comment.id === op.commentId)) return []
-      return [op.commentId]
+      const card = addressableShapeRecord(identity, op.cardId, 'card')
+      if (!card) return []
+      const comments = Array.isArray((card.props as { comments?: unknown } | undefined)?.comments)
+        ? (card.props as { comments: unknown[] }).comments
+        : []
+      const matches = comments.filter((comment) =>
+        typeof comment === 'object' && comment !== null &&
+        (comment as { id?: unknown }).id === op.commentId)
+      return matches.length === 1 ? [] : [op.commentId]
     }),
   ])]
-  const noteCardIds = new Set(cards.filter((card) => card.kind === 'note').map((card) => card.id))
   const invalidMergeReps = mergeRepresentativeIds(changeSet)
-    .filter((id) => !noteCardIds.has(id))
+    .filter((id) => {
+      const card = addressableShapeRecord(identity, id, 'card')
+      return !card || (card.props as { kind?: unknown } | undefined)?.kind !== 'note'
+    })
   return { missing, invalidMergeReps }
 }
 

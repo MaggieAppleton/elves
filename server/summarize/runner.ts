@@ -10,6 +10,7 @@ import { summaryState, commentSummaryState } from '../../src/model/summary'
 import { canvasPathFor, getProject } from '../projects'
 import { withProjectLock } from '../projectLock'
 import { incrementCanvasRevision } from '../canvasMetadata'
+import { globalStoreIdentity } from '../storeIdentity'
 
 type SummaryOp = Extract<Op,
   | { kind: 'set_summary' }
@@ -54,41 +55,17 @@ function commentKey(comment: Pick<CommentCandidate, 'cardId' | 'commentId'>): st
   return `${comment.cardId}\0${comment.commentId}`
 }
 
-function globalRecordIdentity(snapshot: Parameters<typeof snapshotToSummarizableCards>[0]): {
-  addressableIds: Set<string>
-  unaddressableIds: Set<string>
-} {
-  const document = snapshot.document as {
-    store?: Record<string, unknown>
-    records?: Record<string, unknown>
-  } | null | undefined
-  const store = document?.store ?? document?.records ?? {}
-  const records = Object.entries(store).flatMap(([storeKey, record]) => {
-    if (typeof record !== 'object' || record === null ||
-      typeof (record as { id?: unknown }).id !== 'string') return []
-    return [{ storeKey, id: (record as { id: string }).id }]
-  })
-  const grouped = groupUniqueByKey(records, (record) => record.id)
-  const addressableIds = new Set<string>()
-  const unaddressableIds = new Set(grouped.ambiguousKeys)
-  for (const [id, record] of grouped.uniqueByKey) {
-    if (record.storeKey === id) addressableIds.add(id)
-    else unaddressableIds.add(id)
-  }
-  return { addressableIds, unaddressableIds }
-}
-
 function summaryCandidates(snapshot: Parameters<typeof snapshotToSummarizableCards>[0]): SummaryCandidates {
-  const identity = globalRecordIdentity(snapshot)
+  const identity = globalStoreIdentity(snapshot)
   const cards = snapshotToSummarizableCards(snapshot)
-    .filter((card) => identity.addressableIds.has(card.id))
+    .filter((card) => identity.addressableById.has(card.id))
   const commentGroups = groupUniqueByKey(snapshotToSummarizableComments(snapshot), commentKey)
   const questions = snapshotToSummarizableQuestions(snapshot)
-    .filter((question) => identity.addressableIds.has(question.questionId))
+    .filter((question) => identity.addressableById.has(question.questionId))
   const ambiguousCommentIds = new Set(commentGroups.ambiguousKeys)
   const commentById = new Map<string, CommentCandidate>()
   for (const [key, comment] of commentGroups.uniqueByKey) {
-    if (identity.addressableIds.has(comment.cardId)) commentById.set(key, comment)
+    if (identity.addressableById.has(comment.cardId)) commentById.set(key, comment)
     else if (identity.unaddressableIds.has(comment.cardId)) ambiguousCommentIds.add(key)
   }
   return {

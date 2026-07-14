@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import type { ChangeSet } from '../../src/model/changeset'
+import { changeSetTokenStamp, type ChangeSet } from '../../src/model/changeset'
 import type { CanvasSnapshot } from '../../server/store'
 import {
   MAX_LEGACY_CHANGE_SET_RECEIPTS,
@@ -13,6 +13,7 @@ import {
   nextChangeSetToken,
   pendingChangeSetsForClient,
   recentChangeSetDigest,
+  replaceCanvasSnapshot,
 } from '../../server/canvasMetadata'
 import { changeSetDigest, semanticChangeSetJson } from '../../server/changeSetIdentity'
 import {
@@ -134,6 +135,20 @@ function expectUnchanged(snapshot: CanvasSnapshot, before: string): void {
   expect(JSON.stringify(snapshot)).toBe(before)
 }
 
+function expectInvalidForTokenizedAndLegacy(
+  start: CanvasSnapshot,
+  changeSet: ChangeSet,
+  expected: { missing?: string[]; invalidMergeReps?: string[] },
+): void {
+  const before = JSON.stringify(start)
+  expect(admitCurrent(start, changeSet)).toMatchObject({ kind: 'invalid-target', ...expected })
+  expectUnchanged(start, before)
+  expect(admitLegacyChangeSet(start, changeSet, changeSetDigest(changeSet)))
+    .toMatchObject({ kind: 'invalid-target', ...expected })
+  expect(legacyChangeSetReceipt(start, changeSet.id)).toBeUndefined()
+  expectUnchanged(start, before)
+}
+
 describe('tokenized admission', () => {
   test('an exact same-token retry is a verified duplicate and does not apply twice', () => {
     const start = ready()
@@ -195,6 +210,44 @@ describe('tokenized admission', () => {
     )
     expect(retry).toMatchObject({ kind: 'duplicate', payloadUnverified: true })
     expect((restarted as any).document.store['shape:a'].x).toBe(50)
+  })
+
+  test('pending work survives diagnostic eviction, restart, duplicate retry, and materialization', () => {
+    const start = empty()
+    const token = nextChangeSetToken(start)
+    const changeSet = create('evicted-pending', 'Pending after eviction')
+    const digest = changeSetDigest(changeSet)
+    const queued = admitTokenizedChangeSet(start, token, changeSet, digest)
+    expect(queued.kind).toBe('queued')
+    if (queued.kind !== 'queued') return
+
+    let current = replaceCanvasSnapshot(queued.snapshot, canvas())
+    for (let index = 0; index < 256; index++) {
+      current = consumeChangeSetSequence(current, `later-${index}`)
+    }
+    const restarted = JSON.parse(JSON.stringify(current)) as CanvasSnapshot
+    expect(recentChangeSetDigest(restarted, token.sequence)).toBeUndefined()
+    expect((restarted as any)[SERVER_CANVAS_METADATA_KEY].recentDigests).toHaveLength(256)
+    expect(pendingChangeSetsForClient(restarted)).toEqual([{ token, changeSet }])
+
+    const beforeRetry = JSON.stringify(restarted)
+    expect(admitTokenizedChangeSet(restarted, token, changeSet, digest)).toMatchObject({
+      kind: 'duplicate', payloadUnverified: true,
+    })
+    expectUnchanged(restarted, beforeRetry)
+    expect(Object.values((restarted as any).document.store)
+      .filter((record: any) => record?.props?.text === 'Pending after eviction')).toEqual([])
+
+    const incoming = structuredClone(canvas()) as any
+    incoming.document.store['shape:pending'] = {
+      id: 'shape:pending', typeName: 'shape', type: 'card',
+      meta: { elvesChangeSetToken: changeSetTokenStamp(token) },
+      props: { kind: 'note', noteKind: 'text' },
+    }
+    const materialized = replaceCanvasSnapshot(
+      restarted, incoming, { materializePending: true },
+    )
+    expect(pendingChangeSetsForClient(materialized)).toEqual([])
   })
 
   test('a retained consumed token rejects a different canonical payload', () => {
@@ -362,6 +415,114 @@ describe('tokenized admission', () => {
     expect(comment.summary).toBe('Summary')
     expect(canvasRevision(result.snapshot)).toBe(2)
     expect(nextChangeSetToken(result.snapshot).sequence).toBe(1)
+  })
+
+  test('key/id mismatches invalidate card, section, group, and question targets for both protocols', () => {
+    const cases: Array<{ key: string; mismatchedKey: string; changeSet: ChangeSet }> = [
+      {
+        key: 'shape:a', mismatchedKey: 'record:card',
+        changeSet: move('mismatched-card', 25),
+      },
+      {
+        key: 'shape:section', mismatchedKey: 'record:section',
+        changeSet: {
+          id: 'mismatched-section', author: 'claude',
+          ops: [{ kind: 'edit_section_text', sectionId: 'shape:section', text: 'New' }],
+        },
+      },
+      {
+        key: 'shape:group', mismatchedKey: 'record:group',
+        changeSet: {
+          id: 'mismatched-group', author: 'claude',
+          ops: [{ kind: 'ungroup_cards', groupId: 'shape:group' }],
+        },
+      },
+      {
+        key: 'shape:question', mismatchedKey: 'record:question',
+        changeSet: {
+          id: 'mismatched-question', author: 'claude',
+          ops: [{
+            kind: 'set_question_summary', questionId: 'shape:question', summary: 'Summary',
+            summaryOfHash: 'hash', summaryBy: 'model', summaryAt: 'T',
+          }],
+        },
+      },
+    ]
+    for (const { key, mismatchedKey, changeSet } of cases) {
+      const start = ready()
+      const store = (start as any).document.store
+      store[mismatchedKey] = store[key]
+      delete store[key]
+      expectInvalidForTokenizedAndLegacy(start, changeSet, { missing: [key] })
+    }
+  })
+
+  test('a cross-type duplicate globally invalidates the target and merge representative', () => {
+    const start = ready()
+    ;(start as any).document.store['record:collision'] = {
+      id: 'shape:a', typeName: 'shape', type: 'section', props: { text: 'Collision' },
+    }
+    expectInvalidForTokenizedAndLegacy(start, move('global-collision', 25), {
+      missing: ['shape:a'],
+    })
+
+    const merge: ChangeSet = {
+      id: 'collision-merge', author: 'claude',
+      ops: [{ kind: 'merge_notes', cardIds: ['shape:a', 'shape:b'] }],
+    }
+    expectInvalidForTokenizedAndLegacy(start, merge, {
+      missing: ['shape:a'], invalidMergeReps: ['shape:a'],
+    })
+  })
+
+  test('duplicate comment ids on one addressable card are invalid for both protocols', () => {
+    const start = ready()
+    addComment(start, 'shape:a')
+    addComment(start, 'shape:a')
+    const changeSet = summarizeComment('duplicate-comment')
+    expectInvalidForTokenizedAndLegacy(start, changeSet, { missing: ['comment:target'] })
+  })
+
+  test('one invalid target rejects a mixed batch without applying its valid operation', () => {
+    const start = ready()
+    const store = (start as any).document.store
+    store['record:collision'] = {
+      id: 'shape:b', typeName: 'shape', type: 'section', props: { text: 'Collision' },
+    }
+    const changeSet: ChangeSet = {
+      id: 'mixed-invalid', author: 'claude',
+      ops: [{
+        kind: 'move_cards',
+        moves: [{ cardId: 'shape:a', x: 25, y: 0 }, { cardId: 'shape:b', x: 50, y: 0 }],
+      }],
+    }
+    expectInvalidForTokenizedAndLegacy(start, changeSet, { missing: ['shape:b'] })
+    expect((start as any).document.store['shape:a'].x).toBe(0)
+  })
+
+  test('an unrelated global collision does not block a valid addressable target', () => {
+    const start = ready()
+    const store = (start as any).document.store
+    store['record:collision-a'] = {
+      id: 'shape:collision', typeName: 'shape', type: 'section', props: { text: 'One' },
+    }
+    store['record:collision-b'] = {
+      id: 'shape:collision', typeName: 'shape', type: 'group', props: {},
+    }
+    const changeSet = move('valid-amid-collision', 25)
+
+    const tokenized = admitCurrent(start, changeSet)
+    expect(tokenized.kind).toBe('applied')
+    if (tokenized.kind === 'applied') {
+      expect((tokenized.snapshot as any).document.store['shape:a'].x).toBe(25)
+      expect(nextChangeSetToken(tokenized.snapshot).sequence).toBe(1)
+    }
+    const legacy = admitLegacyChangeSet(start, changeSet, changeSetDigest(changeSet))
+    expect(legacy.kind).toBe('applied')
+    if (legacy.kind === 'applied') {
+      expect((legacy.snapshot as any).document.store['shape:a'].x).toBe(25)
+      expect(legacyChangeSetReceipt(legacy.snapshot, changeSet.id)).toBe(changeSetDigest(changeSet))
+    }
   })
 
   test('a successful destructive operation retries as a duplicate before target validation', () => {

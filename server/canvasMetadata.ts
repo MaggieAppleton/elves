@@ -131,8 +131,13 @@ function metadataFrom(snapshot: CanvasSnapshot): ServerCanvasMetadata | null {
     if (!isRecord(entry) || !isToken(entry.token) || entry.token.epoch !== raw.epoch ||
       entry.token.sequence >= raw.nextSequence || typeof entry.digest !== 'string' ||
       entry.digest.length === 0) return invalidMetadata()
-    if (entry.token.sequence <= previousPendingSequence ||
-      recentDigestBySequence.get(entry.token.sequence) !== entry.digest) return invalidMetadata()
+    if (entry.token.sequence <= previousPendingSequence) return invalidMetadata()
+    const retainedDigest = recentDigestBySequence.get(entry.token.sequence)
+    const retentionFloor = Math.max(0, raw.nextSequence - MAX_RECENT_CHANGE_SET_DIGESTS)
+    if ((retainedDigest !== undefined && retainedDigest !== entry.digest) ||
+      (retainedDigest === undefined && entry.token.sequence >= retentionFloor)) {
+      return invalidMetadata()
+    }
     previousPendingSequence = entry.token.sequence
     if (!isChangeSet(entry.changeSet) || !validateChangeSetBounds(entry.changeSet).ok ||
       changeSetDigest(entry.changeSet) !== entry.digest) return invalidMetadata()
