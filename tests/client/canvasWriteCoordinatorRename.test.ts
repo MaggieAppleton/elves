@@ -137,3 +137,126 @@ test('a prior barrier reaction cannot start old-id work after rename closes the 
     'final', { document: document('barrier edit') }, 7,
   )
 })
+
+test('an edit queued behind an old-id save waits for rename rebind', async () => {
+  const heldSave = deferred<number>()
+  const patch = deferred<unknown>()
+  const finalProject = { ...originalProject, id: 'final', name: 'Final' }
+  const h = renameHarness({
+    save: vi.fn()
+      .mockImplementationOnce(() => heldSave.promise)
+      .mockResolvedValueOnce(9),
+    renameProject: () => patch.promise,
+  })
+  await h.coordinator.initialize()
+  h.setDocument(document('old edit'))
+  h.coordinator.markDirty()
+  await tick()
+
+  const renamed = h.coordinator.renameProject('Final')
+  h.setDocument(document('new edit'))
+  h.coordinator.markDirty()
+  heldSave.resolve(8)
+  await tick()
+  await tick()
+
+  expect(h.renameProject).toHaveBeenCalledWith('draft', 'Final')
+  expect(h.save).toHaveBeenCalledTimes(1)
+
+  patch.resolve(finalProject)
+  await expect(renamed).resolves.toEqual(finalProject)
+  expect(h.save.mock.calls.map((call) => call[0])).toEqual(['draft', 'final'])
+  expect(h.save.mock.calls[1][1]).toEqual({ document: document('new edit') })
+})
+
+test('a sync queued behind an old-id sync waits for rename rebind', async () => {
+  const heldSync = deferred<ReturnType<typeof state>>()
+  const patch = deferred<unknown>()
+  const finalProject = { ...originalProject, id: 'final', name: 'Final' }
+  let loadCount = 0
+  const h = renameHarness({
+    load: async () => {
+      loadCount += 1
+      return loadCount === 2 ? heldSync.promise : state(document('remote'), 7)
+    },
+    renameProject: () => patch.promise,
+  })
+  await h.coordinator.initialize()
+  const oldSync = h.coordinator.requestRemoteSync()
+  await tick()
+
+  const renamed = h.coordinator.renameProject('Final')
+  const newSync = h.coordinator.requestRemoteSync()
+  heldSync.resolve(state(document('remote'), 7))
+  await tick()
+
+  expect(h.renameProject).toHaveBeenCalledWith('draft', 'Final')
+  expect(h.load.mock.calls.map((call) => call[0])).toEqual(['draft', 'draft'])
+
+  patch.resolve(finalProject)
+  await expect(renamed).resolves.toEqual(finalProject)
+  await oldSync
+  await newSync
+  expect(h.load.mock.calls.map((call) => call[0])).toEqual([
+    'draft', 'draft', 'final',
+  ])
+})
+
+test('pre-cutoff sync barriers remain pending until mixed work drains after rebind', async () => {
+  const heldSave = deferred<number>()
+  const patch = deferred<unknown>()
+  const finalProject = { ...originalProject, id: 'final', name: 'Final' }
+  const h = renameHarness({
+    save: vi.fn()
+      .mockImplementationOnce(() => heldSave.promise)
+      .mockResolvedValueOnce(9),
+    renameProject: () => patch.promise,
+  })
+  await h.coordinator.initialize()
+  h.setDocument(document('old edit'))
+  h.coordinator.markDirty()
+  await tick()
+
+  let oldSyncSettled = false
+  const oldSync = h.coordinator.requestRemoteSync()
+    .then(() => { oldSyncSettled = true })
+  const renamed = h.coordinator.renameProject('Final')
+  h.setDocument(document('new edit'))
+  h.coordinator.markDirty()
+  heldSave.resolve(8)
+  await tick()
+  await tick()
+
+  expect(h.renameProject).toHaveBeenCalledWith('draft', 'Final')
+  expect(oldSyncSettled).toBe(false)
+  expect(h.save).toHaveBeenCalledTimes(1)
+  expect(h.load.mock.calls.map((call) => call[0])).toEqual(['draft'])
+
+  patch.resolve(finalProject)
+  await expect(renamed).resolves.toEqual(finalProject)
+  await oldSync
+  expect(h.save.mock.calls.map((call) => call[0])).toEqual(['draft', 'final'])
+  expect(h.load.mock.calls.map((call) => call[0])).toEqual(['draft', 'final'])
+})
+
+test('an editing-deferred sync reaches a safe rename cutoff without hanging', async () => {
+  const patch = deferred<unknown>()
+  const finalProject = { ...originalProject, id: 'final', name: 'Final' }
+  const h = renameHarness({ renameProject: () => patch.promise })
+  await h.coordinator.initialize()
+  h.setEditing(true)
+  const sync = h.coordinator.requestRemoteSync()
+
+  const renamed = h.coordinator.renameProject('Final')
+  await tick()
+  expect(h.renameProject).toHaveBeenCalledWith('draft', 'Final')
+  expect(h.load.mock.calls.map((call) => call[0])).toEqual(['draft'])
+
+  patch.resolve(finalProject)
+  await tick()
+  h.setEditing(false)
+
+  await expect(renamed).resolves.toEqual(finalProject)
+  await sync
+  expect(h.load.mock.calls.map((call) => call[0])).toEqual(['draft', 'final'])
+})

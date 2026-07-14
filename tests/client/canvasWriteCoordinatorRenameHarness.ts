@@ -22,6 +22,8 @@ export function renameHarness(options: {
   listProjects?: () => Promise<unknown>
 } = {}) {
   let current = document('remote')
+  let editing = false
+  let editingEnd: (() => void) | null = null
   const statuses: CanvasWriteStatus[] = []
   const load = vi.fn(options.load ?? (async (_projectId: string) => state(document('remote'), 7)))
   const save = vi.fn(options.save ?? (async (_id, _snapshot, revision) => revision + 1))
@@ -42,8 +44,11 @@ export function renameHarness(options: {
       current = structuredClone(next)
       return []
     },
-    isEditing: () => false,
-    onEditingEnd: () => () => {},
+    isEditing: () => editing,
+    onEditingEnd: (listener) => {
+      editingEnd = listener
+      return () => { editingEnd = null }
+    },
   }
   const coordinator = createCanvasWriteCoordinator({
     project: originalProject,
@@ -61,5 +66,10 @@ export function renameHarness(options: {
     statuses,
     get document() { return current },
     setDocument(next: DocumentRecords) { current = structuredClone(next) },
+    setEditing(next: boolean) {
+      const wasEditing = editing
+      editing = next
+      if (wasEditing && !next) editingEnd?.()
+    },
   }
 }

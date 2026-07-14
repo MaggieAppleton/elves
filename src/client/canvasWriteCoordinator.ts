@@ -91,6 +91,12 @@ interface Barrier {
   reject(error: unknown): void
 }
 
+interface PreRenameFlush {
+  cutoff: number
+  resolve(): void
+  reject(error: unknown): void
+}
+
 const MAX_INITIALIZATION_CONFLICT_RETRIES = 1
 
 export function createCanvasWriteCoordinator(
@@ -116,6 +122,7 @@ export function createCanvasWriteCoordinator(
   let workSerial = 0
   const barriers: Barrier[] = []
   const editingEndBarriers: Barrier[] = []
+  let preRenameFlush: PreRenameFlush | null = null
   let renameController!: CanvasRenameController
 
   editor.setReadOnly(true)
@@ -139,6 +146,14 @@ export function createCanvasWriteCoordinator(
       if (error === undefined) barrier.resolve()
       else barrier.reject(error)
     }
+  }
+  const settlePreRenameFlush = (error?: unknown) => {
+    const active = preRenameFlush
+    if (!active) return
+    preRenameFlush = null
+    // Public barriers stay pending until their queued work drains under the resolved identity.
+    if (error === undefined) active.resolve()
+    else active.reject(error)
   }
 
   const applyRemote = (document: DocumentRecords, glow: boolean) => {
@@ -256,8 +271,9 @@ export function createCanvasWriteCoordinator(
     }
   }
 
-  const start = () => {
-    if (busy || disposed || !initialized || renameController?.blocksWork()) return
+  const start = (ignoreRenameGate = false) => {
+    if (busy || disposed || !initialized ||
+      (!ignoreRenameGate && renameController?.blocksWork())) return
     busy = true
     const expected = lifecycle
     const expectedProjectId = projectId
@@ -276,8 +292,16 @@ export function createCanvasWriteCoordinator(
           } else {
             await syncOnce(expected, expectedProjectId)
           }
+          // Finish the operation admitted before the gate, then leave later signals queued.
+          if (preRenameFlush && attemptedWorkSerial <= preRenameFlush.cutoff) {
+            settlePreRenameFlush()
+            break
+          }
         }
         assertCurrent(expected, expectedProjectId)
+        if (preRenameFlush && !dirty && (!syncRequested || editor.isEditing())) {
+          settlePreRenameFlush()
+        }
         if (!dirty && !syncRequested) {
           publish('idle')
           settleBarriers()
@@ -291,6 +315,7 @@ export function createCanvasWriteCoordinator(
               ? 'conflict'
               : 'error',
           )
+          settlePreRenameFlush(error)
           settleBarriers(error)
         }
       } finally {
@@ -419,6 +444,19 @@ export function createCanvasWriteCoordinator(
     return promise
   }
 
+  const beginPreRenameFlush = (): Promise<void> => {
+    clearAutosave()
+    if (disposed) return Promise.reject(new CanvasWriteCoordinatorDisposedError())
+    if (!initialized) return Promise.reject(new Error('canvas write coordinator is not initialized'))
+    if (!busy && !dirty && !syncRequested) return Promise.resolve()
+    const cutoff = workSerial
+    const promise = new Promise<void>((resolve, reject) => {
+      preRenameFlush = { cutoff, resolve, reject }
+    })
+    start(true)
+    return promise
+  }
+
   renameController = createCanvasRenameController({
     renameProject: (id, name) => transport.renameProject(id, name),
     listProjects: () => transport.listProjects(),
@@ -435,6 +473,7 @@ export function createCanvasWriteCoordinator(
       projectId = restored.id
     },
     assertCurrent,
+    beginPreRenameFlush,
     flushCurrentOrThrow,
     queuePostRebindSync: () => {
       syncRequested = true
@@ -467,6 +506,7 @@ export function createCanvasWriteCoordinator(
     lifecycle += 1
     clearAutosave()
     unsubscribeEditingEnd()
+    settlePreRenameFlush(new CanvasWriteCoordinatorDisposedError())
     settleBarriers(new CanvasWriteCoordinatorDisposedError())
     settleEditingEndBarriers(new CanvasWriteCoordinatorDisposedError())
   }

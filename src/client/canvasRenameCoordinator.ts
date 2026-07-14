@@ -70,6 +70,7 @@ export interface CanvasRenameControllerOptions {
   adoptProject(project: Project): number
   restoreProject(project: Project): void
   assertCurrent(lifecycle: number, projectId: string): void
+  beginPreRenameFlush(): Promise<void>
   flushCurrentOrThrow(): Promise<void>
   queuePostRebindSync(): void
   settleBarriers(error: unknown): void
@@ -197,8 +198,8 @@ export function createCanvasRenameController(
         return result
       }
       options.emitStatus('renaming')
-      const preRenameFlush = options.flushCurrentOrThrow()
       exclusive = true
+      const preRenameFlush = options.beginPreRenameFlush()
       await preRenameFlush
       options.assertCurrent(expected, original.id)
       let response: unknown
