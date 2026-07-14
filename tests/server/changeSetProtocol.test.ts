@@ -18,6 +18,8 @@ import {
   pendingChangeSetsForClient,
 } from '../../server/canvasMetadata'
 import { changeSetDigest, semanticChangeSetJson } from '../../server/changeSetIdentity'
+import { applyChangeSetToSnapshot } from '../../server/applyChangeSet'
+import { changeSetTokenStamp } from '../../src/model/changeset'
 
 const REVISION_HEADER = 'x-elves-canvas-revision'
 let roots: string[] = []
@@ -415,6 +417,81 @@ test('tokenized create-only no-document work queues durably with 202 and no broa
   expect(saved.status).toBe(200)
   const afterSave = await request(createServer(root)).get('/projects/essay/canvas?protocol=2')
   expect(afterSave.body.pendingChangeSets).toEqual([{ token: issued, changeSet }])
+})
+
+test('a versioned save atomically persists a complete stamped create and removes its pending entry', async () => {
+  const { root, app } = await setup()
+  const path = canvasPathFor(root, 'essay')!
+  const issued = (await token(app)).body.token
+  const changeSet = create('materialized', 'Materialized note')
+  expect((await tokenPost(app, issued, changeSet)).status).toBe(202)
+  const materialized = applyChangeSetToSnapshot(
+    canvas() as never,
+    changeSet,
+    changeSetTokenStamp(issued),
+  )!
+
+  const saved = await request(app).post('/projects/essay/canvas?protocol=2')
+    .set(REVISION_HEADER, '1').send(materialized)
+  expect(saved.status).toBe(200)
+  expect(saved.body).toEqual({ ok: true, revision: 2 })
+
+  const restarted = await request(createServer(root)).get('/projects/essay/canvas?protocol=2')
+  expect(restarted.body.pendingChangeSets).toEqual([])
+  expect(Object.values(restarted.body.snapshot.document.store)).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      meta: { elvesChangeSetToken: changeSetTokenStamp(issued) },
+      props: expect.objectContaining({ text: 'Materialized note' }),
+    }),
+  ]))
+
+  const beforeRetry = await bytes(path)
+  const staleRetry = await request(createServer(root)).post('/projects/essay/canvas?protocol=2')
+    .set(REVISION_HEADER, '1').send(materialized)
+  expect(staleRetry.status).toBe(409)
+  expect(await bytes(path)).toEqual(beforeRetry)
+  expect((await request(createServer(root)).get('/projects/essay/canvas?protocol=2'))
+    .body.pendingChangeSets).toEqual([])
+})
+
+test('partial and legacy materialization stay pending, and a stale complete save changes nothing', async () => {
+  const { root, app } = await setup()
+  const path = canvasPathFor(root, 'essay')!
+  const issued = (await token(app)).body.token
+  const changeSet: ChangeSet = {
+    id: 'partial-materialization', author: 'claude',
+    ops: [
+      { kind: 'create_note_card', text: 'Note', x: 0, y: 0 },
+      { kind: 'create_section', text: 'Section', x: 300, y: 0 },
+    ],
+  }
+  expect((await tokenPost(app, issued, changeSet)).status).toBe(202)
+  const complete = applyChangeSetToSnapshot(
+    canvas() as never,
+    changeSet,
+    changeSetTokenStamp(issued),
+  ) as any
+  const partial = structuredClone(complete)
+  const sectionId = (Object.values(partial.document.store)
+    .find((record: any) => record?.type === 'section') as any)?.id
+  delete partial.document.store[sectionId]
+
+  const partialSave = await request(app).post('/projects/essay/canvas?protocol=2')
+    .set(REVISION_HEADER, '1').send(partial)
+  expect(partialSave.status).toBe(200)
+  let loaded = await request(app).get('/projects/essay/canvas?protocol=2')
+  expect(loaded.body.pendingChangeSets).toEqual([{ token: issued, changeSet }])
+
+  const beforeStale = await bytes(path)
+  const stale = await request(app).post('/projects/essay/canvas?protocol=2')
+    .set(REVISION_HEADER, '1').send(complete)
+  expect(stale.status).toBe(409)
+  expect(await bytes(path)).toEqual(beforeStale)
+
+  const legacySave = await request(app).post('/projects/essay/canvas').send(complete)
+  expect(legacySave.status).toBe(200)
+  loaded = await request(createServer(root)).get('/projects/essay/canvas?protocol=2')
+  expect(loaded.body.pendingChangeSets).toEqual([{ token: issued, changeSet }])
 })
 
 test('tokenized non-create no-document work returns unavailable without consuming', async () => {

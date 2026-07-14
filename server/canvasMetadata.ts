@@ -1,5 +1,11 @@
 import { randomUUID } from 'node:crypto'
-import { isChangeSet, type ChangeSet } from '../src/model/changeset'
+import {
+  CHANGE_SET_STAMP_META_KEY,
+  changeSetTokenStamp,
+  isChangeSet,
+  type ChangeSet,
+  type Op,
+} from '../src/model/changeset'
 import {
   changeSetDigest,
   semanticChangeSet,
@@ -305,13 +311,78 @@ export function recordLegacyChangeSetReceipt(
   return withMetadata(snapshot, { ...metadata, legacyReceipts })
 }
 
+type CreatedRecordKind = Extract<Op, { kind: `create_${string}` }>['kind']
+
+function expectedCreatedKinds(changeSet: ChangeSet): CreatedRecordKind[] | null {
+  const kinds: CreatedRecordKind[] = []
+  for (const op of changeSet.ops) {
+    switch (op.kind) {
+      case 'create_note_card':
+      case 'create_reference':
+      case 'create_figure_card':
+      case 'create_section':
+      case 'create_question':
+        kinds.push(op.kind)
+        break
+      default:
+        return null
+    }
+  }
+  return kinds.length > 0 ? kinds : null
+}
+
+function createdRecordKind(record: unknown): CreatedRecordKind | null {
+  if (!isRecord(record) || record.typeName !== 'shape' || !isRecord(record.props)) return null
+  if (record.type === 'section') return 'create_section'
+  if (record.type === 'question') return 'create_question'
+  if (record.type !== 'card') return null
+  if (record.props.kind === 'figure') return 'create_figure_card'
+  if (record.props.kind !== 'note') return null
+  return record.props.noteKind === 'reference' ? 'create_reference' : 'create_note_card'
+}
+
+function pendingEntryIsMaterialized(
+  incoming: CanvasSnapshot,
+  entry: StoredPendingChangeSet,
+): boolean {
+  const expected = expectedCreatedKinds(entry.changeSet)
+  if (!expected) return false
+  const document = incoming.document
+  if (!isRecord(document) || !isRecord(document.store)) return false
+  const stamp = changeSetTokenStamp(entry.token)
+  const actual: CreatedRecordKind[] = []
+  for (const record of Object.values(document.store)) {
+    if (!isRecord(record) || !isRecord(record.meta) ||
+      record.meta[CHANGE_SET_STAMP_META_KEY] !== stamp) continue
+    const kind = createdRecordKind(record)
+    if (!kind) return false
+    actual.push(kind)
+  }
+  if (actual.length !== expected.length) return false
+  actual.sort()
+  expected.sort()
+  return actual.every((kind, index) => kind === expected[index])
+}
+
+interface ReplaceCanvasSnapshotOptions {
+  materializePending?: boolean
+}
+
 export function replaceCanvasSnapshot(
   current: CanvasSnapshot,
   incoming: CanvasSnapshot,
+  options: ReplaceCanvasSnapshotOptions = {},
 ): CanvasSnapshot {
   const metadata = metadataForMutation(current)
   const { [SERVER_CANVAS_METADATA_KEY]: _forged, ...publicIncoming } = incoming
-  return withMetadata(publicIncoming, { ...metadata, revision: nextRevision(metadata.revision) })
+  const pendingChangeSets = options.materializePending
+    ? metadata.pendingChangeSets.filter((entry) => !pendingEntryIsMaterialized(publicIncoming, entry))
+    : metadata.pendingChangeSets
+  return withMetadata(publicIncoming, {
+    ...metadata,
+    revision: nextRevision(metadata.revision),
+    pendingChangeSets,
+  })
 }
 
 export function clearCanvasSnapshot(current: CanvasSnapshot): CanvasSnapshot {

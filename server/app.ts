@@ -469,7 +469,7 @@ export function createServer(
             await withCanvasLock(paths.canvasPath, (current) => {
               observedRevision = canvasRevision(current)
               if (parsedRevision?.ok && parsedRevision.revision !== observedRevision) return null
-              const next = replaceCanvasSnapshot(current, body)
+              const next = replaceCanvasSnapshot(current, body, { materializePending: versioned })
               savedRevision = canvasRevision(next)
               return next
             })

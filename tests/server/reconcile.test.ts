@@ -13,8 +13,17 @@ import { reconcileCanvasFile } from '../../server/summarize/runner'
 import type { Summarizer } from '../../server/summarize'
 import { summaryHash } from '../../src/model/summary'
 import { applyChangeSetToSnapshot } from '../../server/applyChangeSet'
+import { CHANGE_SET_STAMP_META_KEY, type ChangeSet } from '../../src/model/changeset'
+import type { Reference } from '../../src/model/types'
 
 const LONG = 'A '.repeat(120) + 'the end.'
+
+const STAMP_REFERENCE: Reference = {
+  url: 'https://example.com', refType: 'link', title: 'Example', authors: [],
+  siteName: 'example.com', year: null, venue: null, description: null,
+  faviconAssetId: null, thumbnailAssetId: null, doi: null, arxivId: null,
+  fetchedBy: 'claude', fetchedAt: '2026-07-13T00:00:00.000Z',
+}
 
 class FakeSummarizer implements Summarizer {
   label = 'fake/test'
@@ -162,6 +171,33 @@ test('applyChangeSetToSnapshot persists a set_question_summary onto the question
   const q = (next as any).document.store['shape:q1']
   expect(q.props.summary).toBe('gist')
   expect(q.props.summaryOfHash).toBe('h')
+})
+
+test('snapshot apply stamps all five queueable create record kinds, and legacy apply does not', () => {
+  const base = { document: { store: { 'page:page': { id: 'page:page', typeName: 'page' } } } }
+  const changeSet: ChangeSet = {
+    id: 'all-create-kinds', author: 'claude',
+    ops: [
+      { kind: 'create_note_card', text: 'Note', x: 0, y: 0 },
+      { kind: 'create_reference', reference: STAMP_REFERENCE, x: 300, y: 0 },
+      { kind: 'create_figure_card', title: 'Figure', description: 'Plan', x: 600, y: 0 },
+      { kind: 'create_section', text: 'Section', x: 900, y: 0 },
+      { kind: 'create_question', text: 'Question?', x: 1_200, y: 0 },
+    ],
+  }
+  const stamp = 'epoch-a:7'
+  const stamped = applyChangeSetToSnapshot(base as never, changeSet, stamp) as any
+  const stampedCreates = Object.values(stamped.document.store)
+    .filter((record: any) => record?.typeName === 'shape') as any[]
+  expect(stampedCreates).toHaveLength(5)
+  expect(stampedCreates.map((record) => record.meta?.[CHANGE_SET_STAMP_META_KEY]))
+    .toEqual(Array(5).fill(stamp))
+
+  const legacy = applyChangeSetToSnapshot(base as never, changeSet) as any
+  const legacyCreates = Object.values(legacy.document.store)
+    .filter((record: any) => record?.typeName === 'shape') as any[]
+  expect(legacyCreates.map((record) => record.meta?.[CHANGE_SET_STAMP_META_KEY]))
+    .toEqual(Array(5).fill(undefined))
 })
 
 // --- Integration: the server wires reconcile into a canvas save --------------

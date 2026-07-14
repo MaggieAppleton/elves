@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import type { Editor } from 'tldraw'
 import { applyChangeSet } from '../../src/apply/applyChangeSet'
-import type { ChangeSet } from '../../src/model/changeset'
+import { CHANGE_SET_STAMP_META_KEY, type ChangeSet } from '../../src/model/changeset'
 import type { Reference } from '../../src/model/types'
 
 /**
@@ -59,6 +59,33 @@ const VALID_REF: Reference = {
 }
 
 describe('applyChangeSet affected-id contract', () => {
+  test('optional accepted-token stamp reaches every queueable created record only', () => {
+    const ed = fakeEditor([])
+    const stamp = 'epoch-a:7'
+    const ids = applyChangeSet(ed as unknown as Editor, cs([
+      { kind: 'create_note_card', text: 'Note', x: 0, y: 0 },
+      { kind: 'create_reference', reference: VALID_REF, x: 300, y: 0 },
+      { kind: 'create_figure_card', title: 'Figure', description: 'Plan', x: 600, y: 0 },
+      { kind: 'create_section', text: 'Section', x: 900, y: 0 },
+      { kind: 'create_question', text: 'Question?', x: 1_200, y: 0 },
+    ]), stamp)
+
+    expect(ids).toHaveLength(5)
+    expect(ids.map((id) => (ed._shapes.get(id) as any).meta?.[CHANGE_SET_STAMP_META_KEY]))
+      .toEqual(Array(5).fill(stamp))
+  })
+
+  test('legacy client apply creates the same records without a token stamp', () => {
+    const ed = fakeEditor([])
+    const ids = applyChangeSet(ed as unknown as Editor, cs([
+      { kind: 'create_note_card', text: 'Note', x: 0, y: 0 },
+      { kind: 'create_section', text: 'Section', x: 300, y: 0 },
+    ]))
+
+    expect(ids.map((id) => (ed._shapes.get(id) as any).meta?.[CHANGE_SET_STAMP_META_KEY]))
+      .toEqual([undefined, undefined])
+  })
+
   test('add_comment → [cardId]', () => {
     const ed = fakeEditor([noteCard('card:a')])
     expect(applyChangeSet(ed as unknown as Editor, cs([

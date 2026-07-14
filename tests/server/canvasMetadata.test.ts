@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import type { ChangeSet } from '../../src/model/changeset'
+import { CHANGE_SET_STAMP_META_KEY, changeSetTokenStamp, type ChangeSet } from '../../src/model/changeset'
 import type { CanvasSnapshot } from '../../server/store'
 import {
   MAX_CHANGE_SET_ARRAY_ITEMS,
@@ -65,6 +65,26 @@ function withPending(...changeSets: ChangeSet[]): CanvasSnapshot {
     if (result.status === 'added') snapshot = result.snapshot
   }
   return snapshot
+}
+
+function stampedShape(
+  id: string,
+  stamp: string,
+  type: 'card' | 'section' | 'question',
+  props: Record<string, unknown> = {},
+) {
+  return {
+    id, typeName: 'shape', type,
+    meta: { [CHANGE_SET_STAMP_META_KEY]: stamp },
+    props,
+  }
+}
+
+function incomingWith(...records: Record<string, unknown>[]): CanvasSnapshot {
+  return {
+    document: { store: Object.fromEntries(records.map((record) => [record.id, record])) },
+    session: null,
+  }
 }
 
 describe('metadata creation and validation', () => {
@@ -334,6 +354,97 @@ describe('public snapshots, replacement, and clear', () => {
       legacyReceipts: before.legacyReceipts,
     })
     expect(metadata(replaced).epoch).not.toBe('forged')
+  })
+
+  test('versioned replacement removes pending only for the exact complete created-kind multiset', () => {
+    const changeSet: ChangeSet = {
+      id: 'multiset', author: 'claude',
+      ops: [
+        { kind: 'create_note_card', text: 'One', x: 0, y: 0 },
+        { kind: 'create_note_card', text: 'Two', x: 0, y: 100 },
+        { kind: 'create_section', text: 'Section', x: 300, y: 0 },
+      ],
+    }
+    const current = withPending(changeSet)
+    const pending = pendingChangeSetsForClient(current)[0]!
+    const stamp = changeSetTokenStamp(pending.token)
+    const incoming = incomingWith(
+      stampedShape('shape:n1', stamp, 'card', { kind: 'note', noteKind: 'text' }),
+      stampedShape('shape:n2', stamp, 'card', { kind: 'note', noteKind: 'text' }),
+      stampedShape('shape:s1', stamp, 'section'),
+    )
+
+    const replaced = replaceCanvasSnapshot(current, incoming, { materializePending: true })
+    expect(pendingChangeSetsForClient(replaced)).toEqual([])
+    expect(canvasRevision(replaced)).toBe(canvasRevision(current) + 1)
+    expect(replaced.document).toEqual(incoming.document)
+  })
+
+  test.each([
+    ['partial', (stamp: string) => [
+      stampedShape('shape:n1', stamp, 'card', { kind: 'note', noteKind: 'text' }),
+      stampedShape('shape:s1', stamp, 'section'),
+    ]],
+    ['wrong kind', (stamp: string) => [
+      stampedShape('shape:n1', stamp, 'card', { kind: 'note', noteKind: 'text' }),
+      stampedShape('shape:n2', stamp, 'card', { kind: 'note', noteKind: 'text' }),
+      stampedShape('shape:q1', stamp, 'question'),
+    ]],
+    ['wrong token', (stamp: string) => [
+      stampedShape('shape:n1', `${stamp}-wrong`, 'card', { kind: 'note', noteKind: 'text' }),
+      stampedShape('shape:n2', `${stamp}-wrong`, 'card', { kind: 'note', noteKind: 'text' }),
+      stampedShape('shape:s1', `${stamp}-wrong`, 'section'),
+    ]],
+    ['duplicated unrelated record', (stamp: string) => [
+      stampedShape('shape:n1', stamp, 'card', { kind: 'note', noteKind: 'text' }),
+      stampedShape('shape:n2', stamp, 'card', { kind: 'note', noteKind: 'text' }),
+      stampedShape('shape:n3', stamp, 'card', { kind: 'note', noteKind: 'text' }),
+      stampedShape('shape:s1', stamp, 'section'),
+    ]],
+  ])('versioned replacement keeps pending for a %s stamp set', (_label, records) => {
+    const changeSet: ChangeSet = {
+      id: 'incomplete', author: 'claude',
+      ops: [
+        { kind: 'create_note_card', text: 'One', x: 0, y: 0 },
+        { kind: 'create_note_card', text: 'Two', x: 0, y: 100 },
+        { kind: 'create_section', text: 'Section', x: 300, y: 0 },
+      ],
+    }
+    const current = withPending(changeSet)
+    const pending = pendingChangeSetsForClient(current)[0]!
+    const replaced = replaceCanvasSnapshot(
+      current,
+      incomingWith(...records(changeSetTokenStamp(pending.token))),
+      { materializePending: true },
+    )
+    expect(pendingChangeSetsForClient(replaced)).toEqual([pending])
+  })
+
+  test('versioned replacement evaluates multiple pending entries independently', () => {
+    const noteChangeSet = note('note-pending')
+    const sectionChangeSet: ChangeSet = {
+      id: 'section-pending', author: 'claude',
+      ops: [{ kind: 'create_section', text: 'Section', x: 0, y: 0 }],
+    }
+    const current = withPending(noteChangeSet, sectionChangeSet)
+    const [notePending, sectionPending] = pendingChangeSetsForClient(current)
+    const incoming = incomingWith(stampedShape(
+      'shape:s1', changeSetTokenStamp(sectionPending!.token), 'section',
+    ))
+
+    const replaced = replaceCanvasSnapshot(current, incoming, { materializePending: true })
+    expect(pendingChangeSetsForClient(replaced)).toEqual([notePending])
+  })
+
+  test('legacy replacement never confirms pending, even when the complete stamp is present', () => {
+    const current = withPending(note('legacy-keeps-pending'))
+    const pending = pendingChangeSetsForClient(current)[0]!
+    const incoming = incomingWith(stampedShape(
+      'shape:n1', changeSetTokenStamp(pending.token), 'card', { kind: 'note', noteKind: 'text' },
+    ))
+
+    const replaced = replaceCanvasSnapshot(current, incoming)
+    expect(pendingChangeSetsForClient(replaced)).toEqual([pending])
   })
 
   test('clear writes a tombstone, advances revision once, and rotates the epoch', () => {
