@@ -955,11 +955,17 @@ export default function App() {
             getShapeVisibility={getShapeVisibility}
             onMount={handleMount}
           />
-          {/* Creation toolbar lives inside the canvas pane so the draft pane
-              (a sibling) paints over it and the pane's overflow clips it — it
-              can never spill in front of the prose. */}
+          {/* Creation toolbar lives inside the canvas pane and scrolls internally
+              when that pane is narrow, so it never spills in front of the prose. */}
           {view !== 'draft' && (
-            <div className="elves-toolbar">
+            <div
+              className="elves-toolbar"
+              onFocus={(event) => {
+                if (event.target instanceof HTMLButtonElement) {
+                  event.target.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'nearest' })
+                }
+              }}
+            >
               <button aria-label="New prose card" data-testid="new-prose" onClick={() => addCard('prose')}>
                 <TextAUnderline className="elves-btn-icon" aria-hidden="true" />
                 <span className="elves-toolbar__label">Prose</span>
