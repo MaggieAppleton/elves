@@ -1,115 +1,8 @@
 import type { Project } from '../../server/projects'
-import type { ChangeSetToken, PendingChangeSetV2 } from '../../server/canvasMetadata'
-import type { CanvasSnapshot } from '../../server/store'
-import { isChangeSet } from '../model/changeset'
 
 const BASE = (import.meta as any).env?.VITE_SERVER_URL ?? 'http://localhost:5199'
 
-export type { CanvasSnapshot, ChangeSetToken, PendingChangeSetV2, Project }
-
-export interface CanvasVersionedState {
-  snapshot: CanvasSnapshot
-  revision: number
-  pendingChangeSets: PendingChangeSetV2[]
-  nextChangeSetToken: ChangeSetToken
-}
-
-interface CanvasProtocolErrorDetails {
-  code: string | null
-  revision: number | null
-  nextChangeSetToken: ChangeSetToken | null
-}
-
-export class CanvasProtocolError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-    readonly code: string | null,
-    readonly revision: number | null,
-    readonly nextChangeSetToken: ChangeSetToken | null,
-  ) {
-    super(message)
-    this.name = 'CanvasProtocolError'
-  }
-}
-
-export class CanvasRevisionConflictError extends CanvasProtocolError {
-  constructor(message: string, status: number, readonly serverRevision: number) {
-    super(message, status, 'canvas-revision-conflict', serverRevision, null)
-    this.name = 'CanvasRevisionConflictError'
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function isNonNegativeSafeInteger(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) >= 0
-}
-
-function tokenFrom(value: unknown): ChangeSetToken | null {
-  if (!isRecord(value) || typeof value.epoch !== 'string' || value.epoch.length === 0 ||
-    !isNonNegativeSafeInteger(value.sequence)) return null
-  return { epoch: value.epoch, sequence: value.sequence }
-}
-
-function errorDetails(value: unknown): CanvasProtocolErrorDetails {
-  if (!isRecord(value)) return { code: null, revision: null, nextChangeSetToken: null }
-  const token = value.nextChangeSetToken
-  return {
-    code: typeof value.code === 'string' ? value.code : null,
-    revision: isNonNegativeSafeInteger(value.revision) ? value.revision : null,
-    nextChangeSetToken: tokenFrom(token),
-  }
-}
-
-function isVersionedState(value: unknown): value is CanvasVersionedState {
-  if (!isRecord(value) || !isRecord(value.snapshot) ||
-    !isNonNegativeSafeInteger(value.revision) || !Array.isArray(value.pendingChangeSets) ||
-    tokenFrom(value.nextChangeSetToken) === null) return false
-  return value.pendingChangeSets.every((entry) =>
-    isRecord(entry) && tokenFrom(entry.token) !== null && isChangeSet(entry.changeSet))
-}
-
-function invalidCanvasResponse(response: Response): CanvasProtocolError {
-  return new CanvasProtocolError(
-    'invalid canvas response', response.status, 'invalid-canvas-response', null, null,
-  )
-}
-
-async function successJson(response: Response): Promise<unknown> {
-  try {
-    return await response.json()
-  } catch {
-    throw invalidCanvasResponse(response)
-  }
-}
-
-async function protocolError(response: Response, operation: 'load' | 'save'):
-Promise<CanvasProtocolError> {
-  let body: unknown
-  try {
-    body = await response.json()
-  } catch {
-    body = null
-  }
-  const details = errorDetails(body)
-  const message = isRecord(body) && typeof body.error === 'string'
-    ? body.error
-    : `${operation} failed: ${response.status}`
-  if (response.status === 409 && details.code === 'canvas-revision-conflict' &&
-    details.revision !== null) {
-    return new CanvasRevisionConflictError(message, response.status, details.revision)
-  }
-  return new CanvasProtocolError(
-    message,
-    response.status,
-    details.code,
-    details.revision,
-    details.nextChangeSetToken,
-  )
-}
+export type { Project }
 
 // --- Projects -------------------------------------------------------------
 
@@ -154,39 +47,6 @@ export async function saveCanvas(projectId: string, snapshot: unknown): Promise<
     body: JSON.stringify(snapshot),
   })
   if (!res.ok) throw new Error(`save failed: ${res.status}`)
-}
-
-export async function loadCanvasVersioned(projectId: string): Promise<CanvasVersionedState> {
-  const res = await fetch(
-    `${BASE}/projects/${encodeURIComponent(projectId)}/canvas?protocol=2`,
-  )
-  if (!res.ok) throw await protocolError(res, 'load')
-  const result = await successJson(res)
-  if (!isVersionedState(result)) throw invalidCanvasResponse(res)
-  return result
-}
-
-export async function saveCanvasVersioned(
-  projectId: string,
-  snapshot: CanvasSnapshot,
-  revision: number,
-): Promise<number> {
-  const res = await fetch(
-    `${BASE}/projects/${encodeURIComponent(projectId)}/canvas?protocol=2`,
-    {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-elves-canvas-revision': String(revision),
-      },
-      body: JSON.stringify(snapshot),
-    },
-  )
-  if (!res.ok) throw await protocolError(res, 'save')
-  const result = await successJson(res)
-  if (!isRecord(result) || result.ok !== true ||
-    !isNonNegativeSafeInteger(result.revision)) throw invalidCanvasResponse(res)
-  return result.revision
 }
 
 // A trailing-edge debounce with a `flush()` escape hatch: flush cancels the
