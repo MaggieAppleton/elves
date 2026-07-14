@@ -44,6 +44,7 @@ import { DraftPane } from './components/DraftPane'
 import { DraftDrawerControls } from './components/DraftDrawerControls'
 import { type ViewState, moreDraft, lessDraft } from './client/viewMachine'
 import { prefersReducedMotion } from './client/motion'
+import { createPointerDragManager, type PointerDragManager } from './client/dividerDrag'
 
 const shapeUtils = [CardShapeUtil, SectionShapeUtil, QuestionShapeUtil]
 const components = { SelectionForeground: CardSelectionForeground }
@@ -181,6 +182,7 @@ export default function App() {
   const [dragging, setDragging] = useState(false)
   const stageRef = useRef<HTMLDivElement>(null)
   const canvasPaneRef = useRef<HTMLDivElement>(null)
+  const dividerDragRef = useRef<PointerDragManager | null>(null)
 
   // Keep the refs + the asset base in sync during render so they are correct the
   // instant tldraw's onMount fires and whenever a card image renders.
@@ -381,6 +383,10 @@ export default function App() {
     if (currentProjectId) localStorage.setItem(splitKey(currentProjectId), String(split))
   }, [split, currentProjectId])
 
+  // A drag belongs to the current view lifetime. Ending it on a view change or
+  // final unmount removes every window listener and restores pane transitions.
+  useEffect(() => () => dividerDragRef.current?.end(), [view])
+
   // Keyboard: ⌘/Ctrl + \ widens the drawer (more draft); add Shift to narrow it
   // (less draft). A modifier is required so it never fights typing in a card.
   useEffect(() => {
@@ -432,20 +438,13 @@ export default function App() {
     e.preventDefault()
     const stage = stageRef.current
     if (!stage) return
-    setDragging(true)
-    const onMove = (ev: PointerEvent) => {
+    const drag = dividerDragRef.current ??= createPointerDragManager(window, setDragging)
+    drag.start(e.pointerId, (ev) => {
       const rect = stage.getBoundingClientRect()
       if (rect.width === 0) return
       const r = (ev.clientX - rect.left) / rect.width
       setSplit(Math.min(MAX_SPLIT, Math.max(MIN_SPLIT, r)))
-    }
-    const onUp = () => {
-      setDragging(false)
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
+    })
   }
 
   // Split view: pan (keeping zoom) to a clicked paragraph's card and select it.
