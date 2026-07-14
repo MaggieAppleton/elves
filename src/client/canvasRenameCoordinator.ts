@@ -197,9 +197,10 @@ export function createCanvasRenameController(
         return result
       }
       options.emitStatus('renaming')
-      await options.flushCurrentOrThrow()
-      options.assertCurrent(expected, original.id)
+      const preRenameFlush = options.flushCurrentOrThrow()
       exclusive = true
+      await preRenameFlush
+      options.assertCurrent(expected, original.id)
       let response: unknown
       let renameError: unknown = new Error('invalid project rename response')
       try {

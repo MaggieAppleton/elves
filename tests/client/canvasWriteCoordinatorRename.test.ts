@@ -1,5 +1,5 @@
 import { expect, test, vi } from 'vitest'
-import { deferred, document, tick } from './canvasWriteCoordinatorInitializationHarness'
+import { deferred, document, state, tick } from './canvasWriteCoordinatorInitializationHarness'
 import { originalProject, renameHarness } from './canvasWriteCoordinatorRenameHarness'
 
 test('flushes old identity, holds writes during PATCH, then rebinds and drains before resolving', async () => {
@@ -63,4 +63,77 @@ test('supports a same-id metadata rename without a canvas save', async () => {
   expect(h.save).not.toHaveBeenCalled()
   expect(h.load.mock.calls.map((call) => call[0])).toEqual(['draft', 'draft'])
   expect(h.coordinator.ownsProject('draft')).toBe(true)
+})
+
+test('an immediate edit after starting rename is held for the new identity', async () => {
+  const patch = deferred<unknown>()
+  const finalProject = { ...originalProject, id: 'final', name: 'Final' }
+  const h = renameHarness({ renameProject: () => patch.promise })
+  await h.coordinator.initialize()
+
+  const renamed = h.coordinator.renameProject('Final')
+  h.setDocument(document('immediate edit'))
+  h.coordinator.markDirty()
+  await tick()
+
+  expect(h.renameProject).toHaveBeenCalledWith('draft', 'Final')
+  expect(h.save).not.toHaveBeenCalled()
+
+  patch.resolve(finalProject)
+  await expect(renamed).resolves.toEqual(finalProject)
+  expect(h.save).toHaveBeenCalledWith(
+    'final', { document: document('immediate edit') }, 7,
+  )
+})
+
+test('an immediate sync after starting rename waits and loads the new identity', async () => {
+  const patch = deferred<unknown>()
+  const finalProject = { ...originalProject, id: 'final', name: 'Final' }
+  const h = renameHarness({ renameProject: () => patch.promise })
+  await h.coordinator.initialize()
+
+  const renamed = h.coordinator.renameProject('Final')
+  const synced = h.coordinator.requestRemoteSync()
+  await tick()
+
+  expect(h.renameProject).toHaveBeenCalledWith('draft', 'Final')
+  expect(h.load.mock.calls.map((call) => call[0])).toEqual(['draft'])
+
+  patch.resolve(finalProject)
+  await expect(renamed).resolves.toEqual(finalProject)
+  await synced
+  expect(h.load.mock.calls.map((call) => call[0])).toEqual(['draft', 'final'])
+})
+
+test('a prior barrier reaction cannot start old-id work after rename closes the gate', async () => {
+  const heldSync = deferred<ReturnType<typeof state>>()
+  const patch = deferred<unknown>()
+  const finalProject = { ...originalProject, id: 'final', name: 'Final' }
+  let loadCount = 0
+  const h = renameHarness({
+    load: async () => {
+      loadCount += 1
+      return loadCount === 1 ? state(document('remote'), 7) : heldSync.promise
+    },
+    renameProject: () => patch.promise,
+  })
+  await h.coordinator.initialize()
+
+  const priorSync = h.coordinator.requestRemoteSync().then(() => {
+    h.setDocument(document('barrier edit'))
+    h.coordinator.markDirty()
+  })
+  const renamed = h.coordinator.renameProject('Final')
+  heldSync.resolve(state(document('remote'), 7))
+  await tick()
+  await tick()
+
+  expect(h.save).not.toHaveBeenCalled()
+
+  patch.resolve(finalProject)
+  await priorSync
+  await expect(renamed).resolves.toEqual(finalProject)
+  expect(h.save).toHaveBeenCalledWith(
+    'final', { document: document('barrier edit') }, 7,
+  )
 })
