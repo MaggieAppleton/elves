@@ -7,7 +7,12 @@ import type { ChangeSet } from '../../src/model/changeset'
 import { postChangeSet } from '../../mcp/elvesClient'
 import { createServer } from '../../server/app'
 import { canvasPathFor, createProject } from '../../server/projects'
-import { readCanvas } from '../../server/store'
+import { readCanvas, writeCanvas } from '../../server/store'
+import {
+  MAX_RECENT_CHANGE_SET_DIGESTS,
+  consumeChangeSetSequence,
+} from '../../server/canvasMetadata'
+import { changeSetDigest } from '../../server/changeSetIdentity'
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
 type FetchCall = { url: string; init?: RequestInit }
@@ -181,6 +186,30 @@ test('persistent token GET ambiguity stops after three attempts with a useful er
   expect(scripted.calls).toHaveLength(3)
 })
 
+test('token GET 507 fails immediately with response diagnostics', async () => {
+  const scripted = scriptedFetch([
+    json(507, { code: 'changeset-sequence-exhausted', error: 'sequence exhausted' }),
+  ])
+
+  await expect(runWith(scripted.fetch)).rejects.toThrow(
+    /change-set token failed: 507.*changeset-sequence-exhausted/,
+  )
+  expect(scripted.calls).toHaveLength(1)
+})
+
+test.each([500, 502, 503])('token GET %i remains retryable and bounded', async (status) => {
+  const scripted = scriptedFetch([
+    json(status, { error: 'temporary-one' }),
+    json(status, { error: 'temporary-two' }),
+    tokenResponse(),
+    json(200, { ok: true }),
+  ])
+
+  await runWith(scripted.fetch)
+
+  expect(scripted.calls.filter((call) => call.url.endsWith('/changeset-token'))).toHaveLength(3)
+})
+
 test('persistent ambiguous POST failure reuses one body and stops after three attempts', async () => {
   const scripted = scriptedFetch([
     tokenResponse(),
@@ -223,11 +252,215 @@ test('POST ambiguity and token refresh limits are independent and bounded', asyn
 let servers: http.Server[] = []
 let dirs: string[] = []
 
+async function startLiveProject() {
+  const dataRoot = await fs.mkdtemp(join(tmpdir(), 'elves-client-'))
+  dirs.push(dataRoot)
+  await createProject(dataRoot, 'Essay', '2026-07-13T00:00:00.000Z')
+  const app = createServer(dataRoot)
+  const server = http.createServer(app)
+  await new Promise<void>((resolve) => server.listen(0, resolve))
+  servers.push(server)
+  const { port } = server.address() as import('node:net').AddressInfo
+  const baseUrl = `http://127.0.0.1:${port}`
+  const realFetch = globalThis.fetch
+  await realFetch(`${baseUrl}/projects/essay/canvas`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      document: { store: { 'page:page': { id: 'page:page', typeName: 'page' } } },
+      session: null,
+    }),
+  })
+  const initial = await realFetch(`${baseUrl}/projects/essay/changeset-token`)
+  const initialState = await initial.json() as {
+    revision: number
+    token: { epoch: string; sequence: number }
+  }
+  return {
+    dataRoot,
+    baseUrl,
+    realFetch,
+    canvasPath: canvasPathFor(dataRoot, 'essay')!,
+    initialState,
+  }
+}
+
+function cards(stored: any): any[] {
+  return Object.values(stored.document.store)
+    .filter((record: any) => record?.type === 'card')
+}
+
+function cardsWithText(stored: any, text: string): any[] {
+  return cards(stored).filter((record: any) => record.props?.text === text)
+}
+
 afterEach(async () => {
   await Promise.all(servers.map((server) => new Promise<void>((resolve) => server.close(() => resolve()))))
   servers = []
   await Promise.all(dirs.map((dir) => fs.rm(dir, { recursive: true, force: true })))
   dirs = []
+})
+
+test('a live failure before delivery retries the exact body and applies once', async () => {
+  const { baseUrl, realFetch, canvasPath, initialState } = await startLiveProject()
+  const original = changeSet()
+  const capturedJson = JSON.stringify(original)
+  const postBodies: string[] = []
+  let tokenGets = 0
+  let forwardedPosts = 0
+  const beforeDeliveryFetch: FetchLike = async (input, init) => {
+    const url = String(input)
+    if (url.endsWith('/changeset-token')) tokenGets += 1
+    if (init?.method === 'POST' && url.endsWith('/changeset?protocol=2')) {
+      postBodies.push(String(init.body))
+      if (postBodies.length === 1) throw new TypeError('failed before delivery')
+      forwardedPosts += 1
+    }
+    return realFetch(input, init)
+  }
+
+  await postChangeSet(baseUrl, 'essay', original, beforeDeliveryFetch as typeof fetch)
+
+  expect(tokenGets).toBe(1)
+  expect(postBodies).toEqual([
+    `{"token":${JSON.stringify(initialState.token)},"changeSet":${capturedJson}}`,
+    `{"token":${JSON.stringify(initialState.token)},"changeSet":${capturedJson}}`,
+  ])
+  expect(postBodies.map((body) => JSON.parse(body).changeSet.id)).toEqual(['cs-fixed', 'cs-fixed'])
+  expect(forwardedPosts).toBe(1)
+  const finalState = await (await realFetch(`${baseUrl}/projects/essay/changeset-token`)).json() as any
+  expect(finalState).toEqual({
+    revision: initialState.revision + 1,
+    token: { epoch: initialState.token.epoch, sequence: initialState.token.sequence + 1 },
+  })
+  const stored = await readCanvas(canvasPath)
+  expect(cards(stored)).toHaveLength(1)
+  expect(cardsWithText(stored, 'Once')).toHaveLength(1)
+})
+
+test('a live lost response after digest eviction remains an unverified non-executable duplicate', async () => {
+  const { baseUrl, realFetch, canvasPath, initialState } = await startLiveProject()
+  const original = changeSet()
+  const capturedJson = JSON.stringify(original)
+  const postBodies: string[] = []
+  const postResponses: Array<{ status: number; body: any }> = []
+  let tokenGets = 0
+  const lossyEvictionFetch: FetchLike = async (input, init) => {
+    const url = String(input)
+    if (url.endsWith('/changeset-token')) tokenGets += 1
+    if (init?.method !== 'POST' || !url.endsWith('/changeset?protocol=2')) {
+      return realFetch(input, init)
+    }
+    postBodies.push(String(init.body))
+    const response = await realFetch(input, init)
+    postResponses.push({ status: response.status, body: await response.clone().json() })
+    if (postBodies.length === 1) {
+      let advanced = await readCanvas(canvasPath)
+      for (let index = 0; index < MAX_RECENT_CHANGE_SET_DIGESTS; index += 1) {
+        advanced = consumeChangeSetSequence(
+          advanced,
+          changeSetDigest({ id: `advance-${index}`, author: 'claude', ops: [] }),
+        )
+      }
+      await writeCanvas(canvasPath, advanced)
+      throw new TypeError('response lost after digest eviction')
+    }
+    return response
+  }
+
+  await postChangeSet(baseUrl, 'essay', original, lossyEvictionFetch as typeof fetch)
+
+  expect(tokenGets).toBe(1)
+  expect(postBodies).toEqual([
+    `{"token":${JSON.stringify(initialState.token)},"changeSet":${capturedJson}}`,
+    `{"token":${JSON.stringify(initialState.token)},"changeSet":${capturedJson}}`,
+  ])
+  expect(postBodies.map((body) => JSON.parse(body).changeSet.id)).toEqual(['cs-fixed', 'cs-fixed'])
+  expect(postResponses).toEqual([
+    { status: 200, body: expect.objectContaining({ ok: true }) },
+    {
+      status: 200,
+      body: expect.objectContaining({ ok: true, duplicate: true, payloadUnverified: true }),
+    },
+  ])
+  const finalState = await (await realFetch(`${baseUrl}/projects/essay/changeset-token`)).json() as any
+  expect(finalState).toEqual({
+    revision: initialState.revision + MAX_RECENT_CHANGE_SET_DIGESTS + 1,
+    token: {
+      epoch: initialState.token.epoch,
+      sequence: initialState.token.sequence + MAX_RECENT_CHANGE_SET_DIGESTS + 1,
+    },
+  })
+  const stored = await readCanvas(canvasPath)
+  expect(cards(stored)).toHaveLength(1)
+  expect(cardsWithText(stored, 'Once')).toHaveLength(1)
+})
+
+test('a live producer race refreshes after payload mismatch and applies the original once', async () => {
+  const { baseUrl, realFetch, canvasPath, initialState } = await startLiveProject()
+  const original = changeSet()
+  const capturedJson = JSON.stringify(original)
+  const competitor = {
+    id: 'cs-competitor', author: 'claude' as const,
+    ops: [{ kind: 'create_note_card' as const, text: 'Competitor', x: 20, y: 20 }],
+  }
+  const clientPostBodies: string[] = []
+  const competitorPostBodies: string[] = []
+  const clientResponses: Array<{ status: number; body: any }> = []
+  let clientTokenGets = 0
+  let competitorPosts = 0
+  const racingFetch: FetchLike = async (input, init) => {
+    const url = String(input)
+    if (url.endsWith('/changeset-token')) clientTokenGets += 1
+    if (init?.method !== 'POST' || !url.endsWith('/changeset?protocol=2')) {
+      return realFetch(input, init)
+    }
+    clientPostBodies.push(String(init.body))
+    if (clientPostBodies.length === 1) {
+      const submitted = JSON.parse(String(init.body))
+      competitorPosts += 1
+      const competitorBody = JSON.stringify({ token: submitted.token, changeSet: competitor })
+      competitorPostBodies.push(competitorBody)
+      const competitorResponse = await realFetch(input, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: competitorBody,
+      })
+      expect(competitorResponse.status).toBe(200)
+    }
+    const response = await realFetch(input, init)
+    clientResponses.push({ status: response.status, body: await response.clone().json() })
+    return response
+  }
+
+  await postChangeSet(baseUrl, 'essay', original, racingFetch as typeof fetch)
+
+  const refreshedToken = { epoch: initialState.token.epoch, sequence: initialState.token.sequence + 1 }
+  expect(clientTokenGets).toBe(2)
+  expect(competitorPosts).toBe(1)
+  expect(clientPostBodies).toEqual([
+    `{"token":${JSON.stringify(initialState.token)},"changeSet":${capturedJson}}`,
+    `{"token":${JSON.stringify(refreshedToken)},"changeSet":${capturedJson}}`,
+  ])
+  expect(clientPostBodies.map((body) => JSON.parse(body).changeSet.id)).toEqual(['cs-fixed', 'cs-fixed'])
+  expect(competitorPostBodies).toEqual([
+    JSON.stringify({ token: initialState.token, changeSet: competitor }),
+  ])
+  expect(clientResponses).toEqual([
+    {
+      status: 409,
+      body: expect.objectContaining({ code: 'sequence-payload-mismatch' }),
+    },
+    { status: 200, body: expect.objectContaining({ ok: true }) },
+  ])
+  const finalState = await (await realFetch(`${baseUrl}/projects/essay/changeset-token`)).json() as any
+  expect(finalState).toEqual({
+    revision: initialState.revision + 2,
+    token: { epoch: initialState.token.epoch, sequence: initialState.token.sequence + 2 },
+  })
+  const stored = await readCanvas(canvasPath)
+  expect(cards(stored)).toHaveLength(2)
+  expect(cardsWithText(stored, 'Competitor')).toHaveLength(1)
+  expect(cardsWithText(stored, 'Once')).toHaveLength(1)
 })
 
 test('an applied response lost across an app restart retries once and creates once', async () => {

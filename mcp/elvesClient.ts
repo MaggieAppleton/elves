@@ -211,8 +211,8 @@ export async function postChangeSet(
       }
 
       if (res.status === 404) throw unknownProjectError(body)
-      if (res.status >= 500 && res.status <= 599 && attempt < maxAttempts) continue
-      if (res.status >= 500 && res.status <= 599) {
+      if (res.status >= 500 && res.status <= 599 && res.status !== 507 && attempt < maxAttempts) continue
+      if (res.status >= 500 && res.status <= 599 && res.status !== 507) {
         throw new Error(
           `change-set token failed after ${maxAttempts} attempts: ${res.status} ${body}`.trim(),
         )
