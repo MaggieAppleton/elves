@@ -189,6 +189,24 @@ test('duplicate malformed string indices stay unchanged without throwing', () =>
   expect(merged!['shape:valid'].index).toBe('a1')
 })
 
+test('duplicate malformed a! indices stay unchanged while a valid collision is repaired', () => {
+  const invalidA = shape('shape:invalid-a', 'page:page', 'a!')
+  const invalidB = shape('shape:invalid-b', 'page:page', 'a!')
+  const validA = shape('shape:valid-a', 'page:page', 'a1')
+  const validB = shape('shape:valid-b', 'page:page', 'a1')
+  const document = complete(invalidA, invalidB, validA, validB)
+  let merged: DocumentRecords | undefined
+
+  expect(() => {
+    merged = successful({ base: document, local: document, remote: document })
+  }).not.toThrow()
+
+  expect(merged!['shape:invalid-a'].index).toBe('a!')
+  expect(merged!['shape:invalid-b'].index).toBe('a!')
+  expect(merged!['shape:valid-a'].index).toBe('a0')
+  expect(merged!['shape:valid-b'].index).toBe('a1')
+})
+
 function provenanceInput(reverse: boolean) {
   const lower = shape('shape:lower', 'page:page', 'a0')
   const upper = shape('shape:upper', 'page:page', 'a5')

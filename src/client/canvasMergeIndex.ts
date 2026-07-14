@@ -1,4 +1,5 @@
-import { generateKeyBetween, generateNKeysBetween } from 'fractional-indexing-jittered'
+import * as tldrawUtils from '@tldraw/utils'
+import { generateNKeysBetween } from 'fractional-indexing-jittered'
 import type {
   CanvasMergeInput,
   DocumentRecord,
@@ -11,6 +12,10 @@ interface IndexedShape {
   record: DocumentRecord
 }
 
+const { validateIndexKey } = tldrawUtils as typeof tldrawUtils & {
+  validateIndexKey(index: string): void
+}
+
 function hasOwn(object: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(object, key)
 }
@@ -21,7 +26,7 @@ function compareText(left: string, right: string): number {
 
 function isValidIndexKey(index: string): boolean {
   try {
-    generateKeyBetween(index, null)
+    validateIndexKey(index)
     return true
   } catch {
     return false
