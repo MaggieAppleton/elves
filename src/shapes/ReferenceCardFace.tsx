@@ -1,4 +1,5 @@
 import type { Reference } from '../model/types'
+import { track } from 'tldraw'
 import { assetUrl } from '../client/assets'
 import {
   refEyebrow, refMeta, refDescription, refTitle, hasLeftMedia, refHost,
@@ -16,7 +17,9 @@ function openRef(url: string) {
  * click still selects the shape for tldraw) and a hover panel exposing the full
  * metadata. All display rules live in model/references.ts so they stay testable.
  */
-export function ReferenceCardFace({ reference }: { reference: Reference }) {
+export const ReferenceCardFace = track(function ReferenceCardFace({
+  reference,
+}: { reference: Reference }) {
   const ref = reference
   const eyebrow = refEyebrow(ref)
   const title = refTitle(ref)
@@ -84,4 +87,4 @@ export function ReferenceCardFace({ reference }: { reference: Reference }) {
       </div>
     </div>
   )
-}
+})

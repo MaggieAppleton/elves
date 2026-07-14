@@ -24,7 +24,7 @@ import {
   renameProject,
   type Project,
 } from './client/persistence'
-import { uploadAsset, setAssetProject } from './client/assets'
+import { uploadAsset, useAssetProject } from './client/assets'
 import { isSummaryOp } from './model/changeset'
 import { connectRealtime, RealtimeStatus } from './client/realtime'
 import { trackSelection } from './client/selection'
@@ -171,8 +171,9 @@ export default function App() {
   const canvasPaneRef = useRef<HTMLDivElement>(null)
   const dividerDragRef = useRef<PointerDragManager | null>(null)
 
-  // Asset binding is intentionally left for the separate #137 cutover.
-  setAssetProject(currentProjectId)
+  // Bind asset routing after commit so aborted renders cannot
+  // retarget mounted images; its tldraw atom invalidates tracked card renderers.
+  useAssetProject(currentProjectId)
 
   // Load the project list once; open the last-used project (or the first).
   useEffect(() => {
