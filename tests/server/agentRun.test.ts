@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   parseClaudeLine,
   buildPreamble,
+  buildPrompt,
   friendlyToolName,
   summarizeToolInput,
   claudeAdapter,
@@ -97,6 +98,21 @@ describe('helpers', () => {
     expect(buildPreamble('my-essay', true)).toContain('my-essay')
     expect(buildPreamble('my-essay', true)).toContain('read_selection')
     expect(buildPreamble('my-essay', false)).toContain('read_map')
+  })
+
+  test('buildPrompt frames prior turns as context before the current request', () => {
+    expect(buildPrompt('Add them below the card', [
+      { role: 'user', text: 'Find quotes about this card' },
+      { role: 'assistant', text: 'Here are three quotes.' },
+    ])).toBe([
+      'Conversation context from earlier turns:',
+      '<conversation>',
+      'USER: Find quotes about this card',
+      'ASSISTANT: Here are three quotes.',
+      '</conversation>',
+      'Current user request:',
+      'Add them below the card',
+    ].join('\n'))
   })
 })
 

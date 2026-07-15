@@ -1,4 +1,4 @@
-import type { AgentEvent } from '../../server/agentRun'
+import type { AgentConversationMessage, AgentEvent } from '../../server/agentRun'
 
 const BASE = (import.meta as any).env?.VITE_SERVER_URL ?? 'http://localhost:5199'
 
@@ -8,6 +8,7 @@ export interface AgentRunInput {
   prompt: string
   projectId: string
   hasSelection: boolean
+  history?: AgentConversationMessage[]
 }
 
 export interface AgentRunHandle {

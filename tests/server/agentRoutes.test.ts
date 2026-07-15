@@ -5,7 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import request from 'supertest'
 import { createServer } from '../../server/app'
-import type { AgentRunner, AgentEvent, AgentCancelResult } from '../../server/agentRun'
+import type { AgentRunner, AgentEvent, AgentCancelResult, AgentRunInput } from '../../server/agentRun'
 
 // A scriptable AgentRunner: `run` replays a fixed list of events then resolves.
 // `running` is toggleable so we can exercise the "already running" 409. Chat
@@ -18,16 +18,21 @@ function fakeAgent(
 ): AgentRunner & {
   cancelled: { key: string; runId: string }[]
   abandoned: { key: string; runId: string }[]
+  claimed: AgentRunInput[]
 } {
   const impl = {
     cancelled: [] as { key: string; runId: string }[],
     abandoned: [] as { key: string; runId: string }[],
+    claimed: [] as AgentRunInput[],
     isRunning: (_key: string, runId?: string) => running && (!runId || runId === 'run-a'),
     isProjectRunning: (projectId: string) => running && projectId === 'essay',
     reserveProjectRun: (projectId: string) => ({ projectId }),
     isRunAdmitted: () => false,
     prepare: () => running ? { status: 'conflict' as const } : { status: 'accepted' as const },
-    claimPrepared: (key: string, input: any) => running ? null : ({ projectId: input.projectId, key }),
+    claimPrepared: (key: string, input: AgentRunInput) => {
+      impl.claimed.push(input)
+      return running ? null : ({ projectId: input.projectId, key })
+    },
     releaseProjectRun: () => {},
     abandon(key: string, runId: string) {
       impl.abandoned.push({ key, runId })
@@ -118,6 +123,40 @@ test('POST /agent/run streams SSE events then an end marker', async () => {
   expect(res.text).toContain('data: {"type":"tool","name":"read_selection","summary":"2 cards"}')
   expect(res.text).toContain('data: {"type":"done","reply":"Critiqued."}')
   expect(res.text).toContain('event: end')
+})
+
+test('POST /agent/run forwards completed conversation history to the runner', async () => {
+  const agent = fakeAgent()
+  const port = await listen(agent)
+  await postForStream(port, {
+    prompt: 'Add those below the card',
+    projectId: 'essay',
+    hasSelection: true,
+    runId: 'run-a',
+    history: [
+      { role: 'user', text: 'Find quotes about this card' },
+      { role: 'assistant', text: 'Here are three quotes.' },
+    ],
+  })
+
+  expect(agent.claimed).toEqual([expect.objectContaining({
+    history: [
+      { role: 'user', text: 'Find quotes about this card' },
+      { role: 'assistant', text: 'Here are three quotes.' },
+    ],
+  })])
+})
+
+test('POST /agent/run rejects a history that is not complete user/assistant turns', async () => {
+  const port = await listen(fakeAgent())
+  const res = await postForStream(port, {
+    prompt: 'Add those below the card',
+    projectId: 'essay',
+    runId: 'run-a',
+    history: [{ role: 'user', text: 'Find quotes about this card' }],
+  })
+
+  expect(res.status).toBe(400)
 })
 
 test('POST /agent/prepare acknowledges a bounded run admission', async () => {
