@@ -64,6 +64,30 @@ test('the + Link button unfurls a pasted url into a clickable reference card', a
   await expect(page.getByTestId('ref-open')).toHaveAttribute('title', /example\.com\/malleable/)
 })
 
+test('an X status URL renders as a native post card when unfurling has no metadata', async ({ page, context }) => {
+  const url = 'https://x.com/GergelyOrosz/status/2076959410941792548?s=20'
+  const bareXPost = {
+    url, refType: 'social', title: null, authors: [], siteName: 'x.com',
+    year: null, venue: null, description: null, faviconAssetId: null,
+    thumbnailAssetId: null, doi: null, arxivId: null, fetchedBy: 'unfurl', fetchedAt: null,
+  }
+  await context.route('**/projects/*/unfurl', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ reference: bareXPost }) })
+  })
+
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await page.getByTestId('new-reference').click()
+  await page.getByTestId('link-prompt-input').fill(url)
+  await page.getByTestId('link-prompt-submit').click()
+
+  const card = page.getByTestId('ref-card')
+  await expect(card).toHaveAttribute('data-x-post', 'true')
+  await expect(card).toContainText('@GergelyOrosz')
+  await expect(page.getByTestId('ref-title')).toHaveText('X post')
+  await expect(page.getByTestId('ref-open')).toHaveAttribute('title', `Open ${url}`)
+})
+
 test('the link prompt traps focus and restores it to the Link button when closed', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })

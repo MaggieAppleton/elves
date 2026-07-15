@@ -469,6 +469,20 @@
 .elves-ref__glyph[data-reftype="book"]     { background: oklch(0.58 0.11 60); }
 .elves-ref__glyph[data-reftype="video"]    { background: oklch(0.60 0.15 25); }
 .elves-ref__glyph[data-reftype="wiki"]     { background: var(--elves-ink-soft); }
+.elves-ref__x-glyph {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  color: var(--elves-surface);
+  background: var(--elves-ink);
+  border-radius: 4px;
+  font-family: Georgia, serif;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
 .elves-ref__kind {
   font-size: 10px;
   font-weight: 600;
@@ -491,6 +505,20 @@
   overflow: hidden;
   overflow-wrap: anywhere;
 }
+.elves-ref[data-x-post="true"] {
+  background: linear-gradient(135deg, color-mix(in oklch, var(--elves-ink) 3%, var(--elves-surface)), var(--elves-surface) 45%);
+  border-radius: 9px;
+}
+.elves-ref[data-x-post="true"]::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  border-radius: 9px 0 0 9px;
+  background: var(--elves-ink);
+  content: '';
+}
+.elves-ref[data-x-post="true"] .elves-ref__eyebrow { padding-left: 2px; }
+.elves-ref[data-x-post="true"] .elves-ref__title { letter-spacing: -0.01em; }
 .elves-ref__meta {
   font-size: 12.5px;
   color: var(--elves-ink-soft);
