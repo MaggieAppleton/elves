@@ -186,8 +186,8 @@
   box-sizing: border-box;
   min-height: min(48px, 22vh);
   min-height: min(48px, 22dvh);
-  max-height: min(42vh, 340px);
-  max-height: min(42dvh, 340px);
+  max-height: min(42vh, 500px);
+  max-height: min(42dvh, 500px);
   overflow-y: auto;
   overflow-x: hidden;
   padding: 12px 14px;
