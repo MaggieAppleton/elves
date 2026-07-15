@@ -125,6 +125,38 @@ test('the submitted message is pinned above the tool calls and replies', async (
   await expect(lines.first()).toHaveClass(/elves-agentbox__user/)
 })
 
+test('a follow-up keeps the transcript and carries the completed prior turn', async ({ page }) => {
+  const requests: any[] = []
+  await page.route('**/agent/run', async (route) => {
+    requests.push(route.request().postDataJSON())
+    const turn = requests.length
+    await route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body: sse([dataFrame({ type: 'done', reply: turn === 1 ? 'Here are three quotes.' : 'Added them.' })]),
+    })
+  })
+
+  await openReadyCanvas(page)
+  await page.keyboard.press('/')
+  await page.getByTestId('agent-input').fill('Find quotes about this card')
+  await page.getByTestId('agent-send').click()
+  await expect(page.getByTestId('agent-transcript')).toContainText('Here are three quotes.')
+
+  await page.getByTestId('agent-input').fill('Add those below the card')
+  await page.getByTestId('agent-send').click()
+
+  const transcript = page.getByTestId('agent-transcript')
+  await expect(transcript).toContainText('Find quotes about this card')
+  await expect(transcript).toContainText('Here are three quotes.')
+  await expect(transcript).toContainText('Add those below the card')
+  await expect(transcript).toContainText('Added them.')
+  expect(requests[1].history).toEqual([
+    { role: 'user', text: 'Find quotes about this card' },
+    { role: 'assistant', text: 'Here are three quotes.' },
+  ])
+})
+
 test('the input grows to fit a multi-line message', async ({ page }) => {
   await openReadyCanvas(page)
 

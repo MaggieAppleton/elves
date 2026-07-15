@@ -14,7 +14,7 @@ import {
   snapshotToCardMap, snapshotToCardsById, snapshotToDraft,
 } from './digest'
 import { enrichSelection, type SelectionStore } from './selection'
-import type { AgentRunner, AgentEvent, AgentRunReservation } from './agentRun'
+import type { AgentConversationMessage, AgentRunner, AgentEvent, AgentRunReservation } from './agentRun'
 import { reconcileCanvasFile, type Summarizer } from './summarize'
 import { extForMime, saveAsset, resolveAssetPath } from './assets'
 import { unfurl, type UnfurlDeps, type FetchedImage } from './unfurl'
@@ -59,6 +59,25 @@ const FETCH_TIMEOUT_MS = 8000
 const MAX_HTML_BYTES = 2_000_000
 const MAX_IMAGE_BYTES = 5_000_000
 const CANVAS_REVISION_HEADER = 'x-elves-canvas-revision'
+const MAX_AGENT_HISTORY_MESSAGES = 12
+const MAX_AGENT_HISTORY_CHARS = 12_000
+
+function parseAgentHistory(value: unknown): AgentConversationMessage[] | null {
+  if (value === undefined) return []
+  if (!Array.isArray(value) || value.length > MAX_AGENT_HISTORY_MESSAGES || value.length % 2 !== 0) return null
+  let chars = 0
+  const history: AgentConversationMessage[] = []
+  for (const [index, message] of value.entries()) {
+    if (!message || typeof message !== 'object') return null
+    const { role, text } = message as Record<string, unknown>
+    const expectedRole = index % 2 === 0 ? 'user' : 'assistant'
+    if (role !== expectedRole || typeof text !== 'string' || !text.trim()) return null
+    chars += text.length
+    if (chars > MAX_AGENT_HISTORY_CHARS) return null
+    history.push({ role: expectedRole, text })
+  }
+  return history
+}
 
 type ProjectPaths = { canvasPath: string; assetsDir: string }
 
@@ -779,13 +798,18 @@ export function createServer(
       res.status(400).json({ error: 'runId is required' })
       return
     }
+    const history = parseAgentHistory(req.body?.history)
+    if (!history) {
+      res.status(400).json({ error: 'history must be up to 12 non-empty user or assistant messages' })
+      return
+    }
     const buffered: AgentEvent[] = []
     let streamReady = false
     const send = (e: AgentEvent) => {
       if (!streamReady) buffered.push(e)
       else if (res.writable && !res.writableEnded) res.write(`data: ${JSON.stringify(e)}\n\n`)
     }
-    const input = { runId, prompt, projectId, hasSelection }
+    const input = { runId, prompt, projectId, hasSelection, history }
     const reservation = agent.claimPrepared('chat', input)
     if (!reservation) {
       res.status(409).json({ error: 'the agent run was not prepared or its admission expired' })

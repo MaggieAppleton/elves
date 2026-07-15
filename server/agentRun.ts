@@ -32,6 +32,13 @@ export type AgentEvent =
   | { type: 'done'; reply: string }
   | { type: 'error'; message: string }
 
+/** Completed user/assistant turns from the visible in-app conversation. Tool
+ * progress and errors stay in the UI transcript and are not replayed to Claude. */
+export interface AgentConversationMessage {
+  role: 'user' | 'assistant'
+  text: string
+}
+
 export interface AgentRunInput {
   runId: string
   prompt: string
@@ -39,6 +46,7 @@ export interface AgentRunInput {
   /** True when the user has cards selected — steers the preamble toward
    * read_selection (scope to those) vs read_map (the whole canvas). */
   hasSelection: boolean
+  history?: AgentConversationMessage[]
 }
 
 // The agent gets full canvas powers (all elves MCP tools) plus read-only web,
@@ -65,6 +73,21 @@ export function buildPreamble(projectId: string, hasSelection: boolean): string 
     ? 'The user has cards selected on the canvas — call read_selection to see them and scope your work to those cards.'
     : 'The user has nothing selected — call read_map to see the whole canvas and work across it.'
   return `You are running inside the Elves app, triggered from the canvas by the user. Operate on the project with id "${projectId}". ${scope}`
+}
+
+/** Each in-app request starts a fresh CLI process, so earlier completed turns
+ * are framed explicitly before the newest user request. */
+export function buildPrompt(prompt: string, history: AgentConversationMessage[] = []): string {
+  if (!history.length) return prompt
+  const prior = history.map((message) => `${message.role.toUpperCase()}: ${message.text}`).join('\n')
+  return [
+    'Conversation context from earlier turns:',
+    '<conversation>',
+    prior,
+    '</conversation>',
+    'Current user request:',
+    prompt,
+  ].join('\n')
 }
 
 const ELVES_TOOL_PREFIX = 'mcp__elves__'
@@ -158,7 +181,7 @@ export const claudeAdapter: CliAdapter = {
       cmd: process.env.ELVES_CLI_BIN || 'claude',
       args: [
         '-p',
-        input.prompt,
+        buildPrompt(input.prompt, input.history),
         '--output-format',
         'stream-json',
         // stream-json in print mode requires --verbose to emit per-turn events.
