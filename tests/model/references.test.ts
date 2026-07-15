@@ -60,6 +60,14 @@ describe('type-adaptive face fields', () => {
     expect(refMeta(r)).toBeNull()
     expect(refDescription(r)).toBe('recombining at the site of use')
   })
+  test('an unfurled X status URL has a human fallback title and handle', () => {
+    const r = ref({
+      url: 'https://x.com/GergelyOrosz/status/2076959410941792548?s=20',
+      refType: 'social',
+    })
+    expect(refEyebrow(r)).toBe('@GergelyOrosz')
+    expect(refTitle(r)).toBe('X post')
+  })
   test('article eyebrow falls back to the host', () => {
     expect(refEyebrow(ref({ refType: 'article', url: 'https://andymatuschak.org/x' }))).toBe('andymatuschak.org')
   })

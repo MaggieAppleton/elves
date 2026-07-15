@@ -2,7 +2,7 @@ import type { Reference } from '../model/types'
 import { track } from 'tldraw'
 import { assetUrl } from '../client/assets'
 import {
-  refEyebrow, refMeta, refDescription, refTitle, hasLeftMedia, refHost,
+  isXStatusUrl, refEyebrow, refMeta, refDescription, refTitle, hasLeftMedia, refHost,
 } from '../model/references'
 
 /** Opens the reference url in a new tab; stops the pointer event reaching tldraw. */
@@ -26,6 +26,7 @@ export const ReferenceCardFace = track(function ReferenceCardFace({
   const meta = refMeta(ref)
   const desc = refDescription(ref)
   const leftMedia = hasLeftMedia(ref)
+  const isXPost = isXStatusUrl(ref.url)
   const favicon = ref.faviconAssetId ? assetUrl(ref.faviconAssetId) : ''
   const media = ref.thumbnailAssetId ? assetUrl(ref.thumbnailAssetId) : ''
 
@@ -34,6 +35,8 @@ export const ReferenceCardFace = track(function ReferenceCardFace({
       <div className="elves-ref__eyebrow">
         {favicon
           ? <img className="elves-ref__favicon" src={favicon} alt="" draggable={false} />
+          : isXPost
+          ? <span className="elves-ref__x-glyph" aria-hidden="true">𝕏</span>
           : <span className="elves-ref__glyph" data-reftype={ref.refType} aria-hidden="true" />}
         <span className="elves-ref__kind">{eyebrow}</span>
       </div>
@@ -44,7 +47,7 @@ export const ReferenceCardFace = track(function ReferenceCardFace({
   )
 
   return (
-    <div className="elves-ref" data-reftype={ref.refType} data-testid="ref-card">
+    <div className="elves-ref" data-reftype={ref.refType} data-x-post={isXPost || undefined} data-testid="ref-card">
       <button
         className="elves-ref__open"
         data-testid="ref-open"
