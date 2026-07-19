@@ -124,6 +124,7 @@ describe('unfurl (deps injected)', () => {
       fetchText: async () => ({ html: OG_HTML, finalUrl: 'https://andymatuschak.org/posts/glimpse' }),
       fetchImage: async () => ({ bytes: Buffer.from('img'), contentType: 'image/png' }),
       saveImage: async () => `asset-${++n}`,
+      fetchOEmbed: async () => null,
       now: () => '2026-07-02T00:00:00.000Z',
       ...over,
     }
@@ -155,6 +156,52 @@ describe('unfurl (deps injected)', () => {
     }))
     expect(ref.thumbnailAssetId).toBeNull() // wantsThumb is false for papers
     expect(ref.faviconAssetId).toBe('asset-1')
+  })
+
+  test('X status url: builds a Reference straight from a successful oEmbed fetch', async () => {
+    const ref = await unfurl('https://x.com/Mappletons/status/1234567890', deps({
+      fetchOEmbed: async () => ({
+        authorName: 'Maggie Appleton',
+        html: '<blockquote class="twitter-tweet"><p lang="en" dir="ltr">Shipping a new feature today &amp; feeling good about it</p>&mdash; Maggie Appleton (@Mappletons) <a href="https://twitter.com/Mappletons/status/1234567890">July 15, 2026</a></blockquote>',
+      }),
+    }))
+    expect(ref.refType).toBe('social')
+    expect(ref.title).toBeNull()
+    expect(ref.authors).toEqual(['Maggie Appleton'])
+    expect(ref.description).toBe('Shipping a new feature today & feeling good about it')
+    expect(ref.faviconAssetId).toBeNull()
+    expect(ref.thumbnailAssetId).toBeNull()
+    expect(ref.fetchedBy).toBe('unfurl')
+    expect(ref.fetchedAt).toBe('2026-07-02T00:00:00.000Z')
+  })
+
+  test('X status url: falls back to a minimal reference when oEmbed returns null', async () => {
+    const ref = await unfurl('https://x.com/Mappletons/status/1234567890', deps({
+      fetchOEmbed: async () => null,
+    }))
+    expect(ref.refType).toBe('social')
+    expect(ref.title).toBeNull()
+    expect(ref.authors).toEqual([])
+    expect(ref.description).toBeNull()
+    expect(ref.fetchedBy).toBe('unfurl')
+  })
+
+  test('X status url: falls back to a minimal reference when oEmbed throws', async () => {
+    const ref = await unfurl('https://x.com/Mappletons/status/1234567890', deps({
+      fetchOEmbed: async () => { throw new Error('rate limited') },
+    }))
+    expect(ref.refType).toBe('social')
+    expect(ref.authors).toEqual([])
+  })
+
+  test('non-X url never calls fetchOEmbed and uses the generic html path unchanged', async () => {
+    let called = false
+    const ref = await unfurl('https://andymatuschak.org/posts/glimpse', deps({
+      fetchOEmbed: async () => { called = true; return null },
+    }))
+    expect(called).toBe(false)
+    expect(ref.refType).toBe('article')
+    expect(ref.title).toBe('A startling glimpse of malleable software')
   })
 })
 
