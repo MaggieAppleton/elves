@@ -217,6 +217,11 @@ export function canvasRevision(snapshot: CanvasSnapshot): number {
   return metadataFrom(snapshot)?.revision ?? 0
 }
 
+/** The document lineage id, or null for a snapshot with no metadata yet (never fabricated). */
+export function canvasEpoch(snapshot: CanvasSnapshot): string | null {
+  return metadataFrom(snapshot)?.epoch ?? null
+}
+
 export function nextChangeSetToken(snapshot: CanvasSnapshot): ChangeSetToken {
   const metadata = metadataForMutation(snapshot)
   return { epoch: metadata.epoch, sequence: metadata.nextSequence }

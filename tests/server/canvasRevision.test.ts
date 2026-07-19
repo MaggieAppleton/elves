@@ -82,6 +82,29 @@ test('v2 canvas read lazily persists one epoch without advancing revision or seq
   expect(legacy.body).not.toHaveProperty(SERVER_CANVAS_METADATA_KEY)
 })
 
+test('v2 canvas read surfaces possibleDataLoss when a same-epoch sibling is ahead, without mutating canvas.json', async () => {
+  const { root, app } = await setup()
+  const path = await seed(root)
+  const first = await request(app).get('/projects/essay/canvas?protocol=2')
+  expect(first.body.possibleDataLoss).toBeUndefined()
+  const epoch = first.body.nextChangeSetToken.epoch
+
+  const conflictPath = `${path.slice(0, -'.json'.length)}.sync-conflict-20260719-143455-Y7662P2.json`
+  await fs.writeFile(conflictPath, JSON.stringify({
+    document: { store: {} },
+    session: null,
+    [SERVER_CANVAS_METADATA_KEY]: {
+      revision: 5, epoch, nextSequence: 0,
+      recentDigests: [], pendingChangeSets: [], legacyReceipts: [],
+    },
+  }))
+
+  const before = await bytes(path)
+  const second = await request(app).get('/projects/essay/canvas?protocol=2')
+  expect(second.body.possibleDataLoss).toEqual({ path: conflictPath, revision: 5 })
+  expect(await bytes(path)).toEqual(before)
+})
+
 test('versioned save requires the revision header without mutating disk', async () => {
   const { root, app } = await setup()
   const path = await seed(root)

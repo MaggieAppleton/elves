@@ -12,6 +12,11 @@ export interface CanvasVersionedState {
   revision: number
   pendingChangeSets: PendingChangeSetV2[]
   nextChangeSetToken: ChangeSetToken
+  // Set when a Syncthing sync-conflict sibling shares this canvas's epoch but
+  // carries a HIGHER revision — the live file is behind, likely because
+  // Syncthing's file-level conflict resolution (blind to this app's revision
+  // counter) picked the wrong side. See server/conflicts.ts:findAheadConflict.
+  possibleDataLoss?: { path: string; revision: number }
 }
 
 interface CanvasProtocolErrorDetails {
@@ -163,6 +168,13 @@ export async function loadCanvasVersioned(projectId: string): Promise<CanvasVers
   if (!res.ok) throw await protocolError(res, 'load')
   const result = await successJson(res)
   if (!isVersionedState(result)) throw invalidCanvasResponse(res)
+  if (result.possibleDataLoss) {
+    console.warn(
+      `[elves] 🚨 possible data loss for project "${projectId}": the open canvas is behind ` +
+        `${result.possibleDataLoss.path} (revision ${result.possibleDataLoss.revision}). ` +
+        'Resolve the sync-conflict file before continuing to edit.',
+    )
+  }
   return result
 }
 

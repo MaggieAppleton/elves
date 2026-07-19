@@ -30,6 +30,7 @@ import {
   ProjectError,
 } from './projects'
 import { withProjectLock } from './projectLock'
+import { findAheadConflict } from './conflicts'
 import {
   readReviews,
   createReview,
@@ -479,14 +480,25 @@ export function createServer(
     '/projects/:id/canvas',
     wrap(async (req, res) => {
       if (req.query.protocol === '2') {
-        const canvas = await withProjectMutation(req.params.id, res, async (paths) =>
-          ensureStoredCanvasMetadata(paths.canvasPath))
-        if (canvas === null) return
+        const result = await withProjectMutation(req.params.id, res, async (paths) => {
+          const canvas = await ensureStoredCanvasMetadata(paths.canvasPath)
+          const ahead = await findAheadConflict(paths.canvasPath).catch(() => null)
+          return { canvas, ahead }
+        })
+        if (result === null) return
+        const { canvas, ahead } = result
+        if (ahead) {
+          console.warn(
+            `[elves] 🚨 possible data loss in project "${req.params.id}": live canvas is ` +
+              `behind ${ahead.path} (revision ${ahead.revision})`,
+          )
+        }
         res.json({
           snapshot: publicCanvasSnapshot(canvas),
           revision: canvasRevision(canvas),
           pendingChangeSets: pendingChangeSetsForClient(canvas),
           nextChangeSetToken: nextChangeSetToken(canvas),
+          ...(ahead ? { possibleDataLoss: ahead } : {}),
         })
         return
       }
