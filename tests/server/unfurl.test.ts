@@ -111,6 +111,7 @@ describe('parseMetadata — out-of-range numeric entity in <title>', () => {
       fetchText: async () => ({ html: BAD_ENTITY_HTML, finalUrl: 'https://example.com' }),
       fetchImage: async () => null,
       saveImage: async () => null,
+      fetchOEmbed: async () => null,
       now: () => '2026-07-02T00:00:00.000Z',
     })
     expect(ref.title).toBe('Broken &#1234567890; Title')

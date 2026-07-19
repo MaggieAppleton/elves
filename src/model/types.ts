@@ -42,7 +42,12 @@ export interface Reference {
   url: string
   refType: RefType
   title: string | null
-  /** Authors (papers/books), or ["@handle"] for social, or a blog author. */
+  /**
+   * Authors (papers/books), a blog author, or an X/Twitter post's author — a
+   * real display name once oEmbed'd (see server/unfurl.ts), falling back to a
+   * URL-derived "@handle" (see xStatusHandle) only when no author name was
+   * resolved.
+   */
   authors: string[]
   siteName: string | null
   year: number | null
