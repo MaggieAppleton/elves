@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import {
-  parseMetadata, decodeEntities, normalizeAuthor, unfurl, minimalReference,
+  parseMetadata, decodeEntities, normalizeAuthor, unfurl, minimalReference, parseOEmbedTweetText,
   type UnfurlDeps,
 } from '../../server/unfurl'
 
@@ -44,6 +44,22 @@ describe('normalizeAuthor', () => {
   test('flips "Last, First" and leaves plain names', () => {
     expect(normalizeAuthor('Cao, Ruanqianqian')).toBe('Ruanqianqian Cao')
     expect(normalizeAuthor('Andy Matuschak')).toBe('Andy Matuschak')
+  })
+})
+
+describe('parseOEmbedTweetText', () => {
+  test('strips the blockquote wrapper and decodes entities', () => {
+    const html = '<blockquote class="twitter-tweet"><p lang="en" dir="ltr">Shipping a new feature today &amp; feeling good about it</p>&mdash; Maggie Appleton (@Mappletons) <a href="https://twitter.com/Mappletons/status/1234567890">July 15, 2026</a></blockquote>'
+    expect(parseOEmbedTweetText(html)).toBe('Shipping a new feature today & feeling good about it')
+  })
+
+  test("keeps a real link's visible text but drops a trailing media stub", () => {
+    const html = '<blockquote class="twitter-tweet"><p lang="en" dir="ltr">New post is up: <a href="https://t.co/xyz789">example.com/my-post</a> <a href="https://t.co/abc123">pic.twitter.com/abc123</a></p>&mdash; Jane Doe (@janedoe) <a href="https://twitter.com/janedoe/status/999">June 1, 2026</a></blockquote>'
+    expect(parseOEmbedTweetText(html)).toBe('New post is up: example.com/my-post')
+  })
+
+  test('returns null when there is no <p> tag to extract', () => {
+    expect(parseOEmbedTweetText('<blockquote class="twitter-tweet">no paragraph here</blockquote>')).toBeNull()
   })
 })
 
@@ -95,6 +111,7 @@ describe('parseMetadata — out-of-range numeric entity in <title>', () => {
       fetchText: async () => ({ html: BAD_ENTITY_HTML, finalUrl: 'https://example.com' }),
       fetchImage: async () => null,
       saveImage: async () => null,
+      fetchOEmbed: async () => null,
       now: () => '2026-07-02T00:00:00.000Z',
     })
     expect(ref.title).toBe('Broken &#1234567890; Title')
@@ -108,6 +125,7 @@ describe('unfurl (deps injected)', () => {
       fetchText: async () => ({ html: OG_HTML, finalUrl: 'https://andymatuschak.org/posts/glimpse' }),
       fetchImage: async () => ({ bytes: Buffer.from('img'), contentType: 'image/png' }),
       saveImage: async () => `asset-${++n}`,
+      fetchOEmbed: async () => null,
       now: () => '2026-07-02T00:00:00.000Z',
       ...over,
     }
@@ -139,6 +157,52 @@ describe('unfurl (deps injected)', () => {
     }))
     expect(ref.thumbnailAssetId).toBeNull() // wantsThumb is false for papers
     expect(ref.faviconAssetId).toBe('asset-1')
+  })
+
+  test('X status url: builds a Reference straight from a successful oEmbed fetch', async () => {
+    const ref = await unfurl('https://x.com/Mappletons/status/1234567890', deps({
+      fetchOEmbed: async () => ({
+        authorName: 'Maggie Appleton',
+        html: '<blockquote class="twitter-tweet"><p lang="en" dir="ltr">Shipping a new feature today &amp; feeling good about it</p>&mdash; Maggie Appleton (@Mappletons) <a href="https://twitter.com/Mappletons/status/1234567890">July 15, 2026</a></blockquote>',
+      }),
+    }))
+    expect(ref.refType).toBe('social')
+    expect(ref.title).toBeNull()
+    expect(ref.authors).toEqual(['Maggie Appleton'])
+    expect(ref.description).toBe('Shipping a new feature today & feeling good about it')
+    expect(ref.faviconAssetId).toBeNull()
+    expect(ref.thumbnailAssetId).toBeNull()
+    expect(ref.fetchedBy).toBe('unfurl')
+    expect(ref.fetchedAt).toBe('2026-07-02T00:00:00.000Z')
+  })
+
+  test('X status url: falls back to a minimal reference when oEmbed returns null', async () => {
+    const ref = await unfurl('https://x.com/Mappletons/status/1234567890', deps({
+      fetchOEmbed: async () => null,
+    }))
+    expect(ref.refType).toBe('social')
+    expect(ref.title).toBeNull()
+    expect(ref.authors).toEqual([])
+    expect(ref.description).toBeNull()
+    expect(ref.fetchedBy).toBe('unfurl')
+  })
+
+  test('X status url: falls back to a minimal reference when oEmbed throws', async () => {
+    const ref = await unfurl('https://x.com/Mappletons/status/1234567890', deps({
+      fetchOEmbed: async () => { throw new Error('rate limited') },
+    }))
+    expect(ref.refType).toBe('social')
+    expect(ref.authors).toEqual([])
+  })
+
+  test('non-X url never calls fetchOEmbed and uses the generic html path unchanged', async () => {
+    let called = false
+    const ref = await unfurl('https://andymatuschak.org/posts/glimpse', deps({
+      fetchOEmbed: async () => { called = true; return null },
+    }))
+    expect(called).toBe(false)
+    expect(ref.refType).toBe('article')
+    expect(ref.title).toBe('A startling glimpse of malleable software')
   })
 })
 

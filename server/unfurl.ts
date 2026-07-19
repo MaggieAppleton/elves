@@ -1,5 +1,5 @@
 import type { Reference, RefType } from '../src/model/types'
-import { guessRefType, refHost, blankReference } from '../src/model/references'
+import { guessRefType, refHost, blankReference, isXStatusUrl } from '../src/model/references'
 
 /**
  * Turn a URL into a structured Reference by fetching the page and parsing its
@@ -67,6 +67,22 @@ export function normalizeAuthor(raw: string): string {
     if (last && first) return `${first} ${last}`
   }
   return a
+}
+
+/**
+ * Extract and clean the tweet body from an X oEmbed response's `html` field
+ * — a `<blockquote>` whose first `<p>` holds the tweet text. Strips inner
+ * tags (keeping a linked url's visible text), decodes entities, and trims a
+ * trailing `pic.twitter.com/...` media stub since it's a dead link once
+ * rendered as plain text.
+ */
+export function parseOEmbedTweetText(html: string): string | null {
+  const p = html.match(/<p[^>]*>([\s\S]*?)<\/p>/i)
+  if (!p) return null
+  const withoutTags = p[1].replace(/<[^>]+>/g, '')
+  const decoded = decodeEntities(withoutTags).replace(/\s+/g, ' ').trim()
+  const withoutMediaStub = decoded.replace(/\s*pic\.twitter\.com\/\S+$/i, '').trim()
+  return withoutMediaStub || null
 }
 
 export interface ParsedMeta {
@@ -175,10 +191,16 @@ export interface FetchedImage {
   contentType: string
 }
 
+export interface OEmbedResult {
+  authorName: string
+  html: string
+}
+
 export interface UnfurlDeps {
   fetchText: (url: string) => Promise<{ html: string; finalUrl: string }>
   fetchImage: (url: string) => Promise<FetchedImage | null>
   saveImage: (img: FetchedImage) => Promise<string | null>
+  fetchOEmbed: (url: string) => Promise<OEmbedResult | null>
   now: () => string
 }
 
@@ -188,6 +210,33 @@ export function minimalReference(url: string, now: string, refType?: RefType): R
 }
 
 export async function unfurl(url: string, deps: UnfurlDeps): Promise<Reference> {
+  if (isXStatusUrl(url)) {
+    try {
+      const oembed = await deps.fetchOEmbed(url)
+      if (oembed) {
+        return {
+          url,
+          refType: 'social',
+          title: null,
+          authors: oembed.authorName ? [oembed.authorName] : [],
+          siteName: refHost(url) || null,
+          year: null,
+          venue: null,
+          description: parseOEmbedTweetText(oembed.html),
+          faviconAssetId: null,
+          thumbnailAssetId: null,
+          doi: null,
+          arxivId: null,
+          fetchedBy: 'unfurl',
+          fetchedAt: deps.now(),
+        }
+      }
+    } catch {
+      // fall through to the minimal reference below
+    }
+    return minimalReference(url, deps.now())
+  }
+
   let html: string
   let finalUrl = url
   try {

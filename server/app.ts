@@ -58,6 +58,7 @@ const UNFURL_UA = 'ElvesBot/0.1 (+local-first writing studio; reference unfurl)'
 const FETCH_TIMEOUT_MS = 8000
 const MAX_HTML_BYTES = 2_000_000
 const MAX_IMAGE_BYTES = 5_000_000
+const MAX_OEMBED_BYTES = 200_000
 const CANVAS_REVISION_HEADER = 'x-elves-canvas-revision'
 const MAX_AGENT_HISTORY_MESSAGES = 12
 const MAX_AGENT_HISTORY_CHARS = 12_000
@@ -195,6 +196,28 @@ function unfurlDepsFor(dataRoot: string, projectId: string): UnfurlDeps {
           const bytes = await readBodyLimited(res, MAX_IMAGE_BYTES, signal)
           return bytes.length === 0 ? null : { bytes, contentType }
         })
+      } catch {
+        return null
+      }
+    },
+    fetchOEmbed: async (url) => {
+      try {
+        return await withTimeout(
+          `https://publish.twitter.com/oembed?url=${encodeURIComponent(url)}&omit_script=true`,
+          'application/json',
+          async (res, signal) => {
+            const ct = (res.headers.get('content-type') ?? '').toLowerCase()
+            if (!res.ok || !ct.includes('json')) {
+              await discardBody(res)
+              return null
+            }
+            const body = (await readBodyLimited(res, MAX_OEMBED_BYTES, signal)).toString('utf8')
+            const parsed = JSON.parse(body) as Record<string, unknown>
+            const authorName = typeof parsed.author_name === 'string' ? parsed.author_name : ''
+            const html = typeof parsed.html === 'string' ? parsed.html : ''
+            return authorName && html ? { authorName, html } : null
+          },
+        )
       } catch {
         return null
       }
