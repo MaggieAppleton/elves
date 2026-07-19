@@ -14,7 +14,7 @@ import {
   snapshotToCardMap, snapshotToCardsById, snapshotToDraft,
 } from './digest'
 import { enrichSelection, type SelectionStore } from './selection'
-import type { AgentRunner, AgentEvent, AgentRunReservation } from './agentRun'
+import type { AgentConversationMessage, AgentRunner, AgentEvent, AgentRunReservation } from './agentRun'
 import { reconcileCanvasFile, type Summarizer } from './summarize'
 import { extForMime, saveAsset, resolveAssetPath } from './assets'
 import { unfurl, type UnfurlDeps, type FetchedImage } from './unfurl'
@@ -58,7 +58,27 @@ const UNFURL_UA = 'ElvesBot/0.1 (+local-first writing studio; reference unfurl)'
 const FETCH_TIMEOUT_MS = 8000
 const MAX_HTML_BYTES = 2_000_000
 const MAX_IMAGE_BYTES = 5_000_000
+const MAX_OEMBED_BYTES = 200_000
 const CANVAS_REVISION_HEADER = 'x-elves-canvas-revision'
+const MAX_AGENT_HISTORY_MESSAGES = 12
+const MAX_AGENT_HISTORY_CHARS = 12_000
+
+function parseAgentHistory(value: unknown): AgentConversationMessage[] | null {
+  if (value === undefined) return []
+  if (!Array.isArray(value) || value.length > MAX_AGENT_HISTORY_MESSAGES || value.length % 2 !== 0) return null
+  let chars = 0
+  const history: AgentConversationMessage[] = []
+  for (const [index, message] of value.entries()) {
+    if (!message || typeof message !== 'object') return null
+    const { role, text } = message as Record<string, unknown>
+    const expectedRole = index % 2 === 0 ? 'user' : 'assistant'
+    if (role !== expectedRole || typeof text !== 'string' || !text.trim()) return null
+    chars += text.length
+    if (chars > MAX_AGENT_HISTORY_CHARS) return null
+    history.push({ role: expectedRole, text })
+  }
+  return history
+}
 
 type ProjectPaths = { canvasPath: string; assetsDir: string }
 
@@ -176,6 +196,28 @@ function unfurlDepsFor(dataRoot: string, projectId: string): UnfurlDeps {
           const bytes = await readBodyLimited(res, MAX_IMAGE_BYTES, signal)
           return bytes.length === 0 ? null : { bytes, contentType }
         })
+      } catch {
+        return null
+      }
+    },
+    fetchOEmbed: async (url) => {
+      try {
+        return await withTimeout(
+          `https://publish.twitter.com/oembed?url=${encodeURIComponent(url)}&omit_script=true`,
+          'application/json',
+          async (res, signal) => {
+            const ct = (res.headers.get('content-type') ?? '').toLowerCase()
+            if (!res.ok || !ct.includes('json')) {
+              await discardBody(res)
+              return null
+            }
+            const body = (await readBodyLimited(res, MAX_OEMBED_BYTES, signal)).toString('utf8')
+            const parsed = JSON.parse(body) as Record<string, unknown>
+            const authorName = typeof parsed.author_name === 'string' ? parsed.author_name : ''
+            const html = typeof parsed.html === 'string' ? parsed.html : ''
+            return authorName && html ? { authorName, html } : null
+          },
+        )
       } catch {
         return null
       }
@@ -779,13 +821,18 @@ export function createServer(
       res.status(400).json({ error: 'runId is required' })
       return
     }
+    const history = parseAgentHistory(req.body?.history)
+    if (!history) {
+      res.status(400).json({ error: 'history must be up to 12 non-empty user or assistant messages' })
+      return
+    }
     const buffered: AgentEvent[] = []
     let streamReady = false
     const send = (e: AgentEvent) => {
       if (!streamReady) buffered.push(e)
       else if (res.writable && !res.writableEnded) res.write(`data: ${JSON.stringify(e)}\n\n`)
     }
-    const input = { runId, prompt, projectId, hasSelection }
+    const input = { runId, prompt, projectId, hasSelection, history }
     const reservation = agent.claimPrepared('chat', input)
     if (!reservation) {
       res.status(409).json({ error: 'the agent run was not prepared or its admission expired' })

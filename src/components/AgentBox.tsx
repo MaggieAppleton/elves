@@ -3,6 +3,7 @@ import { Broom, CaretDown, Check, PaperPlaneRight } from '@phosphor-icons/react'
 import { agentInfo } from '../shapes/agents'
 import { runAgent, type AgentEvent, type AgentRunHandle } from '../client/agent'
 import { deriveStatus } from '../client/agentStatus'
+import type { AgentConversationMessage } from '../../server/agentRun'
 import './agentBox.css'
 
 interface Props {
@@ -26,10 +27,24 @@ type Entry =
 
 type RunPhase = 'idle' | 'running' | 'cancelling'
 
-// Fold one event into the transcript. `done` only contributes a line when the
-// agent never spoke (tool-only run) — otherwise its reply just echoes the last
-// text block, so we drop it and let `running` flip off.
-function appendEvent(prev: Entry[], e: AgentEvent): Entry[] {
+const MAX_HISTORY_MESSAGES = 12
+const MAX_HISTORY_CHARS = 12_000
+
+function recentHistory(history: AgentConversationMessage[]): AgentConversationMessage[] {
+  const recent: AgentConversationMessage[] = []
+  let chars = 0
+  for (let i = history.length - 1; i >= 0 && recent.length < MAX_HISTORY_MESSAGES; i -= 1) {
+    const message = history[i]
+    if (chars + message.text.length > MAX_HISTORY_CHARS) break
+    recent.unshift(message)
+    chars += message.text.length
+  }
+  return recent
+}
+
+// Fold one event into the transcript. A terminal reply can repeat streamed
+// text from its own run, but it must never be compared with an earlier turn.
+function appendEvent(prev: Entry[], e: AgentEvent, streamedText = ''): Entry[] {
   switch (e.type) {
     case 'text':
       return [...prev, { kind: 'text', text: e.text }]
@@ -38,7 +53,7 @@ function appendEvent(prev: Entry[], e: AgentEvent): Entry[] {
     case 'error':
       return [...prev, { kind: 'error', message: e.message }]
     case 'done':
-      return e.reply && !prev.some((en) => en.kind === 'text')
+      return e.reply && streamedText.trim() !== e.reply
         ? [...prev, { kind: 'text', text: e.reply }]
         : prev
     default:
@@ -75,6 +90,10 @@ export function AgentBox({
   // expanded (see the focus effect); collapsing is conditional (see collapse).
   const [collapsed, setCollapsed] = useState(false)
   const handleRef = useRef<AgentRunHandle | null>(null)
+  const historyRef = useRef<AgentConversationMessage[]>([])
+  const pendingUserRef = useRef<string | null>(null)
+  const responseTextRef = useRef('')
+  const lastResponseTextRef = useRef('')
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -148,11 +167,33 @@ export function AgentBox({
     setPrompt('')
     // Seed the transcript with the user's message so it stays pinned above the
     // tool calls and replies that follow.
-    setEntries([{ kind: 'user', text }])
+    const history = recentHistory(historyRef.current)
+    pendingUserRef.current = text
+    responseTextRef.current = ''
+    lastResponseTextRef.current = ''
+    setEntries((prev) => [...prev, { kind: 'user', text }])
     setRunPhase('running')
     onRunningChange(true)
-    const handle = runAgent({ prompt: text, projectId, hasSelection }, (e) => {
-      setEntries((prev) => appendEvent(prev, e))
+    const handle = runAgent({ prompt: text, projectId, hasSelection, history }, (e) => {
+      if (e.type === 'text') {
+        responseTextRef.current += e.text
+        lastResponseTextRef.current = e.text
+      }
+      const streamedText = responseTextRef.current
+      const lastStreamedText = lastResponseTextRef.current
+      if (e.type === 'done') {
+        const reply = e.reply.trim() || streamedText.trim()
+        if (reply && pendingUserRef.current) {
+          historyRef.current = [...historyRef.current,
+            { role: 'user', text: pendingUserRef.current },
+            { role: 'assistant', text: reply },
+          ]
+        }
+        pendingUserRef.current = null
+        responseTextRef.current = ''
+        lastResponseTextRef.current = ''
+      }
+      setEntries((prev) => appendEvent(prev, e, lastStreamedText))
     })
     handleRef.current = handle
     void handle.done.then(() => {
@@ -197,6 +238,10 @@ export function AgentBox({
       setRunPhase('idle')
     }
     setEntries([])
+    historyRef.current = []
+    pendingUserRef.current = null
+    responseTextRef.current = ''
+    lastResponseTextRef.current = ''
     setPrompt('')
     setCollapsed(false)
     onClose()

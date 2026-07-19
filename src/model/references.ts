@@ -45,6 +45,25 @@ export function refHost(url: string): string {
   }
 }
 
+/** Whether url identifies a public X/Twitter status post. */
+export function isXStatusUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    const host = parsed.hostname.replace(/^www\./, '').toLowerCase()
+    const [handle, status, id] = parsed.pathname.split('/').filter(Boolean)
+    return (host === 'x.com' || host === 'twitter.com') && !!handle && status === 'status' && !!id
+  } catch {
+    return false
+  }
+}
+
+/** The author handle encoded in an X/Twitter status URL, when present. */
+export function xStatusHandle(url: string): string | null {
+  if (!isXStatusUrl(url)) return null
+  const handle = new URL(url).pathname.split('/').filter(Boolean)[0]
+  return handle ? `@${handle}` : null
+}
+
 /** "Cao", "Cao & Jiang", "Cao, Jiang & Xia", "Cao et al." (>3). */
 export function authorsLabel(authors: string[]): string {
   const names = authors.filter((a) => a.trim())
@@ -88,7 +107,7 @@ export function refEyebrow(ref: Reference): string {
     case 'book':
       return ref.year ? `Book · ${ref.year}` : 'Book'
     case 'social':
-      return ref.authors[0] || site || 'Post'
+      return ref.authors[0] || xStatusHandle(ref.url) || site || 'Post'
     case 'wiki':
       return site || 'Wikipedia'
     case 'video':
@@ -138,5 +157,5 @@ export function hasLeftMedia(ref: Reference): boolean {
 
 /** The visible title, falling back to the host if there is no title yet. */
 export function refTitle(ref: Reference): string {
-  return ref.title?.trim() || refHost(ref.url) || ref.url
+  return ref.title?.trim() || (isXStatusUrl(ref.url) ? 'X post' : null) || refHost(ref.url) || ref.url
 }
