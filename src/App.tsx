@@ -890,16 +890,18 @@ export default function App() {
         </button>
       )}
       <div className="elves-topbar">
-        <div
-          className="elves-canvas-write-status"
-          role="status"
-          aria-live="polite"
-          aria-label={writeStatusLabel}
-          data-write-status={canvasWriteStatus}
-          title={writeStatusLabel}
-        >
-          <span className="elves-status-text">{writeStatusLabel}</span>
-        </div>
+        {canvasWriteStatus !== 'idle' && (
+          <div
+            className="elves-canvas-write-status"
+            role="status"
+            aria-live="polite"
+            aria-label={writeStatusLabel}
+            data-write-status={canvasWriteStatus}
+            title={writeStatusLabel}
+          >
+            <span className="elves-status-text">{writeStatusLabel}</span>
+          </div>
+        )}
         {canvasWriteStatus === 'error' && !editor && (
           <button className="elves-status-action" onClick={retryCanvasInitialization}>
             Retry canvas
