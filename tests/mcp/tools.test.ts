@@ -330,7 +330,7 @@ test('readDraftTool compiles the canvas into ordered narrative blocks', async ()
   const { base } = await liveElves()
   await seedCard(base, 'shape:a') // one prose card, no section → one opening block
   const blocks = await readDraftTool(base, 'essay')
-  expect(blocks).toEqual([{ section: null, cards: [{ id: 'shape:a', text: 'hi' }] }])
+  expect(blocks).toEqual([{ section: null, items: [{ type: 'prose', id: 'shape:a', text: 'hi' }] }])
 })
 
 test('createReferenceTool unfurls a url and posts a create_reference change-set, Claude fields winning', async () => {

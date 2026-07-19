@@ -123,6 +123,61 @@
   font-style: italic;
 }
 
+.elves-draft__figure,
+.elves-draft__image-wrap {
+  box-sizing: border-box;
+  width: calc(100% + 24px);
+  margin: 6px 0 18px -12px;
+  padding: 14px 12px;
+  border: 1px solid var(--elves-border);
+  border-radius: 7px;
+  background: var(--elves-surface-muted);
+}
+
+.elves-draft__figure {
+  border-style: dashed;
+}
+
+.elves-draft__figure-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.35;
+  color: var(--elves-ink);
+}
+
+.elves-draft__figure-status {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--elves-border);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.2;
+  text-transform: uppercase;
+  color: var(--elves-ink-faint);
+  background: var(--elves-surface);
+}
+
+.elves-draft__figure-desc {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--elves-ink-soft);
+}
+
+.elves-draft__image {
+  display: block;
+  width: 100%;
+  max-height: 420px;
+  object-fit: contain;
+  border-radius: 5px;
+  background: var(--elves-surface);
+}
+
 /* The paragraph opened for editing: a textarea sharing the reading column's
    exact type + box (font, line-height, equal bleed) so nothing shifts when you
    click in. A slightly stronger neutral fill plus a soft border all round mark

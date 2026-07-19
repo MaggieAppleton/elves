@@ -9,6 +9,10 @@ vi.mock('tldraw', () => ({
   useValue: (_name: string, getValue: () => unknown) => getValue(),
 }))
 
+vi.mock('../../src/client/assets', () => ({
+  assetUrl: (assetId: string) => `/assets/${assetId}`,
+}))
+
 import { DraftPane } from '../../src/components/DraftPane'
 
 function deferred<T>() {
@@ -34,6 +38,71 @@ const editor = {
     },
   }],
   getShapePageBounds: () => ({ x: 0, y: 0, w: 240, h: 120 }),
+} as unknown as Editor
+
+const visualEditor = {
+  getCurrentPageShapes: () => [
+    {
+      id: 'shape:prose-before',
+      type: 'card',
+      props: {
+        kind: 'prose',
+        noteKind: null,
+        text: 'Before the visual.',
+        mergedInto: null,
+        draftExcluded: false,
+        comments: [],
+      },
+    },
+    {
+      id: 'shape:figure',
+      type: 'card',
+      props: {
+        kind: 'figure',
+        noteKind: null,
+        text: 'Show the loop.',
+        figureTitle: 'Loop diagram',
+        figureStatus: 'sketched',
+        mergedInto: null,
+        draftExcluded: false,
+        comments: [],
+      },
+    },
+    {
+      id: 'shape:image',
+      type: 'card',
+      props: {
+        kind: 'note',
+        noteKind: 'image',
+        text: '',
+        assetId: 'loop.png',
+        mergedInto: null,
+        draftExcluded: false,
+        comments: [],
+      },
+    },
+    {
+      id: 'shape:prose-after',
+      type: 'card',
+      props: {
+        kind: 'prose',
+        noteKind: null,
+        text: 'After the visual.',
+        mergedInto: null,
+        draftExcluded: false,
+        comments: [],
+      },
+    },
+  ],
+  getShapePageBounds: (id: string) => {
+    const y: Record<string, number> = {
+      'shape:prose-before': 0,
+      'shape:figure': 100,
+      'shape:image': 200,
+      'shape:prose-after': 300,
+    }
+    return { x: 0, y: y[id] ?? 0, w: 240, h: 120 }
+  },
 } as unknown as Editor
 
 type Harness = { container: HTMLDivElement; root: Root }
@@ -204,4 +273,42 @@ test('unmount clears reset timers and invalidates pending clipboard completion',
     await pending.promise
   })
   expect(vi.getTimerCount()).toBe(0)
+})
+
+test('renders figures and images between prose in draft order', () => {
+  const renderer = render(createElement(DraftPane, {
+    editor: visualEditor,
+    onSelectCard: vi.fn(),
+  }))
+
+  const bodyText = renderer.container.querySelector('.elves-draft__body')?.textContent ?? ''
+  expect(bodyText).toContain('Before the visual.')
+  expect(bodyText.indexOf('Before the visual.')).toBeLessThan(bodyText.indexOf('Loop diagram'))
+  expect(bodyText.indexOf('Loop diagram')).toBeLessThan(bodyText.indexOf('sketched'))
+  expect(bodyText.indexOf('sketched')).toBeLessThan(bodyText.indexOf('Show the loop.'))
+  expect(bodyText.indexOf('Show the loop.')).toBeLessThan(bodyText.indexOf('After the visual.'))
+
+  const image = renderer.container.querySelector<HTMLImageElement>('[data-testid="draft-image"]')
+  expect(image?.src).toContain('/assets/loop.png')
+
+  unmount(renderer)
+})
+
+test('copy-as-Markdown includes figures and images in draft order', async () => {
+  const writeText = vi.fn(async () => {})
+  vi.stubGlobal('navigator', { clipboard: { writeText } })
+  const renderer = render(createElement(DraftPane, {
+    editor: visualEditor,
+    onSelectCard: vi.fn(),
+  }))
+
+  await act(async () => { copyButton(renderer).click() })
+
+  expect(writeText).toHaveBeenCalledWith(
+    'Before the visual.\n\n' +
+    '[Figure: Loop diagram]\n\nStatus: sketched\n\nShow the loop.\n\n' +
+    '![Image](loop.png)\n\nAfter the visual.',
+  )
+
+  unmount(renderer)
 })

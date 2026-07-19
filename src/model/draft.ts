@@ -1,4 +1,4 @@
-import type { CardKind } from './types'
+import type { CardKind, FigureStatus, NoteKind } from './types'
 import type { SectionAuthor } from './sections'
 
 /**
@@ -20,12 +20,16 @@ import type { SectionAuthor } from './sections'
 export interface DraftCardInput {
   id: string
   kind: CardKind
+  noteKind?: NoteKind | null
   /** Page-space top-left. */
   x: number
   y: number
   w: number
   h: number
   text: string
+  assetId?: string | null
+  figureTitle?: string
+  figureStatus?: FigureStatus | null
   /** A merged-away card is hidden on the canvas and never compiles. */
   mergedInto: string | null
   /** The user opted this card out of the linear draft. */
@@ -48,11 +52,28 @@ export interface DraftSectionInput {
 }
 
 export interface DraftBlockCard {
+  type: 'prose'
   id: string
   text: string
   /** Present only when passed on the input (pane path); omitted otherwise. */
   unresolvedComments?: number
 }
+
+export interface DraftBlockFigure {
+  type: 'figure'
+  id: string
+  title: string
+  description: string
+  status: FigureStatus | null
+}
+
+export interface DraftBlockImage {
+  type: 'image'
+  id: string
+  assetId: string
+}
+
+export type DraftItem = DraftBlockCard | DraftBlockFigure | DraftBlockImage
 
 /** One heading + its paragraphs, in reading order. */
 export interface DraftBlock {
@@ -62,12 +83,15 @@ export interface DraftBlock {
   section: string | null
   /** Heading author — drives the pane's agent-accent labels; null when opening. */
   authoredBy: SectionAuthor | null
-  cards: DraftBlockCard[]
+  items: DraftItem[]
 }
 
-/** A card compiles into the draft only if it's prose the user hasn't hidden. */
+/** A card compiles into the draft only if it is readable draft material the user hasn't hidden. */
 export function compilesToDraft(card: DraftCardInput): boolean {
-  return card.kind === 'prose' && !card.mergedInto && !card.draftExcluded
+  if (card.mergedInto || card.draftExcluded) return false
+  if (card.kind === 'prose') return true
+  if (card.kind === 'figure') return true
+  return card.kind === 'note' && card.noteKind === 'image' && !!card.assetId
 }
 
 function centerX(c: DraftCardInput): number {
@@ -85,8 +109,24 @@ function byReadingOrder(a: DraftCardInput, b: DraftCardInput): number {
 
 function toBlockCard(c: DraftCardInput): DraftBlockCard {
   return c.unresolvedComments === undefined
-    ? { id: c.id, text: c.text }
-    : { id: c.id, text: c.text, unresolvedComments: c.unresolvedComments }
+    ? { type: 'prose', id: c.id, text: c.text }
+    : { type: 'prose', id: c.id, text: c.text, unresolvedComments: c.unresolvedComments }
+}
+
+function toDraftItem(c: DraftCardInput): DraftItem {
+  if (c.kind === 'figure') {
+    return {
+      type: 'figure',
+      id: c.id,
+      title: c.figureTitle ?? '',
+      description: c.text,
+      status: c.figureStatus ?? null,
+    }
+  }
+  if (c.kind === 'note' && c.noteKind === 'image' && c.assetId) {
+    return { type: 'image', id: c.id, assetId: c.assetId }
+  }
+  return toBlockCard(c)
 }
 
 /**
@@ -129,7 +169,7 @@ export function compileDraft(
       sectionId: null,
       section: null,
       authoredBy: null,
-      cards: opening.sort(byReadingOrder).map(toBlockCard),
+      items: opening.sort(byReadingOrder).map(toDraftItem),
     })
   }
   sorted.forEach((s, i) => {
@@ -139,23 +179,39 @@ export function compileDraft(
       sectionId: s.id,
       section: s.text,
       authoredBy: s.authoredBy,
-      cards: inBand.sort(byReadingOrder).map(toBlockCard),
+      items: inBand.sort(byReadingOrder).map(toDraftItem),
     })
   })
   return blocks
 }
 
-/** The `read_draft` MCP / server shape: heading text + `{ id, text }` per card. */
+/** The `read_draft` MCP / server shape: heading text + typed draft items. */
 export interface ReadDraftBlock {
   section: string | null
-  cards: { id: string; text: string }[]
+  items: Array<
+    | { type: 'prose'; id: string; text: string }
+    | { type: 'figure'; id: string; title: string; description: string; status: FigureStatus | null }
+    | { type: 'image'; id: string; assetId: string }
+  >
 }
 
 /** Project rich blocks down to the read-only tool contract (no comment counts). */
 export function toReadDraftBlocks(blocks: DraftBlock[]): ReadDraftBlock[] {
   return blocks.map((b) => ({
     section: b.section,
-    cards: b.cards.map((c) => ({ id: c.id, text: c.text })),
+    items: b.items.map((item) => {
+      if (item.type === 'prose') return { type: 'prose', id: item.id, text: item.text }
+      if (item.type === 'figure') {
+        return {
+          type: 'figure',
+          id: item.id,
+          title: item.title,
+          description: item.description,
+          status: item.status,
+        }
+      }
+      return { type: 'image', id: item.id, assetId: item.assetId }
+    }),
   }))
 }
 
@@ -168,16 +224,30 @@ export function toReadDraftBlocks(blocks: DraftBlock[]): ReadDraftBlock[] {
 export function draftToMarkdown(blocks: DraftBlock[]): string {
   const chunks: string[] = []
   for (const block of blocks) {
-    const paras = block.cards.map((c) => c.text.trim()).filter((t) => t.length > 0)
+    const parts: string[] = []
+    for (const item of block.items) {
+      if (item.type === 'prose') {
+        const text = item.text.trim()
+        if (text) parts.push(text)
+      } else if (item.type === 'figure') {
+        const figureParts = [`[Figure: ${item.title.trim() || 'Untitled figure'}]`]
+        if (item.status) figureParts.push(`Status: ${item.status}`)
+        const description = item.description.trim()
+        if (description) figureParts.push(description)
+        parts.push(figureParts.join('\n\n'))
+      } else {
+        parts.push(`![Image](${item.assetId})`)
+      }
+    }
     // A heading with no prose beneath it is noise in an exported draft — drop the
     // whole block (opening or labeled) once it has no non-empty paragraphs.
-    if (paras.length === 0) continue
-    const parts: string[] = []
+    if (parts.length === 0) continue
+    const blockParts: string[] = []
     if (block.section !== null && block.section.trim().length > 0) {
-      parts.push(`## ${block.section.trim()}`)
+      blockParts.push(`## ${block.section.trim()}`)
     }
-    parts.push(...paras)
-    if (parts.length) chunks.push(parts.join('\n\n'))
+    blockParts.push(...parts)
+    if (blockParts.length) chunks.push(blockParts.join('\n\n'))
   }
   return chunks.join('\n\n')
 }

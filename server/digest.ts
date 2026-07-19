@@ -349,10 +349,10 @@ export function snapshotToCanvasDigest(snapshot: CanvasSnapshot, assetsDir?: str
 }
 
 /**
- * Compile the canvas into the LINEAR DRAFT — ordered blocks of `{ section,
- * cards: [{ id, text }] }`, reusing the same pure `compileDraft` the client pane
- * uses so `read_draft` and the pane can never disagree about reading order. This
- * is what surfaces the top-to-bottom-within-sections convention to the agent, which
+ * Compile the canvas into the LINEAR DRAFT — ordered blocks of typed draft
+ * items, reusing the same pure `compileDraft` the client pane uses so
+ * `read_draft` and the pane can never disagree about reading order. This is
+ * what surfaces the top-to-bottom-within-sections convention to the agent, which
  * the position-only map can't. Read-only: no prose-boundary implications.
  */
 export function snapshotToDraft(snapshot: CanvasSnapshot): ReadDraftBlock[] {
@@ -360,10 +360,14 @@ export function snapshotToDraft(snapshot: CanvasSnapshot): ReadDraftBlock[] {
   const cards: DraftCardInput[] = cardShapes(snapshot).map((r: any) => ({
     id: r.id,
     kind: r.props.kind,
+    noteKind: r.props.noteKind ?? null,
     ...resolvePageXY(store, r),
     w: r.props.w ?? 0,
     h: r.props.h ?? 0,
     text: r.props.text ?? '',
+    assetId: r.props.assetId ?? null,
+    figureTitle: r.props.figureTitle ?? '',
+    figureStatus: r.props.figureStatus ?? null,
     mergedInto: r.props.mergedInto ?? null,
     draftExcluded: r.props.draftExcluded ?? false,
   }))

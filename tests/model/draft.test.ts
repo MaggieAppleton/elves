@@ -26,7 +26,7 @@ function section(id: string, x: number, over: Partial<DraftSectionInput> = {}): 
 
 // The ids of every card, block by block — the reading order, compactly.
 function order(blocks: ReturnType<typeof compileDraft>): (string | null)[][] {
-  return blocks.map((b) => [b.sectionId, ...b.cards.map((c) => c.id)])
+  return blocks.map((b) => [b.sectionId, ...b.items.map((c) => c.id)])
 }
 
 describe('compileDraft — band assignment', () => {
@@ -104,6 +104,33 @@ describe('compileDraft — band assignment', () => {
     ]
     expect(order(compileDraft(cards, []))).toEqual([[null, 'first', 'second']])
   })
+
+  test('prose, figures, and images share the same top-to-bottom order inside a section', () => {
+    const sections = [section('A', 0)]
+    const cards = [
+      card({ id: 'after', x: 10, y: 300, text: 'after visual' }),
+      card({
+        id: 'figure',
+        kind: 'figure',
+        x: 10,
+        y: 100,
+        text: 'Show the feedback loop.',
+        figureTitle: 'Feedback loop',
+        figureStatus: 'sketched',
+      }),
+      card({
+        id: 'image',
+        kind: 'note',
+        noteKind: 'image',
+        x: 10,
+        y: 200,
+        text: '',
+        assetId: 'diagram.png',
+      }),
+      card({ id: 'before', x: 10, y: 0, text: 'before visual' }),
+    ]
+    expect(order(compileDraft(cards, sections))).toEqual([['A', 'before', 'figure', 'image', 'after']])
+  })
 })
 
 describe('compileDraft — what is skipped', () => {
@@ -121,6 +148,8 @@ describe('compileDraft — what is skipped', () => {
   test('compilesToDraft is the single source of truth for the filter', () => {
     expect(compilesToDraft(card({ id: 'p' }))).toBe(true)
     expect(compilesToDraft(card({ id: 'n', kind: 'note' }))).toBe(false)
+    expect(compilesToDraft(card({ id: 'i', kind: 'note', noteKind: 'image', assetId: 'i.png' }))).toBe(true)
+    expect(compilesToDraft(card({ id: 'f', kind: 'figure', figureTitle: 'F' }))).toBe(true)
     expect(compilesToDraft(card({ id: 'm', mergedInto: 'x' }))).toBe(false)
     expect(compilesToDraft(card({ id: 'e', draftExcluded: true }))).toBe(false)
   })
@@ -141,25 +170,58 @@ describe('compileDraft — carried metadata', () => {
       card({ id: 'clean', x: 10, y: 100 }),
     ]
     const [block] = compileDraft(cards, sections)
-    expect(block.cards[0]).toEqual({ id: 'flagged', text: 'flagged', unresolvedComments: 2 })
-    expect(block.cards[1]).toEqual({ id: 'clean', text: 'clean' })
-    expect('unresolvedComments' in block.cards[1]).toBe(false)
+    expect(block.items[0]).toEqual({ type: 'prose', id: 'flagged', text: 'flagged', unresolvedComments: 2 })
+    expect(block.items[1]).toEqual({ type: 'prose', id: 'clean', text: 'clean' })
+    expect('unresolvedComments' in block.items[1]).toBe(false)
   })
 })
 
 describe('toReadDraftBlocks — the MCP contract', () => {
-  test('projects blocks down to { section, cards: [{ id, text }] }, dropping counts', () => {
+  test('projects blocks down to ordered typed items, dropping pane-only counts', () => {
     const sections = [section('A', 0, { text: 'Origins' })]
-    const cards = [card({ id: 'a1', x: 10, text: 'a real point', unresolvedComments: 3 })]
+    const cards = [
+      card({ id: 'a1', x: 10, y: 0, text: 'a real point', unresolvedComments: 3 }),
+      card({
+        id: 'fig',
+        kind: 'figure',
+        x: 10,
+        y: 100,
+        text: 'Show the shape.',
+        figureTitle: 'Shape',
+        figureStatus: 'final',
+      }),
+      card({
+        id: 'img',
+        kind: 'note',
+        noteKind: 'image',
+        x: 10,
+        y: 200,
+        text: '',
+        assetId: 'shape.png',
+      }),
+    ]
     const blocks = compileDraft(cards, sections)
     expect(toReadDraftBlocks(blocks)).toEqual([
-      { section: 'Origins', cards: [{ id: 'a1', text: 'a real point' }] },
+      {
+        section: 'Origins',
+        items: [
+          { type: 'prose', id: 'a1', text: 'a real point' },
+          {
+            type: 'figure',
+            id: 'fig',
+            title: 'Shape',
+            description: 'Show the shape.',
+            status: 'final',
+          },
+          { type: 'image', id: 'img', assetId: 'shape.png' },
+        ],
+      },
     ])
   })
 
   test('the opening block reports section: null', () => {
     const blocks = compileDraft([card({ id: 'intro', x: 0, text: 'hi' })], [])
-    expect(toReadDraftBlocks(blocks)).toEqual([{ section: null, cards: [{ id: 'intro', text: 'hi' }] }])
+    expect(toReadDraftBlocks(blocks)).toEqual([{ section: null, items: [{ type: 'prose', id: 'intro', text: 'hi' }] }])
   })
 })
 
@@ -184,5 +246,36 @@ describe('draftToMarkdown', () => {
       card({ id: 'blank', x: 1010, text: '   ' }), // only card in B, blank
     ]
     expect(draftToMarkdown(compileDraft(cards, sections))).toBe('## A\n\nkept')
+  })
+
+  test('figures and images export in narrative order with surrounding prose', () => {
+    const sections = [section('A', 0, { text: 'Results' })]
+    const cards = [
+      card({ id: 'before', x: 10, y: 0, text: 'Before.' }),
+      card({
+        id: 'fig',
+        kind: 'figure',
+        x: 10,
+        y: 100,
+        text: 'Show the loop.',
+        figureTitle: 'Loop diagram',
+        figureStatus: 'idea',
+      }),
+      card({
+        id: 'img',
+        kind: 'note',
+        noteKind: 'image',
+        x: 10,
+        y: 200,
+        text: '',
+        assetId: 'loop.png',
+      }),
+      card({ id: 'after', x: 10, y: 300, text: 'After.' }),
+    ]
+    expect(draftToMarkdown(compileDraft(cards, sections))).toBe(
+      '## Results\n\nBefore.\n\n' +
+      '[Figure: Loop diagram]\n\nStatus: idea\n\nShow the loop.\n\n' +
+      '![Image](loop.png)\n\nAfter.',
+    )
   })
 })

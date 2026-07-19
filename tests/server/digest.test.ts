@@ -411,8 +411,14 @@ test('snapshotToDraft compiles ordered blocks, skips merged/excluded, and uses P
     session: null,
   }
   expect(snapshotToDraft(snap)).toEqual([
-    { section: 'Origins', cards: [{ id: 'o2', text: 'Origins upper.' }, { id: 'o1', text: 'Origins lower.' }] },
-    { section: 'The turn', cards: [{ id: 't1', text: 'The turn.' }] },
+    {
+      section: 'Origins',
+      items: [
+        { type: 'prose', id: 'o2', text: 'Origins upper.' },
+        { type: 'prose', id: 'o1', text: 'Origins lower.' },
+      ],
+    },
+    { section: 'The turn', items: [{ type: 'prose', id: 't1', text: 'The turn.' }] },
   ])
 })
 

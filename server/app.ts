@@ -679,9 +679,9 @@ export function createServer(
     }),
   )
 
-  // The linear draft: the canvas compiled into ordered blocks
-  // ({ section, cards: [{ id, text }] }) in true narrative order — sections
-  // left→right, cards top→bottom within each. Read-only; powers `read_draft`.
+  // The linear draft: the canvas compiled into ordered blocks of typed items in
+  // true narrative order — sections left→right, cards top→bottom within each.
+  // Read-only; powers `read_draft`.
   app.get(
     '/projects/:id/draft',
     wrap(async (req, res) => {

@@ -244,7 +244,7 @@ test('race helper releases its held lock and drains HTTP when queue setup fails'
 
 // A minimal card shape record for canvas fixtures; override props as needed.
 function mk(
-  id: string, kind: 'prose' | 'note', x: number, y: number, text: string,
+  id: string, kind: 'prose' | 'note' | 'figure', x: number, y: number, text: string,
   props: Record<string, unknown> = {},
 ) {
   return {
@@ -334,6 +334,14 @@ test('GET /draft compiles the canvas into ordered narrative blocks', async () =>
         'shape:intro': mk('shape:intro', 'prose', -400, 0, 'An opening thought.'),
         'shape:o1': mk('shape:o1', 'prose', 60, 300, 'Origins, lower.'),
         'shape:o2': mk('shape:o2', 'prose', 200, 0, 'Origins, upper.'),
+        'shape:fig': mk('shape:fig', 'figure', 60, 160, 'Show the transition.', {
+          figureTitle: 'Transition figure',
+          figureStatus: 'final',
+        }),
+        'shape:image': mk('shape:image', 'note', 60, 220, '', {
+          noteKind: 'image',
+          assetId: 'transition.png',
+        }),
         'shape:t1': mk('shape:t1', 'prose', 1060, 0, 'The turn.'),
         'shape:excluded': mk('shape:excluded', 'prose', 60, 600, 'left out', { draftExcluded: true }),
         'shape:sOrigins': { id: 'shape:sOrigins', typeName: 'shape', type: 'section', x: 0, y: -100, props: { w: 320, h: 72, text: 'Origins', authoredBy: 'user' } },
@@ -347,12 +355,20 @@ test('GET /draft compiles the canvas into ordered narrative blocks', async () =>
   expect(res.status).toBe(200)
   expect(res.body).toEqual({
     blocks: [
-      { section: null, cards: [{ id: 'shape:intro', text: 'An opening thought.' }] },
-      { section: 'Origins', cards: [
-        { id: 'shape:o2', text: 'Origins, upper.' }, // upper first, though further right
-        { id: 'shape:o1', text: 'Origins, lower.' },
+      { section: null, items: [{ type: 'prose', id: 'shape:intro', text: 'An opening thought.' }] },
+      { section: 'Origins', items: [
+        { type: 'prose', id: 'shape:o2', text: 'Origins, upper.' }, // upper first, though further right
+        {
+          type: 'figure',
+          id: 'shape:fig',
+          title: 'Transition figure',
+          description: 'Show the transition.',
+          status: 'final',
+        },
+        { type: 'image', id: 'shape:image', assetId: 'transition.png' },
+        { type: 'prose', id: 'shape:o1', text: 'Origins, lower.' },
       ] },
-      { section: 'The turn', cards: [{ id: 'shape:t1', text: 'The turn.' }] },
+      { section: 'The turn', items: [{ type: 'prose', id: 'shape:t1', text: 'The turn.' }] },
     ],
   })
 })

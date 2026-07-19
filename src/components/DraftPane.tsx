@@ -7,6 +7,7 @@ import { reattribute, USER_AUTHOR } from '../model/attribution'
 import {
   compileDraft, draftToMarkdown, type DraftBlock, type DraftCardInput, type DraftSectionInput,
 } from '../model/draft'
+import { assetUrl } from '../client/assets'
 import './draft.css'
 
 /**
@@ -47,8 +48,12 @@ export function DraftPane({
           cards.push({
             id: shape.id,
             kind: p.kind,
+            noteKind: p.noteKind,
             x: bounds.x, y: bounds.y, w: bounds.w, h: bounds.h,
             text: p.text,
+            assetId: p.assetId,
+            figureTitle: p.figureTitle,
+            figureStatus: p.figureStatus,
             mergedInto: p.mergedInto,
             draftExcluded: p.draftExcluded,
             unresolvedComments: visibleComments(p.comments).length,
@@ -147,46 +152,73 @@ export function DraftPane({
                     {block.section}
                   </h2>
                 )}
-                {block.cards.map((card) =>
-                  !readOnly && editor && editingId === card.id ? (
+                {block.items.map((item) => {
+                  if (item.type === 'figure') {
+                    return (
+                      <figure key={item.id} className="elves-draft__figure" data-testid="draft-figure">
+                        <figcaption className="elves-draft__figure-title">
+                          {item.title.trim() || 'Untitled figure'}
+                          {item.status ? (
+                            <span className="elves-draft__figure-status">{item.status}</span>
+                          ) : null}
+                        </figcaption>
+                        {item.description.trim() ? (
+                          <p className="elves-draft__figure-desc">{item.description}</p>
+                        ) : null}
+                      </figure>
+                    )
+                  }
+                  if (item.type === 'image') {
+                    return (
+                      <figure key={item.id} className="elves-draft__image-wrap" data-testid="draft-image-block">
+                        <img
+                          className="elves-draft__image"
+                          data-testid="draft-image"
+                          src={assetUrl(item.assetId)}
+                          alt=""
+                        />
+                      </figure>
+                    )
+                  }
+                  return !readOnly && editor && editingId === item.id ? (
                     <ProseEditor
-                      key={card.id}
+                      key={item.id}
                       editor={editor}
-                      cardId={card.id}
-                      initialText={card.text}
+                      cardId={item.id}
+                      initialText={item.text}
                       onDone={() => setEditingId(null)}
                     />
                   ) : (
                     <p
-                      key={card.id}
-                      className={`elves-draft__para${card.text.trim() ? '' : ' elves-draft__para--empty'}`}
+                      key={item.id}
+                      className={`elves-draft__para${item.text.trim() ? '' : ' elves-draft__para--empty'}`}
                       data-testid="draft-para"
                       role="button"
                       aria-disabled={readOnly}
                       tabIndex={readOnly ? -1 : 0}
                       title={readOnly ? 'Draft editing is temporarily unavailable' : 'Click to edit — updates the card on the canvas'}
-                      onClick={() => startEditing(card.id)}
+                      onClick={() => startEditing(item.id)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault()
-                          startEditing(card.id)
+                          startEditing(item.id)
                         }
                       }}
                     >
-                      {card.text.trim() ? card.text : 'Empty card'}
-                      {card.unresolvedComments ? (
+                      {item.text.trim() ? item.text : 'Empty card'}
+                      {item.unresolvedComments ? (
                         <span
                           className="elves-draft__comments"
                           data-testid="draft-comment-marker"
-                          title={`${card.unresolvedComments} unresolved comment${card.unresolvedComments === 1 ? '' : 's'}`}
-                          aria-label={`${card.unresolvedComments} unresolved comments`}
+                          title={`${item.unresolvedComments} unresolved comment${item.unresolvedComments === 1 ? '' : 's'}`}
+                          aria-label={`${item.unresolvedComments} unresolved comments`}
                         >
-                          {card.unresolvedComments}
+                          {item.unresolvedComments}
                         </span>
                       ) : null}
                     </p>
-                  ),
-                )}
+                  )
+                })}
               </section>
             ))}
           </article>
