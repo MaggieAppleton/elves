@@ -69,6 +69,22 @@ export function normalizeAuthor(raw: string): string {
   return a
 }
 
+/**
+ * Extract and clean the tweet body from an X oEmbed response's `html` field
+ * — a `<blockquote>` whose first `<p>` holds the tweet text. Strips inner
+ * tags (keeping a linked url's visible text), decodes entities, and trims a
+ * trailing `pic.twitter.com/...` media stub since it's a dead link once
+ * rendered as plain text.
+ */
+export function parseOEmbedTweetText(html: string): string | null {
+  const p = html.match(/<p[^>]*>([\s\S]*?)<\/p>/i)
+  if (!p) return null
+  const withoutTags = p[1].replace(/<[^>]+>/g, '')
+  const decoded = decodeEntities(withoutTags).replace(/\s+/g, ' ').trim()
+  const withoutMediaStub = decoded.replace(/\s*pic\.twitter\.com\/\S+$/i, '').trim()
+  return withoutMediaStub || null
+}
+
 export interface ParsedMeta {
   refType: RefType
   title: string | null

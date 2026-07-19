@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import {
-  parseMetadata, decodeEntities, normalizeAuthor, unfurl, minimalReference,
+  parseMetadata, decodeEntities, normalizeAuthor, unfurl, minimalReference, parseOEmbedTweetText,
   type UnfurlDeps,
 } from '../../server/unfurl'
 
@@ -44,6 +44,22 @@ describe('normalizeAuthor', () => {
   test('flips "Last, First" and leaves plain names', () => {
     expect(normalizeAuthor('Cao, Ruanqianqian')).toBe('Ruanqianqian Cao')
     expect(normalizeAuthor('Andy Matuschak')).toBe('Andy Matuschak')
+  })
+})
+
+describe('parseOEmbedTweetText', () => {
+  test('strips the blockquote wrapper and decodes entities', () => {
+    const html = '<blockquote class="twitter-tweet"><p lang="en" dir="ltr">Shipping a new feature today &amp; feeling good about it</p>&mdash; Maggie Appleton (@Mappletons) <a href="https://twitter.com/Mappletons/status/1234567890">July 15, 2026</a></blockquote>'
+    expect(parseOEmbedTweetText(html)).toBe('Shipping a new feature today & feeling good about it')
+  })
+
+  test("keeps a real link's visible text but drops a trailing media stub", () => {
+    const html = '<blockquote class="twitter-tweet"><p lang="en" dir="ltr">New post is up: <a href="https://t.co/xyz789">example.com/my-post</a> <a href="https://t.co/abc123">pic.twitter.com/abc123</a></p>&mdash; Jane Doe (@janedoe) <a href="https://twitter.com/janedoe/status/999">June 1, 2026</a></blockquote>'
+    expect(parseOEmbedTweetText(html)).toBe('New post is up: example.com/my-post')
+  })
+
+  test('returns null when there is no <p> tag to extract', () => {
+    expect(parseOEmbedTweetText('<blockquote class="twitter-tweet">no paragraph here</blockquote>')).toBeNull()
   })
 })
 
