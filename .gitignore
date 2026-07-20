@@ -6,6 +6,7 @@ playwright-report
 test-results
 .claude
 .playwright-mcp
+.worktrees
 .env
 !.env.example
 .DS_Store
