@@ -226,6 +226,11 @@ describe('toReadDraftBlocks — the MCP contract', () => {
 })
 
 describe('draftToMarkdown', () => {
+  test('preserves inline Markdown links in prose verbatim', () => {
+    const source = 'Read [Maggie](https://maggieappleton.com).'
+    expect(draftToMarkdown(compileDraft([card({ id: 'linked', text: source })], []))).toBe(source)
+  })
+
   test('## headings + blank-line-separated paragraphs, opening block unlabeled', () => {
     const sections = [section('A', 500, { text: 'Origins' })]
     const cards = [
