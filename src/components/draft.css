@@ -103,10 +103,14 @@
   z-index: 0;
   display: block;
   width: 100%;
+  height: 100%;
   padding: 0;
   border: 0;
   background: transparent;
   cursor: text;
+}
+.elves-draft__edit-target:focus-visible {
+  outline: none;
 }
 
 .elves-draft__para {
