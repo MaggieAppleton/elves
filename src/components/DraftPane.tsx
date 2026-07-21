@@ -8,6 +8,7 @@ import {
   compileDraft, draftToMarkdown, type DraftBlock, type DraftCardInput, type DraftSectionInput,
 } from '../model/draft'
 import { assetUrl } from '../client/assets'
+import { tokenizeInlineMarkdown } from './inlineMarkdown'
 import './draft.css'
 
 /**
@@ -189,34 +190,14 @@ export function DraftPane({
                       onDone={() => setEditingId(null)}
                     />
                   ) : (
-                    <p
+                    <DraftProse
                       key={item.id}
-                      className={`elves-draft__para${item.text.trim() ? '' : ' elves-draft__para--empty'}`}
-                      data-testid="draft-para"
-                      role="button"
-                      aria-disabled={readOnly}
-                      tabIndex={readOnly ? -1 : 0}
-                      title={readOnly ? 'Draft editing is temporarily unavailable' : 'Click to edit — updates the card on the canvas'}
-                      onClick={() => startEditing(item.id)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault()
-                          startEditing(item.id)
-                        }
-                      }}
-                    >
-                      {item.text.trim() ? item.text : 'Empty card'}
-                      {item.unresolvedComments ? (
-                        <span
-                          className="elves-draft__comments"
-                          data-testid="draft-comment-marker"
-                          title={`${item.unresolvedComments} unresolved comment${item.unresolvedComments === 1 ? '' : 's'}`}
-                          aria-label={`${item.unresolvedComments} unresolved comments`}
-                        >
-                          {item.unresolvedComments}
-                        </span>
-                      ) : null}
-                    </p>
+                      cardId={item.id}
+                      text={item.text}
+                      unresolvedComments={item.unresolvedComments}
+                      readOnly={readOnly}
+                      onEdit={startEditing}
+                    />
                   )
                 })}
               </section>
@@ -224,6 +205,67 @@ export function DraftPane({
           </article>
         )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * Reading-mode prose keeps navigation and editing as sibling interactions:
+ * anchors remain real links, while a separate native button opens raw Markdown.
+ */
+function DraftProse({
+  cardId,
+  text,
+  unresolvedComments,
+  readOnly,
+  onEdit,
+}: {
+  cardId: string
+  text: string
+  unresolvedComments?: number
+  readOnly: boolean
+  onEdit: (cardId: string) => void
+}) {
+  const empty = !text.trim()
+  return (
+    <div
+      className={`elves-draft__prose-row${empty ? ' elves-draft__prose-row--empty' : ''}${readOnly ? ' elves-draft__prose-row--read-only' : ''}`}
+      data-testid="draft-para"
+    >
+      {!readOnly ? (
+        <button
+          type="button"
+          className="elves-draft__edit-target"
+          aria-label="Edit paragraph"
+          title="Click to edit — updates the card on the canvas"
+          onClick={() => onEdit(cardId)}
+        />
+      ) : null}
+      <p className="elves-draft__para">
+        {empty ? 'Empty card' : tokenizeInlineMarkdown(text).map((token, index) => (
+          token.type === 'text' ? token.value : (
+            <a
+              key={`${token.href}-${index}`}
+              className="elves-draft__link"
+              href={token.href}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {token.label}
+            </a>
+          )
+        ))}
+        {unresolvedComments ? (
+          <span
+            className="elves-draft__comments"
+            data-testid="draft-comment-marker"
+            title={`${unresolvedComments} unresolved comment${unresolvedComments === 1 ? '' : 's'}`}
+            aria-label={`${unresolvedComments} unresolved comments`}
+          >
+            {unresolvedComments}
+          </span>
+        ) : null}
+      </p>
     </div>
   )
 }
