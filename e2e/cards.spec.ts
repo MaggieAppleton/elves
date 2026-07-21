@@ -20,9 +20,12 @@ for (const card of [
     // than being pushed below this obstacle and down the rest of its lane.
     await page.getByTestId('new-prose').click()
     await page.keyboard.press('Escape')
+    const cards = page.locator(card.selector)
+    const previousCount = await cards.count()
     await page.getByTestId(card.button).click()
 
-    const created = page.locator(card.selector).last()
+    await expect(cards).toHaveCount(previousCount + 1)
+    const created = cards.nth(previousCount)
     await expect(created).toBeVisible()
     const [canvasBox, cardBox] = await Promise.all([
       canvas.boundingBox(),

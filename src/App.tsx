@@ -5,7 +5,7 @@ import 'tldraw/tldraw.css'
 import './theme.css'
 import { CardShapeUtil, CardShape } from './shapes/CardShapeUtil'
 import { CardSelectionForeground } from './shapes/CardSelectionForeground'
-import { measuredCardHeight, measuredFigureHeight, PROSE_TEXT_MIN } from './shapes/autosize'
+import { measuredCardPropsHeight } from './shapes/autosize'
 import { cardIsHidden, collapseAll } from './shapes/mergeView'
 import { SectionShapeUtil, SectionShape } from './shapes/SectionShapeUtil'
 import { QuestionShapeUtil } from './shapes/QuestionShapeUtil'
@@ -646,15 +646,7 @@ export default function App() {
       kind === 'prose' ? makeProseCardProps()
       : kind === 'figure' ? makeFigureCardProps()
       : makeNoteCardProps()
-    props.h = kind === 'figure'
-      ? measuredFigureHeight(editor, props.figureTitle, props.text, props.w)
-      : measuredCardHeight(
-          editor,
-          props.text,
-          props.w,
-          true,
-          kind === 'prose' ? PROSE_TEXT_MIN : 0,
-        )
+    props.h = measuredCardPropsHeight(editor, props)
     const id = createShapeId()
     editor.createShape<CardShape>({
       id,
