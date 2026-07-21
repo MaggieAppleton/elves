@@ -98,6 +98,28 @@ test('copy as markdown writes the draft to the clipboard', async ({ page }) => {
   expect(clip).toContain('a sentence to copy')
 })
 
+test('Markdown links read like links while prose editing keeps the raw source', async ({ page }) => {
+  const source = 'Read [Maggie](https://maggieappleton.com).'
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  await addProse(page, source)
+  await page.getByTestId('draft-open').click()
+
+  const link = page.getByRole('link', { name: 'Maggie' })
+  await expect(link).toHaveAttribute('href', 'https://maggieappleton.com')
+
+  const prose = page.getByTestId('draft-para')
+  await prose.click({ position: { x: 2, y: 2 } })
+  const editor = page.getByTestId('draft-editor')
+  await expect(editor).toHaveValue(source)
+
+  await editor.press('Escape')
+  await page.getByTestId('draft-copy').click()
+  await expect(page.getByTestId('draft-copy')).toHaveText('Copied')
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(source)
+})
+
 test('the drawer chevrons step canvas → split → draft and back', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })

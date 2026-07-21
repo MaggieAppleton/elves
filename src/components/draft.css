@@ -5,7 +5,7 @@
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--elves-surface);
+  background: #fff;
   color: var(--elves-ink);
   font-family: var(--elves-card-font);
 }
@@ -21,7 +21,7 @@
   height: 46px;
   padding: 0 18px;
   border-bottom: 1px solid var(--elves-border-subtle);
-  background: var(--elves-surface);
+  background: #fff;
 }
 
 .elves-draft__label {
@@ -75,50 +75,76 @@
 .elves-draft__section + .elves-draft__section { margin-top: 4px; }
 
 .elves-draft__heading {
-  font-size: 15px;
+  font-size: 22px;
+  line-height: 1.25;
   font-weight: 650;
-  letter-spacing: 0.02em;
+  letter-spacing: -0.015em;
   color: var(--elves-ink);
-  margin: 34px 0 14px;
+  margin: 42px 0 18px;
   padding-bottom: 0;
 }
 .elves-draft__section:first-child .elves-draft__heading { margin-top: 4px; }
 /* Claude-authored labels carry the same warm orange as on the canvas. */
 .elves-draft__heading[data-authored-by="claude"] { color: var(--elves-claude-accent); }
 
-.elves-draft__para {
+.elves-draft__prose-row {
   position: relative;
   box-sizing: border-box;
-  /* Preserve the prose's own paragraph and line breaks, so the read state
-     matches the textarea exactly — an unselected card lays out identically to
-     the one being edited (no whitespace collapse). */
+  width: 100%;
+  margin: 0 0 15px;
+}
+
+/* A native button fills the prose row behind the text. Plain text lets pointer
+   events pass through to it; real links opt back in above it. The result reads
+   as one paragraph without nesting an anchor inside a button-like control. */
+.elves-draft__edit-target {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: text;
+}
+
+.elves-draft__para {
+  position: relative;
+  z-index: 1;
+  margin: 0;
   white-space: pre-wrap;
   font-size: 16px;
   line-height: 1.72;
   color: var(--elves-ink);
-  /* Bleed the box equally into both gutters so the hover/selected wash frames
-     the reading column rather than hugging the text. */
-  width: calc(100% + 24px);
-  margin: 0 0 15px -12px;
-  padding: 3px 12px;
-  border-radius: 7px;
-  /* Transparent 1px border reserves the same box the editor's border fills, so
-     nothing shifts when you click into edit. */
-  border: 1px solid transparent;
-  cursor: pointer;
-  transition: background-color 90ms ease, border-color 90ms ease;
+  pointer-events: none;
 }
-/* Hover: a faint neutral wash — the paragraph you're about to edit lifts off
-   the page without shouting an accent colour. */
-.elves-draft__para:hover {
-  background: var(--elves-surface-muted);
+
+.elves-draft__prose-row--read-only .elves-draft__para {
+  pointer-events: auto;
 }
-.elves-draft__para:focus-visible {
+
+.elves-draft__link {
+  pointer-events: auto;
+  color: inherit;
+  text-decoration-line: underline;
+  text-decoration-color: var(--elves-border-strong);
+  text-underline-offset: 0.16em;
+  text-decoration-thickness: 1px;
+}
+.elves-draft__link:hover {
+  text-decoration-color: currentColor;
+}
+.elves-draft__link:focus-visible {
   outline: none;
-  background: var(--elves-surface-muted);
-  box-shadow: 0 0 0 2px var(--elves-focus-ring);
+  box-shadow: 0 2px 0 var(--elves-focus-ring);
 }
-.elves-draft__para--empty {
+
+.elves-draft__prose-row:has(.elves-draft__edit-target:focus-visible) {
+  box-shadow: -2px 0 0 var(--elves-focus-ring);
+}
+
+.elves-draft__prose-row--empty .elves-draft__para {
   color: var(--elves-ink-faint);
   font-style: italic;
 }
@@ -129,13 +155,9 @@
   width: calc(100% + 24px);
   margin: 6px 0 18px -12px;
   padding: 14px 12px;
-  border: 1px solid var(--elves-border);
-  border-radius: 7px;
-  background: var(--elves-surface-muted);
-}
-
-.elves-draft__figure {
-  border-style: dashed;
+  border: 1px dashed var(--elves-border);
+  border-radius: 0;
+  background: transparent;
 }
 
 .elves-draft__figure-title {
@@ -174,34 +196,31 @@
   width: 100%;
   max-height: 420px;
   object-fit: contain;
-  border-radius: 5px;
-  background: var(--elves-surface);
+  border-radius: 0;
+  background: transparent;
 }
 
-/* The paragraph opened for editing: a textarea sharing the reading column's
-   exact type + box (font, line-height, equal bleed) so nothing shifts when you
-   click in. A slightly stronger neutral fill plus a soft border all round mark
-   it as the active card — the canvas twin of the selected prose card, muted
-   rather than accented. */
+/* Editing keeps the same geometry as reading. Only a slim focus rail marks the
+   active textarea; there is no card fill, outline, or rounded container. */
 .elves-draft__editor {
   display: block;
   box-sizing: border-box;
-  width: calc(100% + 24px);
-  margin: 0 0 15px -12px;
-  padding: 3px 12px;
+  width: 100%;
+  margin: 0 0 15px;
+  padding: 0;
   font-family: var(--elves-card-font);
   font-size: 16px;
   line-height: 1.72;
   color: var(--elves-ink);
-  background: var(--elves-tertiary);
-  border: 1px solid var(--elves-border-strong);
-  border-radius: 7px;
+  background: #fff;
+  border: 0;
+  border-radius: 0;
   resize: none;
   overflow: hidden;
   outline: none;
 }
 .elves-draft__editor:focus-visible {
-  box-shadow: 0 0 0 2px var(--elves-focus-ring);
+  box-shadow: -2px 0 0 var(--elves-focus-ring);
 }
 
 /* Unresolved-comment marker: a small count, no bodies (v1). */
@@ -235,6 +254,5 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .elves-draft__copy,
-  .elves-draft__para { transition: none; }
+  .elves-draft__copy { transition: none; }
 }
