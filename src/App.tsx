@@ -5,6 +5,7 @@ import 'tldraw/tldraw.css'
 import './theme.css'
 import { CardShapeUtil, CardShape } from './shapes/CardShapeUtil'
 import { CardSelectionForeground } from './shapes/CardSelectionForeground'
+import { measuredCardPropsHeight } from './shapes/autosize'
 import { cardIsHidden, collapseAll } from './shapes/mergeView'
 import { SectionShapeUtil, SectionShape } from './shapes/SectionShapeUtil'
 import { QuestionShapeUtil } from './shapes/QuestionShapeUtil'
@@ -14,7 +15,6 @@ import {
 } from './model/cards'
 import { makeSectionProps } from './model/sections'
 import { cascadeOffset } from './model/layout'
-import { clearCardPosition } from './client/canvasLayout'
 import { requestUnfurl } from './client/references'
 import {
   loadCanvasVersioned,
@@ -646,18 +646,13 @@ export default function App() {
       kind === 'prose' ? makeProseCardProps()
       : kind === 'figure' ? makeFigureCardProps()
       : makeNoteCardProps()
-    const at = clearCardPosition(editor, {
-      x: center.x - props.w / 2,
-      y: center.y - props.h / 2,
-      w: props.w,
-      h: props.h,
-    })
+    props.h = measuredCardPropsHeight(editor, props)
     const id = createShapeId()
     editor.createShape<CardShape>({
       id,
       type: 'card',
-      x: at.x,
-      y: at.y,
+      x: center.x - props.w / 2,
+      y: center.y - props.h / 2,
       props,
     })
     editor.select(id)

@@ -2,8 +2,13 @@ import { describe, it, expect } from 'vitest'
 import type { Editor } from 'tldraw'
 import type { Reference } from '../../src/model/types'
 import {
-  measuredCardHeight, measuredReferenceHeight, measuredSectionSize, fittedGistFontSize,
-  measuredQuestionHeight, fittedQuestionGistFontSize, measuredFigureHeight,
+  makeFigureCardProps, makeImageNoteCardProps, makeNoteCardProps, makeProseCardProps,
+  makeReferenceCardProps,
+} from '../../src/model/cards'
+import {
+  measuredCardHeight, measuredCardPropsHeight, measuredReferenceHeight, measuredSectionSize,
+  fittedGistFontSize, measuredQuestionHeight, fittedQuestionGistFontSize, measuredFigureHeight,
+  PROSE_TEXT_MIN,
 } from '../../src/shapes/autosize'
 
 function ref(overrides: Partial<Reference> = {}): Reference {
@@ -117,6 +122,53 @@ describe('measuredFigureHeight', () => {
     const extraLine = 15 * 1.3
     expect(withClearance - oneLine).toBeGreaterThanOrEqual(Math.floor(extraLine))
     expect(withClearance - oneLine).toBeLessThanOrEqual(Math.ceil(extraLine))
+  })
+})
+
+describe('measuredCardPropsHeight', () => {
+  it('dispatches text prose and note cards with their distinct minimums', () => {
+    const { editor } = fakeEditor()
+    const prose = makeProseCardProps('a short paragraph')
+    const note = makeNoteCardProps('a short paragraph')
+
+    expect(measuredCardPropsHeight(editor, prose)).toBe(
+      measuredCardHeight(editor, prose.text, prose.w, true, PROSE_TEXT_MIN),
+    )
+    expect(measuredCardPropsHeight(editor, note)).toBe(
+      measuredCardHeight(editor, note.text, note.w, true, 0),
+    )
+  })
+
+  it('dispatches figure and reference cards to their specialised measurements', () => {
+    const { editor } = fakeEditor()
+    const figure = makeFigureCardProps('A title', 'A description')
+    const reference = makeReferenceCardProps(ref({ title: 'Reference title' }))
+
+    expect(measuredCardPropsHeight(editor, figure)).toBe(
+      measuredFigureHeight(editor, figure.figureTitle, figure.text, figure.w),
+    )
+    expect(measuredCardPropsHeight(editor, reference)).toBe(
+      measuredReferenceHeight(editor, reference.reference!, reference.text, reference.w),
+    )
+  })
+
+  it('preserves image height without measuring text', () => {
+    const { editor, calls } = fakeEditor()
+    const image = makeImageNoteCardProps('image.png')
+
+    expect(measuredCardPropsHeight(editor, image, 500)).toBe(image.h)
+    expect(calls).toHaveLength(0)
+  })
+
+  it('uses an optional width override without changing the props', () => {
+    const { editor, calls } = fakeEditor()
+    const note = makeNoteCardProps('a note')
+    const originalWidth = note.w
+
+    measuredCardPropsHeight(editor, note, 200)
+
+    expect(calls[0].maxWidth).toBe(200 - 30)
+    expect(note.w).toBe(originalWidth)
   })
 })
 

@@ -1,5 +1,5 @@
 import type { Editor } from 'tldraw'
-import type { Reference } from '../model/types'
+import type { CardProps, Reference } from '../model/types'
 import { refMeta, refDescription, refTitle, hasLeftMedia } from '../model/references'
 import { SECTION_PLACEHOLDER } from '../model/sections'
 
@@ -260,6 +260,33 @@ export function measuredFigureHeight(
   })
   h += FIG_GAP + Math.max(d.h, FIG_DESC_MIN)
   return Math.ceil(h + FIG_PAD_Y)
+}
+
+/**
+ * Selects the height policy for any card face. `width` lets resize callers
+ * measure at the pending width before it has been committed to the shape.
+ * Image cards are user-sized rather than text-sized, so their current height
+ * passes through unchanged.
+ */
+export function measuredCardPropsHeight(
+  editor: Editor,
+  props: CardProps,
+  width = props.w,
+): number {
+  if (props.noteKind === 'image') return props.h
+  if (props.kind === 'figure') {
+    return measuredFigureHeight(editor, props.figureTitle, props.text, width)
+  }
+  if (props.noteKind === 'reference' && props.reference) {
+    return measuredReferenceHeight(editor, props.reference, props.text, width)
+  }
+  return measuredCardHeight(
+    editor,
+    props.text,
+    width,
+    props.kind === 'note' || props.kind === 'prose',
+    props.kind === 'prose' ? PROSE_TEXT_MIN : 0,
+  )
 }
 
 // --- Section headers -----------------------------------------------------

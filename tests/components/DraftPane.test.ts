@@ -105,6 +105,27 @@ const visualEditor = {
   },
 } as unknown as Editor
 
+const markdownSource =
+  'Read [Maggie](https://maggieappleton.com) and [unsafe](javascript:alert(1)).'
+
+const markdownEditor = {
+  getCurrentPageShapes: () => [{
+    id: 'shape:linked-prose',
+    type: 'card',
+    props: {
+      kind: 'prose',
+      text: markdownSource,
+      mergedInto: null,
+      draftExcluded: false,
+      comments: [],
+      attribution: [],
+    },
+  }],
+  getShapePageBounds: () => ({ x: 0, y: 0, w: 240, h: 120 }),
+  getShape: vi.fn(() => ({ props: { text: markdownSource, attribution: [] } })),
+  updateShape: vi.fn(),
+} as unknown as Editor
+
 type Harness = { container: HTMLDivElement; root: Root }
 const mounted = new Set<Harness>()
 const actEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -309,6 +330,36 @@ test('copy-as-Markdown includes figures and images in draft order', async () => 
     '[Figure: Loop diagram]\n\nStatus: sketched\n\nShow the loop.\n\n' +
     '![Image](loop.png)\n\nAfter the visual.',
   )
+
+  unmount(renderer)
+})
+
+test('renders safe Markdown links beside a separate prose edit control', () => {
+  const onSelectCard = vi.fn()
+  const renderer = render(createElement(DraftPane, {
+    editor: markdownEditor,
+    onSelectCard,
+  }))
+
+  const row = renderer.container.querySelector<HTMLElement>('[data-testid="draft-para"]')
+  const link = row?.querySelector<HTMLAnchorElement>('a')
+  const edit = row?.querySelector<HTMLButtonElement>('button[aria-label="Edit paragraph"]')
+  expect(link?.textContent).toBe('Maggie')
+  expect(link?.href).toBe('https://maggieappleton.com/')
+  expect(link?.target).toBe('_blank')
+  expect(link?.rel).toBe('noreferrer')
+  expect(row?.textContent).toContain('[unsafe](javascript:alert(1)).')
+  expect(link?.closest('button, [role="button"]')).toBeNull()
+  expect(edit).not.toBeNull()
+
+  link?.addEventListener('click', (event) => event.preventDefault(), { once: true })
+  act(() => { link?.click() })
+  expect(onSelectCard).not.toHaveBeenCalled()
+
+  act(() => { edit?.click() })
+  const textarea = renderer.container.querySelector<HTMLTextAreaElement>('[data-testid="draft-editor"]')
+  expect(textarea?.value).toBe(markdownSource)
+  expect(onSelectCard).toHaveBeenCalledWith('shape:linked-prose')
 
   unmount(renderer)
 })

@@ -98,6 +98,50 @@ test('copy as markdown writes the draft to the clipboard', async ({ page }) => {
   expect(clip).toContain('a sentence to copy')
 })
 
+test('Markdown links read like links while prose editing keeps the raw source', async ({ page }) => {
+  const source = 'Read [Maggie](https://maggieappleton.com).'
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  await addProse(page, source)
+  await page.getByTestId('draft-open').click()
+
+  const prose = page.getByTestId('draft-para')
+  await expect(prose).toBeVisible()
+  const link = page.getByRole('link', { name: 'Maggie' })
+  await expect(link).toHaveAttribute('href', 'https://maggieappleton.com')
+
+  const editTarget = prose.locator('.elves-draft__edit-target')
+  await editTarget.focus()
+  await page.keyboard.press('Tab')
+  await page.keyboard.press('Shift+Tab')
+  await expect(editTarget).toBeFocused()
+  expect(await editTarget.evaluate((element) => getComputedStyle(element).outlineStyle)).toBe('none')
+  expect(await prose.evaluate((element) => getComputedStyle(element).boxShadow)).not.toBe('none')
+
+  const paragraph = prose.locator('.elves-draft__para')
+  const plainTextPoint = await paragraph.evaluate((element) => {
+    const textNode = [...element.childNodes].find((node) =>
+      node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
+    )
+    if (!textNode?.textContent) throw new Error('plain draft text not in DOM')
+    const range = document.createRange()
+    range.setStart(textNode, 0)
+    range.setEnd(textNode, Math.min(4, textNode.textContent.length))
+    const bounds = range.getBoundingClientRect()
+    return { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }
+  })
+  await page.mouse.click(plainTextPoint.x, plainTextPoint.y)
+  const editor = page.getByTestId('draft-editor')
+  await expect(editor).toHaveValue(source)
+
+  await editor.press('Escape')
+  await expect(editor).toHaveCount(0)
+  await page.getByTestId('draft-copy').click()
+  await expect(page.getByTestId('draft-copy')).toHaveText('Copied')
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(source)
+})
+
 test('the drawer chevrons step canvas → split → draft and back', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })

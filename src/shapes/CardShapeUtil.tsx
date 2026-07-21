@@ -14,7 +14,7 @@ import { nextFigureStatus } from '../model/figures'
 import { cardGist, commentGist, mechanicalGist } from '../model/summary'
 import { visibleComments, resolveComment } from '../model/comments'
 import { assetUrl } from '../client/assets'
-import { measuredCardHeight, measuredReferenceHeight, measuredFigureHeight, fittedGistFontSize, PROSE_TEXT_MIN } from './autosize'
+import { fittedGistFontSize, measuredCardPropsHeight } from './autosize'
 import { shouldShowGist, gistFontSize } from './summaryView'
 import { isExpanded, toggleExpanded } from './mergeView'
 import { cardPageInfo, expandedCardFanInfo } from './cardPageIndex'
@@ -298,16 +298,8 @@ function AutosizeCard({
     const fit = () => {
       if (cancelled) return
       const cur = editor.getShape<CardShape>(shape.id)
-      if (!cur || cur.props.mergedInto || cur.props.noteKind === 'image') return
-      const want = cur.props.kind === 'figure'
-        ? measuredFigureHeight(editor, cur.props.figureTitle, cur.props.text, cur.props.w)
-        : cur.props.noteKind === 'reference' && cur.props.reference
-        ? measuredReferenceHeight(editor, cur.props.reference, cur.props.text, cur.props.w)
-        : measuredCardHeight(
-            editor, cur.props.text, cur.props.w,
-            cur.props.kind === 'note' || cur.props.kind === 'prose',
-            cur.props.kind === 'prose' ? PROSE_TEXT_MIN : 0,
-          )
+      if (!cur || cur.props.mergedInto) return
+      const want = measuredCardPropsHeight(editor, cur.props)
       if (Math.abs(want - cur.props.h) > 1) {
         editor.updateShape<CardShape>({ id: cur.id, type: 'card', props: { h: want } })
       }
@@ -909,17 +901,9 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     // Let the user set the width by dragging; height always fits the text at
     // that width, so a resize can't clip content or leave dead space.
     const next = resizeBox(shape, info)
-    if (shape.props.noteKind === 'image') return next
     const w = next.props?.w ?? shape.props.w
-    const h = shape.props.kind === 'figure'
-      ? measuredFigureHeight(this.editor, shape.props.figureTitle, shape.props.text, w)
-      : shape.props.noteKind === 'reference' && shape.props.reference
-      ? measuredReferenceHeight(this.editor, shape.props.reference, shape.props.text, w)
-      : measuredCardHeight(
-          this.editor, shape.props.text, w,
-          shape.props.kind === 'note' || shape.props.kind === 'prose',
-          shape.props.kind === 'prose' ? PROSE_TEXT_MIN : 0,
-        )
+    const resizedProps = { ...shape.props, ...next.props }
+    const h = measuredCardPropsHeight(this.editor, resizedProps, w)
     return { ...next, props: { ...next.props, h } }
   }
 }
