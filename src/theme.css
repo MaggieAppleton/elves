@@ -364,6 +364,18 @@ body {
   top: 50%;
   transform: translate(-50%, -50%);
 }
+@media (hover: hover) and (pointer: fine) {
+  .elves-drawer-handle--split {
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+  .elves-divider:hover ~ .elves-drawer-handle--split,
+  .elves-stage[data-dragging="true"] .elves-drawer-handle--split,
+  .elves-drawer-handle--split:hover,
+  .elves-drawer-handle--split:focus-within {
+    opacity: 1;
+  }
+}
 /* Full draft: centered on the left edge. */
 .elves-drawer-handle--full {
   top: 50%;
@@ -419,6 +431,7 @@ body {
   .elves-canvas-pane,
   .elves-draft-pane { transition: none; }
   .elves-drawer-tab { transition: none; }
+  .elves-drawer-handle--split { transition: none; }
 }
 
 /* ---- Creation toolbar (top-center) as an elevated action cluster -------- */

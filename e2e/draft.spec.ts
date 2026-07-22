@@ -163,6 +163,47 @@ test('the drawer chevrons step canvas → split → draft and back', async ({ pa
   await expect(stage).toHaveAttribute('data-view', 'canvas')
 })
 
+test('split controls reveal from the divider and stay revealed under the pointer', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  const stage = page.locator('.elves-stage')
+  await page.getByTestId('draft-open').click()
+  await expect(stage).toHaveAttribute('data-view', 'split')
+  await page.getByTestId('draft-expand').blur()
+
+  const handle = page.locator('.elves-drawer-handle--split')
+  const opacity = () => handle.evaluate((element) => getComputedStyle(element).opacity)
+  await page.mouse.move(20, 20)
+  await expect.poll(opacity).toBe('0')
+
+  await page.getByTestId('draft-divider').hover({ position: { x: 5, y: 20 } })
+  await expect.poll(opacity).toBe('1')
+
+  await page.getByTestId('draft-expand').hover()
+  await expect.poll(opacity).toBe('1')
+  await expect(stage).toHaveAttribute('data-dragging', 'false')
+  await page.getByTestId('draft-expand').click()
+  await expect(stage).toHaveAttribute('data-view', 'draft')
+})
+
+test('keyboard focus reveals idle split controls', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  await page.getByTestId('draft-open').click()
+  await page.getByTestId('draft-expand').blur()
+  const handle = page.locator('.elves-drawer-handle--split')
+  const opacity = () => handle.evaluate((element) => getComputedStyle(element).opacity)
+  await page.mouse.move(20, 20)
+  await expect.poll(opacity).toBe('0')
+
+  await page.getByTestId('draft-expand').focus()
+  await expect.poll(opacity).toBe('1')
+})
+
 test('changing view ends an active divider drag and makes its stale pointer inert', async ({
   page,
 }) => {
