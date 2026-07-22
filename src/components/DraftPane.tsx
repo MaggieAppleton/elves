@@ -182,13 +182,18 @@ export function DraftPane({
                     )
                   }
                   return !readOnly && editor && editingId === item.id ? (
-                    <ProseEditor
+                    <div
                       key={item.id}
-                      editor={editor}
-                      cardId={item.id}
-                      initialText={item.text}
-                      onDone={() => setEditingId(null)}
-                    />
+                      className="elves-draft__prose-row"
+                      data-testid="draft-para"
+                    >
+                      <ProseEditor
+                        editor={editor}
+                        cardId={item.id}
+                        initialText={item.text}
+                        onDone={() => setEditingId(null)}
+                      />
+                    </div>
                   ) : (
                     <DraftProse
                       key={item.id}

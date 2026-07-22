@@ -26,6 +26,68 @@ async function addProse(page: Page, text: string) {
   return card
 }
 
+async function expectProseRailAtPaneEdge(page: Page) {
+  const pane = page.locator('.elves-draft-pane')
+  const prose = page.getByTestId('draft-para')
+  const paneBox = await pane.boundingBox()
+  const proseBox = await prose.boundingBox()
+  const borderLeft = await pane.evaluate((element) =>
+    Number.parseFloat(getComputedStyle(element).borderLeftWidth),
+  )
+  const boxShadow = await prose.evaluate((element) => getComputedStyle(element).boxShadow)
+  expect(paneBox).not.toBeNull()
+  expect(proseBox?.x).toBeCloseTo((paneBox?.x ?? 0) + borderLeft, 0)
+  expect(proseBox?.height).toBeGreaterThan(0)
+  expect(boxShadow).toContain('inset')
+}
+
+async function exerciseProseFocusRail(page: Page) {
+  const prose = page.getByTestId('draft-para')
+  const textBox = await prose.locator('.elves-draft__para').boundingBox()
+  expect(textBox).not.toBeNull()
+
+  const editTarget = prose.locator('.elves-draft__edit-target')
+  const editTargetBox = await editTarget.boundingBox()
+  expect(editTargetBox?.x).toBeCloseTo(textBox?.x ?? 0, 0)
+  expect(editTargetBox?.width).toBeCloseTo(textBox?.width ?? 0, 0)
+  await editTarget.focus()
+  await page.keyboard.press('Tab')
+  await page.keyboard.press('Shift+Tab')
+  await expect(editTarget).toBeFocused()
+  await expectProseRailAtPaneEdge(page)
+
+  await page.keyboard.press('Enter')
+  const editor = page.getByTestId('draft-editor')
+  await expect(editor).toBeFocused()
+  await expectProseRailAtPaneEdge(page)
+  const editorBox = await editor.boundingBox()
+  expect(editorBox?.x).toBeCloseTo(textBox?.x ?? 0, 0)
+  expect(editorBox?.width).toBeCloseTo(textBox?.width ?? 0, 0)
+
+  await editor.press('Escape')
+  await expect(editor).toHaveCount(0)
+}
+
+test('prose focus rail stays at the pane edge in split and full-draft views', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  await addProse(page, 'keep the reading measure steady')
+  await page.getByTestId('draft-open').click()
+  await expect(page.locator('.elves-stage')).toHaveAttribute('data-view', 'split')
+  await expect.poll(async () =>
+    (await page.locator('.elves-draft-pane').boundingBox())?.width ?? 0,
+  ).toBeGreaterThan(400)
+  await exerciseProseFocusRail(page)
+
+  await page.getByTestId('draft-expand').click()
+  await expect(page.locator('.elves-stage')).toHaveAttribute('data-view', 'draft')
+  await expect.poll(async () =>
+    (await page.locator('.elves-draft-pane').boundingBox())?.width ?? 0,
+  ).toBeCloseTo(page.viewportSize()?.width ?? 0, 0)
+  await exerciseProseFocusRail(page)
+})
+
 test('a prose card shows up live in the draft pane in split view', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
