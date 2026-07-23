@@ -145,13 +145,15 @@ export function DraftPane({
             {blocks.map((block) => (
               <section key={block.sectionId ?? '__opening__'} className="elves-draft__section">
                 {block.section !== null && (
-                  <h2
-                    className="elves-draft__heading"
-                    data-authored-by={block.authoredBy ?? 'user'}
-                    data-testid="draft-heading"
-                  >
-                    {block.section}
-                  </h2>
+                  <div className="elves-draft__heading-row">
+                    <h2
+                      className="elves-draft__heading"
+                      data-authored-by={block.authoredBy ?? 'user'}
+                      data-testid="draft-heading"
+                    >
+                      {block.section}
+                    </h2>
+                  </div>
                 )}
                 {block.items.map((item) => {
                   if (item.type === 'figure') {

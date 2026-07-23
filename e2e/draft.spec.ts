@@ -88,6 +88,53 @@ test('prose focus rail stays at the pane edge in split and full-draft views', as
   await exerciseProseFocusRail(page)
 })
 
+test('draft sections preserve collapsed spacing around prose', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  // Use the production draft classes with a deterministic content sequence so
+  // this checks browser layout independently of canvas placement and ordering.
+  await page.locator('.elves-draft__scroll').evaluate((scroll) => {
+    scroll.innerHTML = `
+      <article class="elves-draft__body">
+        <section class="elves-draft__section">
+          <div id="before-figure" class="elves-draft__prose-row">
+            <p class="elves-draft__para">Before the figure.</p>
+          </div>
+          <figure id="rhythm-figure" class="elves-draft__figure">
+            <figcaption class="elves-draft__figure-title">A figure</figcaption>
+          </figure>
+          <div id="before-section" class="elves-draft__prose-row">
+            <p class="elves-draft__para">Before the next section.</p>
+          </div>
+        </section>
+        <section class="elves-draft__section">
+          <div class="elves-draft__heading-row">
+            <h2 id="next-heading" class="elves-draft__heading">Next section</h2>
+          </div>
+          <div class="elves-draft__prose-row">
+            <p class="elves-draft__para">After the heading.</p>
+          </div>
+        </section>
+      </article>
+    `
+  })
+
+  const verticalGap = async (before: string, after: string) => {
+    const [beforeBox, afterBox] = await Promise.all([
+      page.locator(before).boundingBox(),
+      page.locator(after).boundingBox(),
+    ])
+    if (!beforeBox || !afterBox) throw new Error('draft rhythm fixture is not rendered')
+    return afterBox.y - (beforeBox.y + beforeBox.height)
+  }
+
+  // Normal block-flow margin collapse preserves the established rhythm: the
+  // larger adjacent margin wins instead of both margins being added together.
+  expect.soft(await verticalGap('#before-figure', '#rhythm-figure')).toBeCloseTo(15, 0)
+  expect.soft(await verticalGap('#before-section', '#next-heading')).toBeCloseTo(42, 0)
+})
+
 test('a prose card shows up live in the draft pane in split view', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
