@@ -26,19 +26,31 @@ async function addProse(page: Page, text: string) {
   return card
 }
 
-async function expectProseRailAtPaneEdge(page: Page) {
+async function expectProseRailAtPaneEdge(page: Page, contentSelector: string) {
   const pane = page.locator('.elves-draft-pane')
   const prose = page.getByTestId('draft-para')
   const paneBox = await pane.boundingBox()
   const proseBox = await prose.boundingBox()
+  const contentBox = await prose.locator(contentSelector).boundingBox()
   const borderLeft = await pane.evaluate((element) =>
     Number.parseFloat(getComputedStyle(element).borderLeftWidth),
   )
-  const boxShadow = await prose.evaluate((element) => getComputedStyle(element).boxShadow)
+  const rail = await prose.evaluate((element) => {
+    const boxShadow = getComputedStyle(element).boxShadow
+    const colourProbe = document.createElement('span')
+    colourProbe.style.color = 'var(--elves-focus-ring)'
+    element.append(colourProbe)
+    const focusColour = getComputedStyle(colourProbe).color
+    colourProbe.remove()
+    return { boxShadow, focusColour }
+  })
+  const shadowLengths = rail.boxShadow.match(/-?\d+(?:\.\d+)?px/g)
   expect(paneBox).not.toBeNull()
   expect(proseBox?.x).toBeCloseTo((paneBox?.x ?? 0) + borderLeft, 0)
-  expect(proseBox?.height).toBeGreaterThan(0)
-  expect(boxShadow).toContain('inset')
+  expect(proseBox?.height).toBeCloseTo(contentBox?.height ?? 0, 0)
+  expect(shadowLengths?.slice(-4)).toEqual(['2px', '0px', '0px', '0px'])
+  expect(rail.boxShadow).toContain(rail.focusColour)
+  expect(rail.boxShadow).toContain('inset')
 }
 
 async function exerciseProseFocusRail(page: Page) {
@@ -50,16 +62,17 @@ async function exerciseProseFocusRail(page: Page) {
   const editTargetBox = await editTarget.boundingBox()
   expect(editTargetBox?.x).toBeCloseTo(textBox?.x ?? 0, 0)
   expect(editTargetBox?.width).toBeCloseTo(textBox?.width ?? 0, 0)
+  expect(editTargetBox?.height).toBeCloseTo(textBox?.height ?? 0, 0)
   await editTarget.focus()
   await page.keyboard.press('Tab')
   await page.keyboard.press('Shift+Tab')
   await expect(editTarget).toBeFocused()
-  await expectProseRailAtPaneEdge(page)
+  await expectProseRailAtPaneEdge(page, '.elves-draft__para')
 
   await page.keyboard.press('Enter')
   const editor = page.getByTestId('draft-editor')
   await expect(editor).toBeFocused()
-  await expectProseRailAtPaneEdge(page)
+  await expectProseRailAtPaneEdge(page, '.elves-draft__editor')
   const editorBox = await editor.boundingBox()
   expect(editorBox?.x).toBeCloseTo(textBox?.x ?? 0, 0)
   expect(editorBox?.width).toBeCloseTo(textBox?.width ?? 0, 0)
@@ -214,6 +227,9 @@ test('Markdown links read like links while prose editing keeps the raw source', 
 
   await addProse(page, source)
   await page.getByTestId('draft-open').click()
+  await expect.poll(async () =>
+    (await page.locator('.elves-draft-pane').boundingBox())?.width ?? 0,
+  ).toBeGreaterThan(400)
 
   const prose = page.getByTestId('draft-para')
   await expect(prose).toBeVisible()
@@ -240,6 +256,11 @@ test('Markdown links read like links while prose editing keeps the raw source', 
     const bounds = range.getBoundingClientRect()
     return { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }
   })
+  const hitTarget = await page.evaluate(({ x, y }) => {
+    const element = document.elementFromPoint(x, y)
+    return `${element?.tagName ?? ''}.${element?.getAttribute('class') ?? ''}`
+  }, plainTextPoint)
+  expect(hitTarget).toContain('elves-draft__edit-target')
   await page.mouse.click(plainTextPoint.x, plainTextPoint.y)
   const editor = page.getByTestId('draft-editor')
   await expect(editor).toHaveValue(source)

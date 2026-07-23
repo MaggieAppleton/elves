@@ -107,10 +107,13 @@
 /* A native button fills the prose row behind the text. Plain text lets pointer
    events pass through to it; real links opt back in above it. The result reads
    as one paragraph without nesting an anchor inside a button-like control. */
-.elves-draft__edit-target {
+.elves-draft__prose-content {
   position: relative;
   grid-column: reading-start / reading-end;
-  grid-row: 1;
+}
+.elves-draft__edit-target {
+  position: absolute;
+  inset: 0;
   z-index: 0;
   display: block;
   width: 100%;
@@ -127,8 +130,6 @@
 .elves-draft__para {
   position: relative;
   z-index: 1;
-  grid-column: reading-start / reading-end;
-  grid-row: 1;
   margin: 0;
   white-space: pre-wrap;
   font-size: 16px;

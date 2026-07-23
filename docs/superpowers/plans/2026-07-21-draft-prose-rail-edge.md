@@ -4,7 +4,7 @@
 
 **Goal:** Anchor each active prose card's blue focus rail to the left edge of the linear draft pane while retaining card-height and the existing reading-column geometry.
 
-**Architecture:** Turn the draft body into a full-width grid with a centered reading track. Prose state containers span the full grid and place their text back in the reading track, allowing their focus rail to use pane-edge coordinates without measurement code.
+**Architecture:** Keep draft sections in normal block flow and make each prose state container a full-width, three-column grid with a centered reading track. This lets the row draw at pane-edge coordinates without measurement code while preserving the document's existing margin collapsing.
 
 **Tech Stack:** React 18, CSS Grid, TypeScript, Playwright, Vitest
 
@@ -54,7 +54,7 @@ Expected: FAIL because `.elves-draft__prose-row` currently begins at the centere
 
 - [ ] **Step 3: Implement the full-width state container**
 
-In `DraftPane.tsx`, wrap `ProseEditor` with the same state-container class used for resting prose rows. In `draft.css`, define a full-width draft grid and a named centered reading track. Make prose state containers span the full grid, place their paragraph/editor content in the reading track, and move the existing focus shadow from the text element to the full-width container. Do not change the typography or visual-card rules.
+In `DraftPane.tsx`, wrap `ProseEditor` with the same state-container class used for resting prose rows. In `draft.css`, keep the draft body and sections in block flow, make each prose state container a full-width grid with a named centered reading track, place paragraph/editor content in that track, and move the existing focus shadow to the full-width container. Do not change typography, visual-card geometry, or block margin collapsing.
 
 - [ ] **Step 4: Run the focused tests to verify GREEN**
 

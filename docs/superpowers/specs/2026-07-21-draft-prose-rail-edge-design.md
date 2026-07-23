@@ -6,7 +6,7 @@ Move the blue focus rail for a prose card from the reading column to the left ed
 
 ## Design
 
-The draft scroll viewport owns a full-width layout grid. The centered reading column remains `64ch` with its existing `40px` horizontal gutters. Prose rows and prose editors become full-width grid items so their focus state can draw at the pane edge, while their text content stays in the reading-column track. Headings, figures, images, paragraph measure, wrapping, and vertical rhythm do not change.
+Draft sections retain normal block flow so their existing vertical margins keep collapsing. Each prose row owns a full-width, three-column grid: two flexible gutters of at least `40px` around a centered reading track capped at `64ch`. The full-width row draws focus state at the pane edge, while its paragraph, edit control, and editor stay in the reading track. Headings and visual blocks use centered block wrappers at the same measure, preserving paragraph wrapping and vertical rhythm.
 
 Reading and editing use the same geometry. A focused prose edit target draws the rail on its full-width row; the active textarea is wrapped by the same full-width state container and draws the rail there. The rail uses the existing focus-ring colour and two-pixel width.
 

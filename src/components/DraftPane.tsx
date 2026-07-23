@@ -239,40 +239,42 @@ function DraftProse({
       className={`elves-draft__prose-row${empty ? ' elves-draft__prose-row--empty' : ''}${readOnly ? ' elves-draft__prose-row--read-only' : ''}`}
       data-testid="draft-para"
     >
-      {!readOnly ? (
-        <button
-          type="button"
-          className="elves-draft__edit-target"
-          aria-label="Edit paragraph"
-          title="Click to edit — updates the card on the canvas"
-          onClick={() => onEdit(cardId)}
-        />
-      ) : null}
-      <p className="elves-draft__para">
-        {empty ? 'Empty card' : tokenizeInlineMarkdown(text).map((token, index) => (
-          token.type === 'text' ? token.value : (
-            <a
-              key={`${token.href}-${index}`}
-              className="elves-draft__link"
-              href={token.href}
-              target="_blank"
-              rel="noreferrer"
-            >
-              {token.label}
-            </a>
-          )
-        ))}
-        {unresolvedComments ? (
-          <span
-            className="elves-draft__comments"
-            data-testid="draft-comment-marker"
-            title={`${unresolvedComments} unresolved comment${unresolvedComments === 1 ? '' : 's'}`}
-            aria-label={`${unresolvedComments} unresolved comments`}
-          >
-            {unresolvedComments}
-          </span>
+      <div className="elves-draft__prose-content">
+        {!readOnly ? (
+          <button
+            type="button"
+            className="elves-draft__edit-target"
+            aria-label="Edit paragraph"
+            title="Click to edit — updates the card on the canvas"
+            onClick={() => onEdit(cardId)}
+          />
         ) : null}
-      </p>
+        <p className="elves-draft__para">
+          {empty ? 'Empty card' : tokenizeInlineMarkdown(text).map((token, index) => (
+            token.type === 'text' ? token.value : (
+              <a
+                key={`${token.href}-${index}`}
+                className="elves-draft__link"
+                href={token.href}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {token.label}
+              </a>
+            )
+          ))}
+          {unresolvedComments ? (
+            <span
+              className="elves-draft__comments"
+              data-testid="draft-comment-marker"
+              title={`${unresolvedComments} unresolved comment${unresolvedComments === 1 ? '' : 's'}`}
+              aria-label={`${unresolvedComments} unresolved comments`}
+            >
+              {unresolvedComments}
+            </span>
+          ) : null}
+        </p>
+      </div>
     </div>
   )
 }
