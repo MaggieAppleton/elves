@@ -67,28 +67,38 @@
 }
 
 .elves-draft__body {
-  max-width: 64ch;
-  margin: 0 auto;
-  padding: 40px 40px 30vh;
+  width: 100%;
+  padding: 40px 0 30vh;
 }
 
 .elves-draft__section + .elves-draft__section { margin-top: 4px; }
 
+.elves-draft__heading-row {
+  width: calc(100% - 80px);
+  max-width: 64ch;
+  margin: 42px auto 18px;
+}
 .elves-draft__heading {
   font-size: 22px;
   line-height: 1.25;
   font-weight: 650;
   letter-spacing: -0.015em;
   color: var(--elves-ink);
-  margin: 42px 0 18px;
+  margin: 0;
   padding-bottom: 0;
 }
-.elves-draft__section:first-child .elves-draft__heading { margin-top: 4px; }
+.elves-draft__section:first-child .elves-draft__heading-row { margin-top: 4px; }
 /* Claude-authored labels carry the same warm orange as on the canvas. */
 .elves-draft__heading[data-authored-by="claude"] { color: var(--elves-claude-accent); }
 
 .elves-draft__prose-row {
   position: relative;
+  display: grid;
+  grid-template-columns:
+    [pane-start] minmax(40px, 1fr)
+    [reading-start] minmax(0, 64ch)
+    [reading-end] minmax(40px, 1fr)
+    [pane-end];
   box-sizing: border-box;
   width: 100%;
   margin: 0 0 15px;
@@ -97,6 +107,10 @@
 /* A native button fills the prose row behind the text. Plain text lets pointer
    events pass through to it; real links opt back in above it. The result reads
    as one paragraph without nesting an anchor inside a button-like control. */
+.elves-draft__prose-content {
+  position: relative;
+  grid-column: reading-start / reading-end;
+}
 .elves-draft__edit-target {
   position: absolute;
   inset: 0;
@@ -144,8 +158,9 @@
   box-shadow: 0 2px 0 var(--elves-focus-ring);
 }
 
-.elves-draft__prose-row:has(.elves-draft__edit-target:focus-visible) {
-  box-shadow: -2px 0 0 var(--elves-focus-ring);
+.elves-draft__prose-row:has(.elves-draft__edit-target:focus-visible),
+.elves-draft__prose-row:has(.elves-draft__editor:focus-visible) {
+  box-shadow: inset 2px 0 0 var(--elves-focus-ring);
 }
 
 .elves-draft__prose-row--empty .elves-draft__para {
@@ -156,8 +171,8 @@
 .elves-draft__figure,
 .elves-draft__image-wrap {
   box-sizing: border-box;
-  width: calc(100% + 24px);
-  margin: 6px 0 18px -12px;
+  width: min(calc(100% - 56px), calc(64ch + 24px));
+  margin: 6px auto 18px;
   padding: 14px 12px;
   border: 1px dashed var(--elves-border);
   border-radius: 0;
@@ -208,9 +223,10 @@
    active textarea; there is no card fill, outline, or rounded container. */
 .elves-draft__editor {
   display: block;
+  grid-column: reading-start / reading-end;
   box-sizing: border-box;
   width: 100%;
-  margin: 0 0 15px;
+  margin: 0;
   padding: 0;
   font-family: var(--elves-card-font);
   font-size: 16px;
@@ -223,10 +239,6 @@
   overflow: hidden;
   outline: none;
 }
-.elves-draft__editor:focus-visible {
-  box-shadow: -2px 0 0 var(--elves-focus-ring);
-}
-
 /* Unresolved-comment marker: a small count, no bodies (v1). */
 .elves-draft__comments {
   display: inline-flex;

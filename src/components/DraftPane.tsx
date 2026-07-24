@@ -145,13 +145,15 @@ export function DraftPane({
             {blocks.map((block) => (
               <section key={block.sectionId ?? '__opening__'} className="elves-draft__section">
                 {block.section !== null && (
-                  <h2
-                    className="elves-draft__heading"
-                    data-authored-by={block.authoredBy ?? 'user'}
-                    data-testid="draft-heading"
-                  >
-                    {block.section}
-                  </h2>
+                  <div className="elves-draft__heading-row">
+                    <h2
+                      className="elves-draft__heading"
+                      data-authored-by={block.authoredBy ?? 'user'}
+                      data-testid="draft-heading"
+                    >
+                      {block.section}
+                    </h2>
+                  </div>
                 )}
                 {block.items.map((item) => {
                   if (item.type === 'figure') {
@@ -182,13 +184,18 @@ export function DraftPane({
                     )
                   }
                   return !readOnly && editor && editingId === item.id ? (
-                    <ProseEditor
+                    <div
                       key={item.id}
-                      editor={editor}
-                      cardId={item.id}
-                      initialText={item.text}
-                      onDone={() => setEditingId(null)}
-                    />
+                      className="elves-draft__prose-row"
+                      data-testid="draft-para"
+                    >
+                      <ProseEditor
+                        editor={editor}
+                        cardId={item.id}
+                        initialText={item.text}
+                        onDone={() => setEditingId(null)}
+                      />
+                    </div>
                   ) : (
                     <DraftProse
                       key={item.id}
@@ -232,40 +239,42 @@ function DraftProse({
       className={`elves-draft__prose-row${empty ? ' elves-draft__prose-row--empty' : ''}${readOnly ? ' elves-draft__prose-row--read-only' : ''}`}
       data-testid="draft-para"
     >
-      {!readOnly ? (
-        <button
-          type="button"
-          className="elves-draft__edit-target"
-          aria-label="Edit paragraph"
-          title="Click to edit — updates the card on the canvas"
-          onClick={() => onEdit(cardId)}
-        />
-      ) : null}
-      <p className="elves-draft__para">
-        {empty ? 'Empty card' : tokenizeInlineMarkdown(text).map((token, index) => (
-          token.type === 'text' ? token.value : (
-            <a
-              key={`${token.href}-${index}`}
-              className="elves-draft__link"
-              href={token.href}
-              target="_blank"
-              rel="noreferrer"
-            >
-              {token.label}
-            </a>
-          )
-        ))}
-        {unresolvedComments ? (
-          <span
-            className="elves-draft__comments"
-            data-testid="draft-comment-marker"
-            title={`${unresolvedComments} unresolved comment${unresolvedComments === 1 ? '' : 's'}`}
-            aria-label={`${unresolvedComments} unresolved comments`}
-          >
-            {unresolvedComments}
-          </span>
+      <div className="elves-draft__prose-content">
+        {!readOnly ? (
+          <button
+            type="button"
+            className="elves-draft__edit-target"
+            aria-label="Edit paragraph"
+            title="Click to edit — updates the card on the canvas"
+            onClick={() => onEdit(cardId)}
+          />
         ) : null}
-      </p>
+        <p className="elves-draft__para">
+          {empty ? 'Empty card' : tokenizeInlineMarkdown(text).map((token, index) => (
+            token.type === 'text' ? token.value : (
+              <a
+                key={`${token.href}-${index}`}
+                className="elves-draft__link"
+                href={token.href}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {token.label}
+              </a>
+            )
+          ))}
+          {unresolvedComments ? (
+            <span
+              className="elves-draft__comments"
+              data-testid="draft-comment-marker"
+              title={`${unresolvedComments} unresolved comment${unresolvedComments === 1 ? '' : 's'}`}
+              aria-label={`${unresolvedComments} unresolved comments`}
+            >
+              {unresolvedComments}
+            </span>
+          ) : null}
+        </p>
+      </div>
     </div>
   )
 }
