@@ -177,7 +177,9 @@ test('the input grows to fit a multi-line message', async ({ page }) => {
 // spot-checking one height — the input's own max-height grows with the viewport
 // until it caps at ~285px tall, so the squeeze is worst in the middle of this
 // range, not at its short end.
-for (const height of [220, 260, 300, 340, 420]) {
+// 400 is in the list because it is the tightest point of the roomy band: the cap
+// steps down by 40px there, and every taller window has more slack than it does.
+for (const height of [220, 260, 300, 340, 400, 420]) {
 test(`a transcript and long prompt stay usable inside the agent box at ${height}px tall`, async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.setViewportSize({ width: 800, height })
@@ -275,15 +277,15 @@ test('a long transcript grows the box towards the full height of a tall viewport
   // The transcript scrolls rather than overflowing, and follows the newest line.
   // Polled because the auto-scroll runs in a passive effect, after the paint that
   // makes the final reply assertable above.
+  // Polled as a pair rather than one boolean so a failure names which half broke.
   await expect
     .poll(() =>
-      transcript.evaluate((el) => {
-        const overflowing = el.scrollHeight > el.clientHeight
-        const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 2
-        return overflowing && atBottom
-      }),
+      transcript.evaluate((el) => ({
+        overflowing: el.scrollHeight > el.clientHeight,
+        atBottom: el.scrollTop + el.clientHeight >= el.scrollHeight - 2,
+      })),
     )
-    .toBe(true)
+    .toEqual({ overflowing: true, atBottom: true })
 })
 
 test('/ is a literal slash while typing in the box, not a re-trigger', async ({ page }) => {
