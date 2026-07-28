@@ -5,6 +5,7 @@ import 'tldraw/tldraw.css'
 import './theme.css'
 import { CardShapeUtil, CardShape } from './shapes/CardShapeUtil'
 import { CardSelectionForeground } from './shapes/CardSelectionForeground'
+import { SnapHighlight } from './shapes/SnapHighlight'
 import { measuredCardPropsHeight } from './shapes/autosize'
 import { cardIsHidden, collapseAll } from './shapes/mergeView'
 import { SectionShapeUtil, SectionShape } from './shapes/SectionShapeUtil'
@@ -55,7 +56,12 @@ import {
 import { createPointerDragManager, type PointerDragManager } from './client/dividerDrag'
 
 const shapeUtils = [CardShapeUtil, SectionShapeUtil, QuestionShapeUtil]
-const components = { SelectionForeground: CardSelectionForeground }
+// OnTheCanvas renders in page space behind the shapes, which is where the snap
+// halo belongs — a wash under the two cards being joined, not a box over them.
+const components = {
+  SelectionForeground: CardSelectionForeground,
+  OnTheCanvas: SnapHighlight,
+}
 const canvasTransport = {
   load: loadCanvasVersioned,
   save: saveCanvasVersioned,

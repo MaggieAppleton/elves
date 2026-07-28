@@ -11,8 +11,14 @@ canvas is manual pixel-nudging.
 
 While you drag a single card, it snaps to a clean position relative to a nearby
 card — directly below, above, to the right, or to the left — always at a
-`CANVAS_GAP` (24px) separation, with the cross-axis edges aligned. Drag beyond
-the snap radius and the card moves freely again.
+`CANVAS_GAP` separation, with the cross-axis edges aligned. Drag beyond the snap
+radius and the card moves freely again.
+
+`CANVAS_GAP` moves from 24px to **16px** as part of this change. It is the
+canvas's one spacing constant, so this also tightens new-card placement, the
+cascade offset for successive spawns, comment footprints, and the gap questions
+keep from each other. Tests assert `<height> + CANVAS_GAP` rather than literal
+coordinates, so the constant can be retuned again without a test rewrite.
 
 ## What we are deliberately NOT building
 
@@ -32,8 +38,8 @@ never creates, joins, or dissolves a tldraw group, and nothing new appears in
 **No multi-card snapping.** If two or more shapes are being translated at once,
 snapping is off entirely. Bounding-box snap semantics are out of scope.
 
-**No snap indicator.** The card visibly moving into place *is* the feedback. No
-guide lines, no highlight on the target card.
+**No guide lines.** Alignment is shown by the halo below, not by rules or
+measurements drawn between shapes.
 
 ## Design
 
@@ -47,8 +53,11 @@ export function snapToNeighbours(
   neighbours: LayoutRect[],
   radius: number,
   gap = CANVAS_GAP,
-): { x: number; y: number }
+): { x: number; y: number; snappedTo: LayoutRect | null }
 ```
+
+`snappedTo` reports which card was joined, so the caller can draw the halo
+(section 5) without recomputing the match.
 
 For each neighbour it generates four candidate top-left positions for the
 dragged rect:
@@ -92,6 +101,9 @@ The override:
 3. Calls `snapToNeighbours`.
 4. Converts the snapped page point back to parent space and returns
    `{ x, y }` as a `TLShapePartial<CardShape>`.
+5. Publishes the halo box (or null) to the `snapHighlight` signal.
+
+`onTranslateEnd` clears the signal so the halo never outlives a drag.
 
 Because `onTranslate` runs each frame and derives position purely from the
 cursor, the snap needs no state and nothing to unwind when the drag ends.
@@ -118,6 +130,27 @@ Fix: capture the previous height before the `props.h` update and call
 
 This is what makes a snapped column stay a column while you write into it.
 
+### 5. Snap affordance — the halo
+
+A live snap draws a low-opacity green field behind BOTH cards, so the pairing is
+visible before the drop and disappears the moment the card leaves range. That
+disappearance is the only feedback that says "this is no longer snapped", which
+matters because there is no group membership to show.
+
+- `snapHalo(a, b, pad)` in `model/layout.ts` — pure: the padded box containing
+  two rects.
+- `client/snapHighlight.ts` — a tldraw `atom` holding that box, or null. A
+  signal rather than React state because it is written from `onTranslate`, which
+  runs outside React on every frame of a drag.
+- `shapes/SnapHighlight.tsx` + `snap.css` — mounted as tldraw's `OnTheCanvas`
+  component, which renders in page space and *behind* the shapes, so the two
+  cards read as sitting on one shared surface rather than being outlined
+  separately. Fades in over 120ms; position is never animated, or the box would
+  lag the cursor. `pointer-events: none`, and the fade is dropped under
+  `prefers-reduced-motion`.
+- Colour comes from two new theme tokens, `--elves-snap-fill` /
+  `--elves-snap-border`, in the palette's existing green (hue 152).
+
 ## Testing
 
 **Unit — `tests/model/layout.test.ts`** (extending the existing file):
@@ -129,12 +162,26 @@ This is what makes a snapped column stay a column while you write into it.
   radius.
 - Picks the nearer of two competing neighbours.
 - Empty neighbour list returns the input unchanged.
+- `snappedTo` names the joined card, and is null when nothing was joined.
+- `snapHalo` contains both rects with padding, including an unequal-height
+  side-by-side pair.
+
+Every expectation is written as `<height> + CANVAS_GAP`; the suite passes at
+gap 16, 24, and 32, which is the check that the constant is genuinely a knob.
 
 **E2E — `e2e/card-snapping.spec.ts`:**
 
-- Drag a card near another; on release its position is exactly 24px below with
-  matching left edge.
+- Drag a card near another; on release its position is exactly one gap below
+  with matching left edge.
+- Type into the top card of a snapped column; the card below is pushed down and
+  the gap survives.
+- The halo appears mid-drag, contains both cards, vanishes when the card is
+  dragged back out of range, and is gone after release.
 - Drag a snapped card far away; it lands where dropped, unsnapped.
+
+Both behavioural tests were mutation-checked: with `SNAP_RADIUS_PX` forced to 0
+the snap test fails by exactly the offset it aims off by, and with the new
+`reflowCardLane` call removed the growth test fails with a 63px overlap.
 
 **Regression:** existing `tests/server/grouping.test.ts` must still pass
 untouched — snapping does not disturb agent-created groups.
@@ -150,3 +197,29 @@ untouched — snapping does not disturb agent-created groups.
   growing card will now move on canvases that never had snapping applied. This
   is intended (it is what keeps columns tidy), but it is the change most likely
   to surprise.
+- **Autosize height updates are no longer undoable.** Wrapping the `props.h`
+  update in `editor.run(..., { history: 'ignore' })` — needed so the reflow it
+  triggers is not a separate undo step — also takes the height change itself out
+  of the undo stack. This matches the comment-height path exactly and is
+  arguably a fix (autosize height is derived state; undoing into a stale height
+  was never useful), but it is a side effect of this change, not a goal of it.
+- **Snapping does not check whether the slot is already occupied.** Dragging a
+  card into a slot where another card already sits will stack them on top of
+  each other. Deliberately out of scope: see below.
+
+## Known follow-up: occupied slots
+
+`snapToNeighbours` scores candidates purely on distance and never asks whether
+anything is already sitting in the slot it picks. Three ways to close that, none
+of them obviously right:
+
+1. **Leave it.** The overlap is visible and a second drag fixes it. Zero code.
+2. **Reject occupied candidates** — filter each candidate through the existing
+   `conflictsWithGap` against the other neighbours before scoring it, so the
+   snap falls through to the next-nearest free slot.
+3. **Insert into the column** — snap into the slot and push the current occupant
+   (and everything under it) down via `reflowVerticalLane`, so dropping a card
+   mid-stack splices it in.
+
+(3) is the most useful and the most surprising; (2) is the most predictable.
+Deferred until the base snap has been lived with.

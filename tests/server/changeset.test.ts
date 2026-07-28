@@ -1,6 +1,7 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import { snapshotToCards } from '../../server/digest'
 import { applyChangeSetToSnapshot } from '../../server/applyChangeSet'
+import { CANVAS_GAP } from '../../src/model/layout'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -275,7 +276,7 @@ test('applyChangeSetToSnapshot stamps the change-set author onto a created secti
   expect(created.props.authoredBy).toBe('codex')
 })
 
-test('duplicate-position questions stack with a 24px gap in the persisted snapshot', () => {
+test('duplicate-position questions stack with a one-gap separation in the persisted snapshot', () => {
   const snap = {
     document: { store: { 'page:page': { id: 'page:page', typeName: 'page' } } },
     session: null,
@@ -292,7 +293,7 @@ test('duplicate-position questions stack with a 24px gap in the persisted snapsh
     .sort((a: any, b: any) => a.y - b.y) as any[]
 
   expect(questions[0]).toMatchObject({ x: 0, y: 0 })
-  expect(questions[1]).toMatchObject({ x: 0, y: 120 })
+  expect(questions[1]).toMatchObject({ x: 0, y: 96 + CANVAS_GAP })
 })
 
 test('applyChangeSetToSnapshot stamps the change-set author onto an added comment', () => {
@@ -316,7 +317,7 @@ test('add_comment reserves its footprint and reflows the downstream card', () =>
           props: { w: 370, h: 120, kind: 'prose', comments: [], commentH: 0, mergedInto: null },
         },
         'shape:b': {
-          id: 'shape:b', typeName: 'shape', type: 'card', x: 0, y: 144, parentId: 'page:page',
+          id: 'shape:b', typeName: 'shape', type: 'card', x: 0, y: 120 + CANVAS_GAP, parentId: 'page:page',
           props: { w: 370, h: 120, kind: 'prose', comments: [], commentH: 0, mergedInto: null },
         },
       },
@@ -329,7 +330,7 @@ test('add_comment reserves its footprint and reflows the downstream card', () =>
   }) as any
 
   expect(next.document.store['shape:a'].props.commentH).toBe(42)
-  expect(next.document.store['shape:b']).toMatchObject({ x: 0, y: 186 })
+  expect(next.document.store['shape:b']).toMatchObject({ x: 0, y: 162 + CANVAS_GAP })
 })
 
 test('add_comment reflows a downstream question out of the comment footprint', () => {
@@ -342,7 +343,7 @@ test('add_comment reflows a downstream question out of the comment footprint', (
           props: { w: 370, h: 120, kind: 'prose', comments: [], commentH: 0, mergedInto: null },
         },
         'shape:q': {
-          id: 'shape:q', typeName: 'shape', type: 'question', x: 0, y: 144, parentId: 'page:page',
+          id: 'shape:q', typeName: 'shape', type: 'question', x: 0, y: 120 + CANVAS_GAP, parentId: 'page:page',
           props: { w: 370, h: 96, text: 'Why?', authoredBy: 'claude', dismissed: false },
         },
       },
@@ -354,7 +355,7 @@ test('add_comment reflows a downstream question out of the comment footprint', (
     ops: [{ kind: 'add_comment', cardId: 'shape:a', comment: { type: null, text: 'short' } }],
   }) as any
 
-  expect(next.document.store['shape:q']).toMatchObject({ x: 0, y: 186 })
+  expect(next.document.store['shape:q']).toMatchObject({ x: 0, y: 162 + CANVAS_GAP })
 })
 
 test('applyChangeSetToSnapshot writes a set_comment_summary onto the matching comment only', () => {
@@ -531,7 +532,7 @@ test('a create_note_card change-set persists a new card when the project already
 
   const digest = await fullDigest(app, 'essay')
   expect(digest.body.cards).toHaveLength(2)
-  expect(digest.body.cards.find((c: any) => c.text === 'new note')).toMatchObject({ x: 5, y: 144, kind: 'note' })
+  expect(digest.body.cards.find((c: any) => c.text === 'new note')).toMatchObject({ x: 5, y: 120 + CANVAS_GAP, kind: 'note' })
 })
 
 test('the placement guard leaves a clear position untouched and slides an overlapping one down', async () => {
@@ -542,17 +543,17 @@ test('the placement guard leaves a clear position untouched and slides an overla
   // A spot well to the right of shape:a is clear → placed exactly as asked.
   const clear = { id: 'c', author: 'claude', ops: [{ kind: 'create_note_card', text: 'clear', x: 400, y: 0 }] }
   expect((await request(app).post('/projects/essay/changeset').send(clear)).status).toBe(200)
-  // A spot on top of shape:a → slid down past its bottom (120) + gap (24) = 144.
+  // A spot on top of shape:a → slid down past its bottom (120) plus one gap.
   const onTop = { id: 'o', author: 'claude', ops: [{ kind: 'create_note_card', text: 'on top', x: 10, y: 10 }] }
   expect((await request(app).post('/projects/essay/changeset').send(onTop)).status).toBe(200)
 
   const digest = await fullDigest(app, 'essay')
   const byText = Object.fromEntries(digest.body.cards.map((c: any) => [c.text, c]))
   expect(byText['clear']).toMatchObject({ x: 400, y: 0 })
-  expect(byText['on top']).toMatchObject({ x: 10, y: 144 })
+  expect(byText['on top']).toMatchObject({ x: 10, y: 120 + CANVAS_GAP })
 })
 
-test('the placement guard expands a too-small gap to 24px', async () => {
+test('the placement guard expands a too-small gap to a full gap', async () => {
   const d = await rootWithProject()
   const app = createServer(d)
   await request(app).post('/projects/essay/canvas').send(cardSnapshot('shape:a')) // bottom = 120
@@ -564,10 +565,10 @@ test('the placement guard expands a too-small gap to 24px', async () => {
   expect((await request(app).post('/projects/essay/changeset').send(tooClose)).status).toBe(200)
 
   const digest = await fullDigest(app, 'essay')
-  expect(digest.body.cards.find((card: any) => card.text === 'too close')).toMatchObject({ x: 0, y: 144 })
+  expect(digest.body.cards.find((card: any) => card.text === 'too close')).toMatchObject({ x: 0, y: 120 + CANVAS_GAP })
 })
 
-test('move_cards clears a stationary card by 24px in the persisted snapshot', () => {
+test('move_cards clears a stationary card by one gap in the persisted snapshot', () => {
   const snap = {
     document: {
       store: {
@@ -583,7 +584,7 @@ test('move_cards clears a stationary card by 24px in the persisted snapshot', ()
     ops: [{ kind: 'move_cards', moves: [{ cardId: 'shape:b', x: 0, y: 0 }] }],
   }) as any
 
-  expect(next.document.store['shape:b']).toMatchObject({ x: 0, y: 144 })
+  expect(next.document.store['shape:b']).toMatchObject({ x: 0, y: 120 + CANVAS_GAP })
 })
 
 // A two-card canvas used to prove grouping survives the full HTTP → persist →

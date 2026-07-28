@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { CANVAS_GAP } from '../src/model/layout'
 import { BASE, resetProject, serverCardIds } from './helpers'
 
 let projectId: string
@@ -24,7 +25,7 @@ test.beforeEach(async ({ request }) => {
   projectId = await resetProject(request)
 })
 
-test('comments reserve a 24px gap before the next card', async ({ page, request }) => {
+test('comments reserve a full gap before the next card', async ({ page, request }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
   for (let i = 0; i < 2; i++) {
@@ -65,7 +66,7 @@ test('comments reserve a 24px gap before the next card', async ({ page, request 
     const nextCardBox = await nextCard.boundingBox()
     if (!commentsBox || !nextCardBox) return null
     return Math.round(nextCardBox.y - (commentsBox.y + commentsBox.height))
-  }).toBe(24)
+  }).toBe(CANVAS_GAP)
 })
 
 test("Claude's injected comment renders on the card and is one Ctrl-Z away from gone", async ({ page, request }) => {

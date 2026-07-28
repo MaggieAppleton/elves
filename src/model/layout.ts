@@ -1,7 +1,7 @@
 // Cascades successive spawns (new cards/sections) so they don't stack
 // invisibly on top of each other when created at the viewport center.
 
-export const CANVAS_GAP = 24
+export const CANVAS_GAP = 16
 export const CASCADE_STEP = CANVAS_GAP
 // Reset after this many steps so cards don't drift off-screen forever.
 export const CASCADE_WRAP = 8
@@ -112,6 +112,67 @@ export function findOverlaySlot(
     obstacles.every((obstacle) => !conflictsWithGap(candidate, obstacle, gap)),
   )
   return clear ?? placeBelowObstacles(candidates[0], obstacles, gap)
+}
+
+export interface SnapResult {
+  x: number
+  y: number
+  /** The card that was snapped to, or null when the drop position stands. */
+  snappedTo: LayoutRect | null
+}
+
+/**
+ * Where a card being dragged should sit if it is close enough to another card
+ * to join it. Cards snap into a clean `gap` separation on one of four sides,
+ * with the cross-axis edges flush — below/above align left edges, right/left
+ * align top edges — which is what turns a loose pile into a column.
+ *
+ * This is alignment only, not grouping: the returned position is a one-time
+ * placement and the two cards keep no memory of each other. Dragging further
+ * than `radius` from every slot returns the drop position untouched, so
+ * pulling a card out of a stack needs no gesture beyond moving it away.
+ *
+ * `snappedTo` reports which card was joined so the caller can show the pairing
+ * while the drag is live.
+ */
+export function snapToNeighbours(
+  dragged: LayoutRect,
+  neighbours: LayoutRect[],
+  radius: number,
+  gap = CANVAS_GAP,
+): SnapResult {
+  let best: SnapResult = { x: dragged.x, y: dragged.y, snappedTo: null }
+  let bestDistance = radius
+
+  for (const neighbour of neighbours) {
+    const candidates = [
+      { x: neighbour.x, y: neighbour.y + neighbour.h + gap },
+      { x: neighbour.x, y: neighbour.y - dragged.h - gap },
+      { x: neighbour.x + neighbour.w + gap, y: neighbour.y },
+      { x: neighbour.x - dragged.w - gap, y: neighbour.y },
+    ]
+    for (const candidate of candidates) {
+      const distance = Math.hypot(candidate.x - dragged.x, candidate.y - dragged.y)
+      if (distance < bestDistance) {
+        best = { ...candidate, snappedTo: neighbour }
+        bestDistance = distance
+      }
+    }
+  }
+
+  return best
+}
+
+/** The box that contains both cards of a snap, padded so it reads as a halo. */
+export function snapHalo(a: LayoutRect, b: LayoutRect, pad: number): LayoutRect {
+  const x = Math.min(a.x, b.x) - pad
+  const y = Math.min(a.y, b.y) - pad
+  return {
+    x,
+    y,
+    w: Math.max(a.x + a.w, b.x + b.w) + pad - x,
+    h: Math.max(a.y + a.h, b.y + b.h) + pad - y,
+  }
 }
 
 export function cascadeOffset(spawnIndex: number): { dx: number; dy: number } {

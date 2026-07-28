@@ -20,8 +20,14 @@ import { isExpanded, toggleExpanded } from './mergeView'
 import { cardPageInfo, expandedCardFanInfo } from './cardPageIndex'
 import { ReferenceCardFace } from './ReferenceCardFace'
 import { presenceMode } from '../client/presence'
-import { canvasObstacles, reflowCardLane } from '../client/canvasLayout'
-import { CANVAS_GAP, findOverlaySlot } from '../model/layout'
+import { canvasObstacles, reflowCardLane, snapCardPosition } from '../client/canvasLayout'
+import { CANVAS_GAP, findOverlaySlot, snapHalo } from '../model/layout'
+import { clearSnapHighlight, snapHighlight } from '../client/snapHighlight'
+
+// How far the snap halo extends past the two cards it contains. Wide enough
+// that the green reads as a field the pair is sitting on rather than a hairline
+// tracing their outline.
+const SNAP_HALO_PAD = 14
 import './card.css'
 
 export type CardShape = TLBaseShape<'card', {
@@ -301,7 +307,14 @@ function AutosizeCard({
       if (!cur || cur.props.mergedInto) return
       const want = measuredCardPropsHeight(editor, cur.props)
       if (Math.abs(want - cur.props.h) > 1) {
-        editor.updateShape<CardShape>({ id: cur.id, type: 'card', props: { h: want } })
+        // Growing text pushes the rest of the column down, the same way a
+        // card's comments do (see the commentH effect below). Without this a
+        // snapped stack decays into overlap as soon as you write into it.
+        const previousHeight = cur.props.h + (cur.props.commentH ?? 0)
+        editor.run(() => {
+          editor.updateShape<CardShape>({ id: cur.id, type: 'card', props: { h: want } })
+          reflowCardLane(editor, cur.id, previousHeight)
+        }, { history: 'ignore' })
       }
     }
     fit()
@@ -897,6 +910,46 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
   override onRotate(initial: CardShape): TLShapePartial<CardShape> {
     return { id: initial.id, type: 'card', x: initial.x, y: initial.y, rotation: initial.rotation }
   }
+  // Cards snap into clean stacks while you drag them: come within reach of
+  // another card and this lands you exactly CANVAS_GAP away with the edges
+  // flush. It is alignment, not grouping — the two cards keep no memory of
+  // each other, so dragging clear of the stack is all "leaving" takes.
+  override onTranslate(
+    _initial: CardShape,
+    current: CardShape,
+  ): TLShapePartial<CardShape> | undefined {
+    // Snapping a multi-shape drag would need bounding-box semantics; until
+    // then, dragging a selection moves it freely.
+    if (this.editor.getSelectedShapeIds().length > 1) {
+      clearSnapHighlight()
+      return undefined
+    }
+
+    const parent = this.editor.getShapeParentTransform(current.id)
+    const page = parent.applyToPoint({ x: current.x, y: current.y })
+    const dragged = {
+      x: page.x,
+      y: page.y,
+      w: current.props.w,
+      // Comments hang below the card, so a stack built on the card box alone
+      // would let a commented card overlap whatever it snapped above.
+      h: current.props.h + Math.max(0, current.props.commentH ?? 0),
+    }
+    const next = snapCardPosition(this.editor, current.id, dragged)
+
+    // Show the pairing while the drag is live, and drop it the moment the card
+    // leaves range — which is the only feedback that "it is no longer snapped".
+    snapHighlight.set(next.snappedTo
+      ? snapHalo({ ...dragged, x: next.page.x, y: next.page.y }, next.snappedTo, SNAP_HALO_PAD)
+      : null)
+
+    return { id: current.id, type: 'card', x: next.x, y: next.y }
+  }
+
+  override onTranslateEnd() {
+    clearSnapHighlight()
+  }
+
   override onResize(shape: CardShape, info: TLResizeInfo<CardShape>) {
     // Let the user set the width by dragging; height always fits the text at
     // that width, so a resize can't clip content or leave dead space.

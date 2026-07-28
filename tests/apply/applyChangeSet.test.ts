@@ -3,6 +3,7 @@ import type { Editor } from 'tldraw'
 import { applyChangeSet } from '../../src/apply/applyChangeSet'
 import { CHANGE_SET_STAMP_META_KEY, type ChangeSet } from '../../src/model/changeset'
 import type { Reference } from '../../src/model/types'
+import { CANVAS_GAP } from '../../src/model/layout'
 
 /**
  * A minimal fake of the tldraw Editor surface applyChangeSet uses. tldraw's real
@@ -45,6 +46,10 @@ function fakeEditor(seed: Array<Record<string, unknown>> = []) {
 }
 
 const cs = (ops: ChangeSet['ops']): ChangeSet => ({ id: 'cs1', author: 'claude', ops })
+
+// Gap-derived expectations are written as `<height> + G` so retuning
+// CANVAS_GAP retunes them instead of breaking them.
+const G = CANVAS_GAP
 
 const noteCard = (id: string, extra: Record<string, unknown> = {}) => ({
   id, type: 'card', x: 0, y: 0,
@@ -103,7 +108,7 @@ describe('applyChangeSet affected-id contract', () => {
   test('add_comment reserves its footprint and reflows the downstream card', () => {
     const ed = fakeEditor([
       noteCard('card:a', { commentH: 0 }),
-      { ...noteCard('card:b', { commentH: 0 }), y: 84 },
+      { ...noteCard('card:b', { commentH: 0 }), y: 60 + G },
     ])
 
     expect(applyChangeSet(ed as unknown as Editor, cs([
@@ -111,14 +116,14 @@ describe('applyChangeSet affected-id contract', () => {
     ]))).toEqual(['card:a', 'card:b'])
 
     expect((ed._shapes.get('card:a') as any).props.commentH).toBe(42)
-    expect(ed._shapes.get('card:b')).toMatchObject({ y: 126 })
+    expect(ed._shapes.get('card:b')).toMatchObject({ y: 102 + G })
   })
 
   test('add_comment reflows a downstream question out of the comment footprint', () => {
     const ed = fakeEditor([
       noteCard('card:a', { commentH: 0 }),
       {
-        id: 'question:b', type: 'question', x: 0, y: 84,
+        id: 'question:b', type: 'question', x: 0, y: 60 + G,
         props: { w: 200, h: 60, dismissed: false },
       },
     ])
@@ -126,7 +131,7 @@ describe('applyChangeSet affected-id contract', () => {
     expect(applyChangeSet(ed as unknown as Editor, cs([
       { kind: 'add_comment', cardId: 'card:a', comment: { type: null, text: 'short' } },
     ]))).toEqual(['card:a', 'question:b'])
-    expect(ed._shapes.get('question:b')).toMatchObject({ y: 126 })
+    expect(ed._shapes.get('question:b')).toMatchObject({ y: 102 + G })
   })
 
   test('merge_notes → the visible representative only', () => {
@@ -157,7 +162,7 @@ describe('applyChangeSet affected-id contract', () => {
     ]))).toEqual(['card:a'])
   })
 
-  test('move_cards clears a stationary card by 24px', () => {
+  test('move_cards clears a stationary card by one gap', () => {
     const ed = fakeEditor([
       noteCard('card:a'),
       { ...noteCard('card:b'), y: 200 },
@@ -167,7 +172,7 @@ describe('applyChangeSet affected-id contract', () => {
       { kind: 'move_cards', moves: [{ cardId: 'card:b', x: 0, y: 0 }] },
     ]))
 
-    expect(ed._shapes.get('card:b')).toMatchObject({ x: 0, y: 84 })
+    expect(ed._shapes.get('card:b')).toMatchObject({ x: 0, y: 60 + G })
   })
 
   test('move_cards stacks a moved batch without treating old positions as obstacles', () => {
@@ -184,8 +189,8 @@ describe('applyChangeSet affected-id contract', () => {
       ] },
     ]))
 
-    expect(ed._shapes.get('card:b')).toMatchObject({ x: 0, y: 84 })
-    expect(ed._shapes.get('card:c')).toMatchObject({ x: 0, y: 168 })
+    expect(ed._shapes.get('card:b')).toMatchObject({ x: 0, y: 60 + G })
+    expect(ed._shapes.get('card:c')).toMatchObject({ x: 0, y: 120 + 2 * G })
   })
 
   test('create_note_card → the freshly-minted card id', () => {
@@ -254,7 +259,7 @@ describe('applyChangeSet affected-id contract', () => {
     expect(shape.props.dismissed).toBe(false)
   })
 
-  test('duplicate-position questions stack with a 24px gap', () => {
+  test('duplicate-position questions stack with a one-gap separation', () => {
     const ed = fakeEditor([])
     const ids = applyChangeSet(ed as unknown as Editor, cs([
       { kind: 'create_question', text: 'One?', x: 0, y: 0 },
@@ -265,7 +270,7 @@ describe('applyChangeSet affected-id contract', () => {
       .map((id) => ed._shapes.get(id) as any)
       .sort((a, b) => a.y - b.y)
     expect(questions[0]).toMatchObject({ x: 0, y: 0 })
-    expect(questions[1]).toMatchObject({ x: 0, y: 120 })
+    expect(questions[1]).toMatchObject({ x: 0, y: 96 + G })
   })
 
   test('group_cards → the member ids', () => {

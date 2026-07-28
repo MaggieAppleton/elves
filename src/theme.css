@@ -87,6 +87,13 @@
   --elves-on-primary:     oklch(0.99 0.008 195);  /* text on primary */
   --elves-focus-ring:     oklch(0.568 0.062 195 / 0.45);
 
+  /* ---- Snap halo — the field drawn behind a card and the card it is snapping
+     onto while a drag is live. Green because green is this palette's "yes,
+     this is happening" colour (primary, selection); kept very light and low
+     alpha so it reads as a wash under the cards, not a box around them. ---- */
+  --elves-snap-fill:   oklch(0.880 0.105 152 / 0.32);
+  --elves-snap-border: oklch(0.760 0.115 152 / 0.48);
+
   /* ---- Comment colour ramps — calm, desaturated bands. Each type gets a
      readable label colour, a very light tinted background, and a subtle tinted
      border. Freeform = yellow, weak-argument = orange, needs-evidence = red,

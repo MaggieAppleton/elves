@@ -1,0 +1,25 @@
+/* The wash behind a live snap. Positioned by inline transform in page space
+   (SnapHighlight.tsx); everything visual lives here. */
+.elves-snap-halo {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border-radius: 12px;
+  background: var(--elves-snap-fill);
+  border: 1px solid var(--elves-snap-border);
+  /* Purely an affordance: never eat a pointer event mid-drag. */
+  pointer-events: none;
+  /* Fades in so a snap engaging feels like a state change rather than a
+     flicker, but does not animate position — the box must track the dragged
+     card exactly or it lags behind the cursor. */
+  animation: elves-snap-halo-in 120ms ease-out;
+}
+
+@keyframes elves-snap-halo-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .elves-snap-halo { animation: none; }
+}
