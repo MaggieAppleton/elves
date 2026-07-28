@@ -11,8 +11,14 @@
   transform: translateX(-50%);
   z-index: 1000; /* above toolbar/switcher (which top out at 500) */
   width: min(560px, calc(100vw - 32px));
-  max-height: calc(100vh - 32px);
-  max-height: calc(100dvh - 32px);
+  /* The box grows with the conversation up to this cap. It sits 24px off the
+     bottom, so `100dvh - 72px` leaves a 48px strip of canvas visible above a
+     full-height box — enough to stay oriented in the document behind it.
+     The floor is the least height the box can do its job in: header, the
+     transcript's own floor, and an input row grown to its cap. A viewport too
+     short for both gives up the canvas strip rather than clipping the controls. */
+  max-height: max(188px, calc(100vh - 72px));
+  max-height: max(188px, calc(100dvh - 72px));
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -181,13 +187,19 @@
 }
 
 /* --- Transcript --------------------------------------------------------- */
+/* The only flexible child, so it alone decides how tall the box is. Basis `auto`
+   (not a fixed basis) is what makes the box grow with the conversation: the box
+   is content-sized, so there is never free space for a grow factor to hand out
+   and a fixed basis would simply *be* the height on every screen. Height is
+   capped by the box's own max-height, above — not here. */
 .elves-agentbox__transcript {
-  flex: 1 1 96px;
+  flex: 0 1 auto;
   box-sizing: border-box;
+  /* A floor so a short viewport still shows some of the reply; it scales away on
+     viewports too short to honour it. Shrinking below content size is what turns
+     the transcript into a scroller once the box hits its cap. */
   min-height: min(48px, 22vh);
   min-height: min(48px, 22dvh);
-  max-height: min(42vh, 500px);
-  max-height: min(42dvh, 500px);
   overflow-y: auto;
   overflow-x: hidden;
   padding: 12px 14px;
@@ -278,7 +290,8 @@
   flex: 1;
   box-sizing: border-box;
   resize: none;
-  /* Reserve the header, row padding, panel inset, and a readable transcript. */
+  /* Reserve the header, row padding, panel inset, and the transcript's floor, so
+     a long draft never grows the input past the box and clips its own controls. */
   max-height: clamp(36px, calc(100vh - 145px), 140px);
   max-height: clamp(36px, calc(100dvh - 145px), 140px);
   padding: 9px 12px;

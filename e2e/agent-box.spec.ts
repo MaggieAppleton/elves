@@ -224,6 +224,53 @@ test('a transcript and long prompt stay usable inside the agent box in a short v
   await expect(box).toBeHidden()
 })
 
+test('a long transcript grows the box towards the full height of a tall viewport', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.setViewportSize({ width: 1000, height: 900 })
+  await page.route('**/agent/run', (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body: sse([
+        dataFrame({ type: 'started' }),
+        ...Array.from({ length: 25 }, (_, i) =>
+          dataFrame({ type: 'text', text: `Paragraph ${i + 1} of the agent's reading of the canvas.` }),
+        ),
+        dataFrame({ type: 'done', reply: 'The conclusion needs stronger evidence.' }),
+      ]),
+    }),
+  )
+  await openReadyCanvas(page)
+
+  await page.keyboard.press('/')
+  await page.getByTestId('agent-input').fill('review this canvas')
+  await page.getByTestId('agent-send').click()
+  const transcript = page.getByTestId('agent-transcript')
+  await expect(transcript).toContainText('The conclusion needs stronger evidence.')
+
+  // The old inner cap was min(42dvh, 500px), which on a 900px viewport pinned the
+  // transcript at 378px however much the agent said. It now fills the box instead.
+  const transcriptBounds = (await transcript.boundingBox())!
+  expect(transcriptBounds.height).toBeGreaterThan(500)
+
+  // Growing upward must not push the box off the top or clip its own controls:
+  // the whole box stays on screen, with a strip of canvas left visible above it.
+  const boxBounds = (await page.locator('.elves-agentbox').boundingBox())!
+  expect(boxBounds.y).toBeGreaterThan(0)
+  expect(boxBounds.y + boxBounds.height).toBeLessThanOrEqual(900)
+  const inputRow = (await page.locator('.elves-agentbox__inputrow').boundingBox())!
+  expect(inputRow.y + inputRow.height).toBeLessThanOrEqual(boxBounds.y + boxBounds.height)
+
+  // The transcript scrolls rather than overflowing, and is pinned to the newest line.
+  const { scrollHeight, clientHeight, scrollTop } = await transcript.evaluate((el) => ({
+    scrollHeight: el.scrollHeight,
+    clientHeight: el.clientHeight,
+    scrollTop: el.scrollTop,
+  }))
+  expect(scrollHeight).toBeGreaterThan(clientHeight)
+  expect(scrollTop + clientHeight).toBeGreaterThanOrEqual(scrollHeight - 2)
+})
+
 test('/ is a literal slash while typing in the box, not a re-trigger', async ({ page }) => {
   await openReadyCanvas(page)
 
