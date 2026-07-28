@@ -11,14 +11,13 @@
   transform: translateX(-50%);
   z-index: 1000; /* above toolbar/switcher (which top out at 500) */
   width: min(560px, calc(100vw - 32px));
-  /* The box grows with the conversation up to this cap. It sits 24px off the
-     bottom, so `100dvh - 72px` leaves a 48px strip of canvas visible above a
-     full-height box — enough to stay oriented in the document behind it.
-     The floor is the least height the box can do its job in: header, the
-     transcript's own floor, and an input row grown to its cap. A viewport too
-     short for both gives up the canvas strip rather than clipping the controls. */
-  max-height: max(188px, calc(100vh - 72px));
-  max-height: max(188px, calc(100dvh - 72px));
+  /* The box grows with the conversation up to this cap. A cramped window gives
+     every pixel it can to the box: the header and input row cannot shrink and
+     the transcript stops at its own floor, so too tight a cap here clips the
+     send button off the bottom. The roomy case is relaxed by the media query
+     below. */
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -30,6 +29,18 @@
   color: var(--elves-ink);
   overflow: hidden;
   animation: elves-agentbox-rise 140ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Given room, hold the box 48px clear of the top so a strip of canvas stays
+   visible above it (it sits 24px off the bottom, hence 72px of total inset).
+   Worst-case chrome — header, transcript floor, and an input row grown to its
+   140px cap — is ~251px, so 400px is the point past which the extra inset is
+   affordable, with room to spare. */
+@media (min-height: 400px) {
+  .elves-agentbox {
+    max-height: calc(100vh - 72px);
+    max-height: calc(100dvh - 72px);
+  }
 }
 
 .elves-agentbox__header {

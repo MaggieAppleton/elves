@@ -50,21 +50,30 @@ All changes are in `src/components/agentBox.css`.
 
 ### `.elves-agentbox`
 
-`max-height` becomes `max(188px, calc(100dvh - 72px))` (with a `100vh` fallback
-line above it, matching the existing pattern).
+`max-height` stays at `calc(100dvh - 32px)`, and a `@media (min-height: 400px)`
+block relaxes it to `calc(100dvh - 72px)`. Both keep the `100vh` fallback line
+above the `dvh` one, matching the existing pattern.
 
-The panel sits at `bottom: 24px`, so the `calc` leaves a 48px strip of canvas
-visible above a full-height box — enough to stay oriented in the document, and
-in practice it clears the canvas toolbar.
+The box sits at `bottom: 24px`, so the roomy case leaves a 48px strip of canvas
+visible above a full-height box — enough to stay oriented in the document, and in
+practice it clears the canvas toolbar.
 
-The `188px` floor is load-bearing, and the first draft of this design omitted it.
-The box needs roughly 185px to lay out its own chrome: a 42px header, the
-transcript's 48px floor, and an input row grown to its cap (20px padding plus a
-75px textarea at that viewport). On a 220px-tall window, `100dvh - 72px` yields
-148px, and the box clips its own input row by 39px. Taking the larger of the two
-means a viewport too short for both gives up the canvas strip rather than the
-controls. `188px` is what the current `calc(100dvh - 32px)` already resolves to
-at that viewport, so short-viewport behaviour is unchanged.
+The threshold exists because the extra inset is not affordable on a short window.
+The header and input row have `flex-shrink: 0` and the transcript stops at its
+own floor, so once `header + transcript floor + input row` exceeds the cap the
+surplus is cut off by the box's `overflow: hidden` — the send button goes first.
+Worst-case chrome is about 251px: a 43px header, the transcript's 48px floor,
+20px of row padding, and a textarea at the 140px ceiling of
+`clamp(36px, calc(100dvh - 145px), 140px)`. At `100dvh - 72px` that needs a 323px
+window, so a 400px threshold clears it with room to spare, and below it the box
+behaves exactly as it does today.
+
+An earlier draft of this design used `max(188px, calc(100dvh - 72px))` instead.
+That is wrong, and instructively so. The 188px was fitted to the 220px viewport
+the test suite happened to exercise, but the textarea's own cap *grows* with the
+window, so the squeeze is worst in the middle of the range rather than at its
+short end. It clipped the send button by up to 29px between roughly 230px and
+320px tall — a band no test covered.
 
 ### `.elves-agentbox__input`
 
@@ -77,7 +86,7 @@ never grow the input past the box and clip its own controls.
 | Transcript | Panel |
 |---|---|
 | Empty | Header + input row only, as today (the transcript element is not rendered until `hasTranscript`). |
-| Two or three lines | Compact — about 340px on an 850px window. |
+| Two or three lines | Compact — about 205px on an 850px window. |
 | Long | Grows upward from the bottom anchor until 48px from the top of the window (778px on an 850px window, against 96px before), then the transcript scrolls with the header pinned above and the input row pinned below. |
 
 The auto-scroll effect in `AgentBox.tsx:139` keeps the newest line in view and
@@ -86,20 +95,22 @@ needs no change. The rise-in animation, the collapsed pill, and the
 
 ## Risks
 
-The `188px` floor can exceed the window on a viewport shorter than about 212px,
-where the box would overflow the top edge. That is the same trade the current
-code makes and no worse than it; the viewport is pathological.
+Nothing transitions the box's height, so during a long stream it now steps upward
+a line at a time where it previously sat still. Left alone for now: animating
+height is its own decision, and the jump is only visible while an agent is
+actively writing.
 
 ## Testing
 
-Add a case to `e2e/agent-box.spec.ts` that streams 25 paragraphs into a 900px-tall
-viewport and asserts:
+Two halves, in `e2e/agent-box.spec.ts`.
 
-- the transcript exceeds 500px, guarding against a reintroduced inner cap;
-- the box stays on screen top and bottom, and the input row is inside it,
-  guarding against the box growing past its shell and clipping its controls;
-- the transcript's `scrollHeight` exceeds its `clientHeight` and it is scrolled
-  to the bottom, guarding the overflow-and-follow behaviour.
+A tall-viewport case streams 25 paragraphs into a 900px-tall window and asserts
+the transcript exceeds 500px (it measures 96px before the change, so this fails
+hard on `main`), that the box stays on screen with a strip of canvas above it,
+and that the transcript overflows into a scroller pinned to its newest line.
 
-The existing short-viewport case at 220px is the counterweight, and is what
-caught the missing floor.
+The existing short-viewport case is generalised from a single 220px height into a
+sweep over 220, 260, 300, 340 and 420px, each with a ten-line draft in the input.
+The single height was the problem: 220px is the one short height the discarded
+`max(188px, …)` cap survived, so it passed while 260px and 300px clipped. The
+sweep fails on both under that cap and passes under the media query.

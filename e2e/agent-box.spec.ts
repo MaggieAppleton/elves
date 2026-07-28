@@ -171,9 +171,16 @@ test('the input grows to fit a multi-line message', async ({ page }) => {
   expect(tall).toBeGreaterThan(short)
 })
 
-test('a transcript and long prompt stay usable inside the agent box in a short viewport', async ({ page }) => {
+// Short windows are where the box is tightest: the header and input row cannot
+// shrink and the transcript stops at its own floor, so a cap even slightly too
+// small clips the send button off the bottom. Sweep the range rather than
+// spot-checking one height — the input's own max-height grows with the viewport
+// until it caps at ~285px tall, so the squeeze is worst in the middle of this
+// range, not at its short end.
+for (const height of [220, 260, 300, 340, 420]) {
+test(`a transcript and long prompt stay usable inside the agent box at ${height}px tall`, async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' })
-  await page.setViewportSize({ width: 800, height: 220 })
+  await page.setViewportSize({ width: 800, height })
   await page.route('**/agent/run', (route) =>
     route.fulfill({
       status: 200,
@@ -213,6 +220,9 @@ test('a transcript and long prompt stay usable inside the agent box in a short v
     expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(boxBounds!.y + boxBounds!.height)
   }
   expect((await transcript.boundingBox())!.height).toBeGreaterThanOrEqual(48)
+  // The box itself must fit the window, not just its children fit the box.
+  expect(boxBounds!.y).toBeGreaterThanOrEqual(0)
+  expect(boxBounds!.y + boxBounds!.height).toBeLessThanOrEqual(height)
 
   await input.focus()
   await page.keyboard.press('End')
@@ -223,6 +233,7 @@ test('a transcript and long prompt stay usable inside the agent box in a short v
   await page.getByTestId('agent-collapse').click()
   await expect(box).toBeHidden()
 })
+}
 
 test('a long transcript grows the box towards the full height of a tall viewport', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' })
@@ -256,19 +267,23 @@ test('a long transcript grows the box towards the full height of a tall viewport
   // Growing upward must not push the box off the top or clip its own controls:
   // the whole box stays on screen, with a strip of canvas left visible above it.
   const boxBounds = (await page.locator('.elves-agentbox').boundingBox())!
-  expect(boxBounds.y).toBeGreaterThan(0)
+  expect(boxBounds.y).toBeGreaterThanOrEqual(40)
   expect(boxBounds.y + boxBounds.height).toBeLessThanOrEqual(900)
   const inputRow = (await page.locator('.elves-agentbox__inputrow').boundingBox())!
   expect(inputRow.y + inputRow.height).toBeLessThanOrEqual(boxBounds.y + boxBounds.height)
 
-  // The transcript scrolls rather than overflowing, and is pinned to the newest line.
-  const { scrollHeight, clientHeight, scrollTop } = await transcript.evaluate((el) => ({
-    scrollHeight: el.scrollHeight,
-    clientHeight: el.clientHeight,
-    scrollTop: el.scrollTop,
-  }))
-  expect(scrollHeight).toBeGreaterThan(clientHeight)
-  expect(scrollTop + clientHeight).toBeGreaterThanOrEqual(scrollHeight - 2)
+  // The transcript scrolls rather than overflowing, and follows the newest line.
+  // Polled because the auto-scroll runs in a passive effect, after the paint that
+  // makes the final reply assertable above.
+  await expect
+    .poll(() =>
+      transcript.evaluate((el) => {
+        const overflowing = el.scrollHeight > el.clientHeight
+        const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 2
+        return overflowing && atBottom
+      }),
+    )
+    .toBe(true)
 })
 
 test('/ is a literal slash while typing in the box, not a re-trigger', async ({ page }) => {
