@@ -22,6 +22,7 @@ function expectedKinds(entry: PendingChangeSetV2): CreatedRecordKind[] | null {
       case 'create_figure_card':
       case 'create_section':
       case 'create_question':
+      case 'create_feedback':
         kinds.push(op.kind)
         break
       default:
@@ -36,6 +37,7 @@ function createdKind(record: DocumentRecord): CreatedRecordKind | null {
   if (record.typeName !== 'shape' || !isRecord(props)) return null
   if (record.type === 'section') return 'create_section'
   if (record.type === 'question') return 'create_question'
+  if (record.type === 'feedback') return 'create_feedback'
   if (record.type !== 'card') return null
   if (props.kind === 'figure') return 'create_figure_card'
   if (props.kind !== 'note') return null

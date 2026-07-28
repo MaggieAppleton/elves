@@ -85,6 +85,11 @@ function projectOp(op: Op): Op {
       return { kind: 'edit_section_text', sectionId: op.sectionId, text: op.text }
     case 'create_question':
       return { kind: 'create_question', text: op.text, x: op.x, y: op.y }
+    case 'create_feedback':
+      return { kind: 'create_feedback', text: op.text, x: op.x, y: op.y, feedback: {
+        type: op.feedback.type, reviewId: op.feedback.reviewId ?? null, reviewer: op.feedback.reviewer ?? null,
+      } }
+    case 'resolve_feedback': return { kind: 'resolve_feedback', feedbackId: op.feedbackId }
     case 'group_cards':
       return { kind: 'group_cards', cardIds: op.cardIds.map((cardId) => cardId) }
     case 'ungroup_cards':

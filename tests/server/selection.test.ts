@@ -48,6 +48,7 @@ const MAP: CardMap = {
   sections: [{ id: 'shape:s', text: 'Soil prep', x: 0, y: 0, authoredBy: 'user' }],
   questions: [{ id: 'shape:q', text: 'How deep?', x: 0, y: 0, authoredBy: 'claude', dismissed: false }],
   groups: [{ id: 'shape:g', cardIds: ['shape:c', 'shape:p'], memberCount: 2, bounds: { x: 0, y: 0, w: 2, h: 1 } }],
+  feedback: [],
 }
 
 test('enrichSelection reports each shape type with the right fields', () => {

@@ -290,6 +290,17 @@ export function createQuestionTool(
   ]))
 }
 
+export function createFeedbackTool(
+  baseUrl: string,
+  projectId: string,
+  args: { text: string; x: number; y: number; type?: CommentType | null; reviewId?: string | null; reviewer?: string | null },
+): Promise<void> {
+  return postChangeSet(baseUrl, projectId, makeChangeSet([
+    { kind: 'create_feedback', text: args.text, x: args.x, y: args.y,
+      feedback: { type: args.type ?? null, reviewId: args.reviewId ?? null, reviewer: args.reviewer ?? null } },
+  ]))
+}
+
 export function groupCardsTool(
   baseUrl: string,
   projectId: string,

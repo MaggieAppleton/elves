@@ -314,6 +314,7 @@ test('readMapTool reads the cheap map (gist, no full text) for the project', asy
     sections: [],
     questions: [],
     groups: [],
+    feedback: [],
   })
 })
 

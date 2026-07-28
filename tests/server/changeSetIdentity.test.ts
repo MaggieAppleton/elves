@@ -39,6 +39,8 @@ const ALL_OPS: { [Kind in Op['kind']]: Extract<Op, { kind: Kind }> } = {
   },
   edit_section_text: { kind: 'edit_section_text', sectionId: 'section-a', text: 'Section' },
   create_question: { kind: 'create_question', text: 'Question?', x: 1, y: 2 },
+  create_feedback: { kind: 'create_feedback', text: 'Feedback', x: 1, y: 2, feedback: { type: 'structure', reviewId: 'review-a', reviewer: 'architect' } },
+  resolve_feedback: { kind: 'resolve_feedback', feedbackId: 'feedback-a' },
   group_cards: { kind: 'group_cards', cardIds: ['card-a', 'card-b'] },
   ungroup_cards: { kind: 'ungroup_cards', groupId: 'group-a' },
   set_summary: {

@@ -250,13 +250,13 @@ export function canTransition(from: ReviewStatus, to: ReviewStatus): boolean {
 // pass bounded and quiet regardless of personality. Kept here (not in the MCP
 // layer) so the rules ship with the personality definitions they govern.
 const SHARED_RULES = `How to run the pass:
-1. Read the piece FIRST, in reading order, with read_draft — you are reviewing the piece, not the map. Then read_map (and read_cards where you need detail or existing comments) before writing anything.
-2. Tag EVERY comment with this pass's reviewId (add_comment's reviewId parameter) so the user's review panel can group your notes.
+1. Read the WHOLE CANVAS FIRST with read_map, then read_cards for every card on the scoped canvas so you inspect prose, notes, references, figures, and image metadata before writing anything. Use read_draft only as extra narrative-order context; this is a canvas-wide review, not a draft-only read.
+2. Tag EVERY annotation with this pass's reviewId. Use add_comment when one existing card is the clear subject. Use create_feedback when the finding concerns a relationship, cluster, missing bridge, or another observation with no single target; pass both reviewId and your reviewer personality. Place floating feedback beside its relevant cluster, or at the far-left global edge for essay-wide observations.
 3. Stay in character. Feedback outside your remit is dropped, not smuggled in as a freeform note — the other reviewers exist for a reason.
 4. Budgets are ceilings, not quotas. Survey the whole piece, then spend your comments on the strongest instances anywhere in it — not the first few you happen to meet. Two sharp notes are a better pass than eight dutiful ones.
 5. Never re-flag. A card already carrying an unresolved comment of the same type is flagged; a dismissed question is an answered "no". Check before you write.
-6. Comments are margin notes: one or two sentences, anchored in what the card actually says.
-7. Annotate only. During a pass you never move, merge, edit, or delete cards, and you create nothing except question cards within your budget.
+6. Feedback is a margin note: one or two sentences. An attached comment must be anchored in what its card actually says; floating feedback must name the relationship or absence it observes.
+7. Annotate only. During a pass you never move, merge, edit, or delete cards, and you create only feedback annotations and question cards within your budget.
 8. Finish by calling complete_review with a verdict: one to three sentences of honest overall read — including "this holds up" when it does. The verdict lives in the review panel, so don't repeat it as a comment.`
 
 /**

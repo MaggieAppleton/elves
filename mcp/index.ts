@@ -22,6 +22,7 @@ import {
   moveSectionsTool,
   editSectionTextTool,
   createQuestionTool,
+  createFeedbackTool,
   groupCardsTool,
   ungroupCardsTool,
   listProjectsTool,
@@ -289,6 +290,16 @@ export function createMcpServer(baseUrl: string): McpServer {
     async ({ project, text, x, y }) => {
       await createQuestionTool(baseUrl, project, { text, x, y })
       return { content: [{ type: 'text', text: 'question created' }] }
+    },
+  )
+
+  server.tool(
+    'create_feedback',
+    'Create a movable agent-authored feedback card when no single card is the right target. Put it beside the relevant cluster, or on the far-left global edge for essay-wide feedback. ONE sentence. During a review pass pass its reviewId and reviewer personality.',
+    { project: PROJECT, text: z.string(), x: z.number(), y: z.number(), type: COMMENT_TYPE.nullish(), reviewId: z.string().nullish(), reviewer: PERSONALITY.nullish() },
+    async ({ project, text, x, y, type, reviewId, reviewer }) => {
+      await createFeedbackTool(baseUrl, project, { text, x, y, type: type ?? null, reviewId: reviewId ?? null, reviewer: reviewer ?? null })
+      return { content: [{ type: 'text', text: 'feedback added' }] }
     },
   )
 

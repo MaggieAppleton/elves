@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useValue, type Editor } from 'tldraw'
 import type { CardShape } from '../shapes/CardShapeUtil'
+import type { FeedbackShape } from '../shapes/FeedbackShapeUtil'
 import { agentInfo } from '../shapes/agents'
 import {
   PERSONALITIES, PERSONALITY_IDS, type PersonalityId, type Review,
@@ -46,6 +47,13 @@ function passCards(editor: Editor, reviewId: string): CardShape[] {
     .filter((s) => s.props.comments.some((c) => c.reviewId === reviewId))
 }
 
+function passFeedback(editor: Editor, reviewId: string): FeedbackShape[] {
+  return editor.getCurrentPageShapes()
+    .filter((shape) => shape.type === 'feedback')
+    .map((shape) => shape as FeedbackShape)
+    .filter((shape) => shape.props.reviewId === reviewId)
+}
+
 function passTally(editor: Editor | null, review: Review): { open: number; total: number } {
   if (!editor) return { open: 0, total: review.commentCount }
   let open = 0
@@ -57,9 +65,21 @@ function passTally(editor: Editor | null, review: Review): { open: number; total
       if (!c.resolved) open++
     }
   }
+  for (const feedback of passFeedback(editor, review.id)) {
+    total++
+    if (!feedback.props.resolved) open++
+  }
   // Cards can be deleted after a pass; the completion stamp is the floor of
   // what the pass actually left, so show whichever story is larger.
   return { open, total: Math.max(total, review.commentCount) }
+}
+
+function resolvedFeedback(editor: Editor | null): FeedbackShape[] {
+  if (!editor) return []
+  return editor.getCurrentPageShapes()
+    .filter((shape): shape is FeedbackShape => shape.type === 'feedback')
+    .filter((shape) => shape.props.resolved)
+    .sort((a, b) => a.id.localeCompare(b.id))
 }
 
 function EyeglassesIcon() {
@@ -122,6 +142,11 @@ export function ReviewPanel({
     },
     [editor, reviews],
   )
+  const resolved = useValue(
+    'resolved feedback stack',
+    () => resolvedFeedback(editor),
+    [editor],
+  )
 
   if (!projectId) return null
 
@@ -134,7 +159,7 @@ export function ReviewPanel({
   // into view — the report is a doorway back to the margins, not just a number.
   const jumpToPass = (review: Review) => {
     if (!editor) return
-    const ids = passCards(editor, review.id).map((s) => s.id)
+    const ids = [...passCards(editor, review.id), ...passFeedback(editor, review.id)].map((s) => s.id)
     if (!ids.length) return
     editor.select(...ids)
     editor.zoomToSelection({ animation: { duration: 320 } })
@@ -167,6 +192,24 @@ export function ReviewPanel({
           />
         )}
       </button>
+      {resolved.length > 0 && (
+        <div className="elves-review__resolved-stack" data-feedback-stack aria-label="Resolved feedback">
+          <div className="elves-review__resolved-heading">Resolved feedback · {resolved.length}</div>
+          {resolved.reverse().map((feedback) => {
+            const persona = feedback.props.reviewer && feedback.props.reviewer in PERSONALITIES
+              ? PERSONALITIES[feedback.props.reviewer as PersonalityId]
+              : null
+            const agent = agentInfo(feedback.props.authoredBy)
+            return <div className="elves-review__resolved-item" key={feedback.id}>
+              <span className="elves-review__resolved-meta" style={persona ? { color: personalityTone(persona.id) } : undefined}>
+                {persona?.name ?? 'Agent feedback'}{persona && agent ? ` · ${agent.name}` : !persona ? ` · ${agent?.name ?? feedback.props.authoredBy}` : ''}
+                {feedback.props.type ? ` · ${feedback.props.type.replaceAll('-', ' ')}` : ''}
+              </span>
+              <span>{mechanicalGist(feedback.props.text, 80)}</span>
+            </div>
+          })}
+        </div>
+      )}
       {open && (
         <div className="elves-review__menu" role="menu" data-testid="review-menu">
           <div className="elves-review__heading">Summon a reviewer</div>

@@ -9,6 +9,7 @@ import { measuredCardPropsHeight } from './shapes/autosize'
 import { cardIsHidden, collapseAll } from './shapes/mergeView'
 import { SectionShapeUtil, SectionShape } from './shapes/SectionShapeUtil'
 import { QuestionShapeUtil } from './shapes/QuestionShapeUtil'
+import { FeedbackShapeUtil } from './shapes/FeedbackShapeUtil'
 import {
   makeProseCardProps, makeNoteCardProps, makeImageNoteCardProps, makeReferenceCardProps,
   makeFigureCardProps,
@@ -54,7 +55,7 @@ import {
 } from './client/appCanvasMount'
 import { createPointerDragManager, type PointerDragManager } from './client/dividerDrag'
 
-const shapeUtils = [CardShapeUtil, SectionShapeUtil, QuestionShapeUtil]
+const shapeUtils = [CardShapeUtil, SectionShapeUtil, QuestionShapeUtil, FeedbackShapeUtil]
 const components = { SelectionForeground: CardSelectionForeground }
 const canvasTransport = {
   load: loadCanvasVersioned,

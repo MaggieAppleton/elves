@@ -9,6 +9,7 @@ import {
 } from '../src/model/cards'
 import { makeSectionProps } from '../src/model/sections'
 import { makeQuestionProps, QUESTION_DEFAULT_H, QUESTION_DEFAULT_W } from '../src/model/questions'
+import { makeFeedbackProps } from '../src/model/feedback'
 import { reattribute } from '../src/model/attribution'
 import { resolvePageXY } from './digest'
 import {
@@ -29,6 +30,11 @@ function findCardShape(store: StoreRecords, id: string): any | undefined {
 function findQuestionShape(store: StoreRecords, id: string): any | undefined {
   const r = store[id]
   return r && r.typeName === 'shape' && r.type === 'question' ? r : undefined
+}
+
+function findFeedbackShape(store: StoreRecords, id: string): any | undefined {
+  const r = store[id]
+  return r && r.typeName === 'shape' && r.type === 'feedback' ? r : undefined
 }
 
 /** A card's stored height is understated until the browser measures it to fit
@@ -389,6 +395,22 @@ export function applyChangeSetToSnapshot(
           index: getIndexAbove(topIndex(store)),
           props,
         }
+        break
+      }
+      case 'create_feedback': {
+        const id = createShapeId()
+        const props = makeFeedbackProps(op.text, cs.author, op.feedback)
+        store[id] = {
+          id, typeName: 'shape', type: 'feedback', x: op.x, y: op.y, rotation: 0,
+          isLocked: false, opacity: 1,
+          meta: acceptedTokenStamp ? { [CHANGE_SET_STAMP_META_KEY]: acceptedTokenStamp } : {},
+          parentId: defaultPageId(store), index: getIndexAbove(topIndex(store)), props,
+        }
+        break
+      }
+      case 'resolve_feedback': {
+        const shape = findFeedbackShape(store, op.feedbackId)
+        if (shape) shape.props.resolved = true
         break
       }
       case 'group_cards': {
