@@ -23,6 +23,7 @@ import {
   editSectionTextTool,
   createQuestionTool,
   createFeedbackTool,
+  resolveFeedbackTool,
   groupCardsTool,
   ungroupCardsTool,
   listProjectsTool,
@@ -70,7 +71,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'read_map',
-    "Read a project's canvas MAP — the cheap, token-light first pass. Returns { cards, sections, questions, groups }. Each card is a small entry: id, kind (prose|note|figure), noteKind (text|image|reference), x/y position (x is narrative order: left=earlier, right=later), `gist` (a one-line summary of the card — a model-authored summary for long cards, else the card's own short text; for a figure card the gist is its title), `textLen` (character count of the full text), and — when set — `mergedInto`, `refType`, and `figureStatus` (idea|sketched|final, on figure cards). It does NOT include full card text, comment bodies, or reference metadata. A `figure` card is a placeholder for a PLANNED VISUAL (see create_figure_card) — use the map to see which visuals are already planned so you don't suggest a duplicate. Sections: id, text (a short thematic label), x/y, authoredBy (`user`, or an agent id such as `claude`). Questions: id, text (a question you or another agent asked), x/y, authoredBy, and `dismissed` — the user hides a question once they've answered or waved it off; check these before asking, and NEVER re-ask a dismissed one (it's an answered \"no\"). Groups: id, cardIds, memberCount, bounds — a set of cards bound to travel together (see group_cards); each grouped card also carries a `groupId`. Call this FIRST (with the project id) to see the shape of the piece and get ids; then call read_cards for the few cards you actually need in full before commenting, merging, moving, renaming, questioning, or enriching.",
+    "Read a project's canvas MAP — the cheap, token-light first pass. Returns { cards, sections, questions, groups, feedback }. Each card is a small entry: id, kind (prose|note|figure), noteKind (text|image|reference), x/y position (x is narrative order: left=earlier, right=later), `gist` (a one-line summary of the card — a model-authored summary for long cards, else the card's own short text; for a figure card the gist is its title), `textLen` (character count of the full text), and — when set — `mergedInto`, `refType`, and `figureStatus` (idea|sketched|final, on figure cards). It does NOT include full card text, comment bodies, or reference metadata. A `figure` card is a placeholder for a PLANNED VISUAL (see create_figure_card) — use the map to see which visuals are already planned so you don't suggest a duplicate. Sections: id, text (a short thematic label), x/y, authoredBy (`user`, or an agent id such as `claude`). Questions: id, text (a question you or another agent asked), x/y, authoredBy, and `dismissed` — the user hides a question once they've answered or waved it off; check these before asking, and NEVER re-ask a dismissed one (it's an answered \"no\"). Feedback includes active AND resolved floating annotations with text, x/y, authoredBy, type, reviewId, reviewer, and resolved; check it before writing so you never repeat feedback the user already resolved. Groups: id, cardIds, memberCount, bounds — a set of cards bound to travel together (see group_cards); each grouped card also carries a `groupId`. Call this FIRST (with the project id) to see the shape of the piece and get ids; then call read_cards for the cards you need in full before commenting, merging, moving, renaming, questioning, or enriching.",
     { project: PROJECT },
     async ({ project }) => ({
       content: [{ type: 'text', text: JSON.stringify(await readMapTool(baseUrl, project)) }],
@@ -97,7 +98,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'read_selection',
-    "Read what the user currently has SELECTED on the canvas. Call this FIRST whenever the user refers to their selection deictically — \"this\", \"these\", \"here\", \"the selected card(s)\", \"what I've got highlighted\" — where the referent is on the canvas, not in the chat. Takes NO arguments: it returns which `project` the selection is in, so you can resolve \"find more about this\" without knowing the project first (then use that id for read_cards, create_reference, etc.). Returns { project, selection, selectedAt }: `selection` is the selected shapes in the order the user picked them — each a card ({ id, type:'card', kind, gist }), a section ({ type:'section', text }), a question ({ type:'question', text }), or a group ({ type:'group', memberCount }). `gist` is a one-line summary (as in read_map); drill into full card text with read_cards. `selectedAt` is when the selection was made (ISO) — if it's old relative to the conversation, the user may have moved on, so confirm rather than assume. An empty `selection` (and absent `project`) means nothing is selected right now — ask the user what they mean rather than guessing.",
+    "Read what the user currently has SELECTED on the canvas. Call this FIRST whenever the user refers to their selection deictically — \"this\", \"these\", \"here\", \"the selected card(s)\", \"what I've got highlighted\" — where the referent is on the canvas, not in the chat. Takes NO arguments: it returns which `project` the selection is in, so you can resolve \"find more about this\" without knowing the project first (then use that id for read_cards, create_reference, etc.). Returns { project, selection, selectedAt }: `selection` is the selected shapes in the order the user picked them — each a card ({ id, type:'card', kind, gist }), a section ({ type:'section', text }), a question ({ type:'question', text }), feedback ({ id, type:'feedback', text, authoredBy, feedbackType, reviewId, reviewer, resolved }), or a group ({ type:'group', memberCount }). `gist` is a one-line summary (as in read_map); drill into full card text with read_cards. `selectedAt` is when the selection was made (ISO) — if it's old relative to the conversation, the user may have moved on, so confirm rather than assume. An empty `selection` (and absent `project`) means nothing is selected right now — ask the user what they mean rather than guessing.",
     {},
     async () => ({
       content: [{ type: 'text', text: JSON.stringify(await readSelectionTool(baseUrl)) }],
@@ -133,7 +134,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'start_review',
-    "Open a REVIEW PASS and receive its working brief. Two ways in: pass `reviewId` to CLAIM a pending pass the user summoned from the app (from list_reviews — always check for one first), or pass `personality` to start an ad-hoc pass when the user asks for that kind of read in chat ('play devil's advocate', 'where do I need citations?', 'help me tighten this', 'read it cold', 'check the structure'). Never open an ad-hoc pass when a pending one of the same personality is waiting — claim it instead. Returns { reviewId, personality, focus, instructions }: follow the instructions exactly — read the draft first, stay in character, respect the comment/question budgets, tag EVERY comment with the reviewId — then finish with complete_review. The five personalities: devils-advocate (argues back: counterpoints, weak reasoning), fact-checker (unsupported claims, missing citations), trimmer (concision: what to compress, never rewrites), first-reader (a cold reader's confusion), architect (structure: order, bridges, shape).",
+    "Open a REVIEW PASS and receive its working brief. Two ways in: pass `reviewId` to CLAIM a pending pass the user summoned from the app (from list_reviews — always check for one first), or pass `personality` to start an ad-hoc pass when the user asks for that kind of read in chat ('play devil's advocate', 'where do I need citations?', 'help me tighten this', 'read it cold', 'check the structure'). Never open an ad-hoc pass when a pending one of the same personality is waiting — claim it instead. Returns { reviewId, personality, focus, instructions }: follow the instructions exactly — read the whole canvas map and every scoped card first, stay in character, respect the annotation/question budgets, tag every annotation with the reviewId, then finish with complete_review. The five personalities: devils-advocate (argues back: counterpoints, weak reasoning), fact-checker (unsupported claims, missing citations), trimmer (concision: what to compress, never rewrites), first-reader (a cold reader's confusion), architect (structure: order, bridges, shape).",
     {
       project: PROJECT,
       reviewId: z.string().optional().describe('A pending review to claim, from list_reviews.'),
@@ -154,7 +155,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
   server.tool(
     'complete_review',
-    "Close a review pass with your VERDICT: one to three sentences of honest overall read — the through-line of what you found, including 'this holds up' when it does. The verdict appears in the user's review panel (don't also leave it as a comment). Call this exactly once, after your last comment/question of the pass; the server stamps the pass's comment count at this moment. Also tell the user the verdict in chat.",
+    "Close a review pass with your VERDICT: one to three sentences of honest overall read — the through-line of what you found, including 'this holds up' when it does. The verdict appears in the user's review panel (don't also leave it as feedback). Call this exactly once, after your last annotation or question of the pass; the server stamps the pass's annotation count at this moment. Also tell the user the verdict in chat.",
     { project: PROJECT, reviewId: z.string(), verdict: z.string() },
     async ({ project, reviewId, verdict }) => {
       const review = await completeReviewTool(baseUrl, project, { reviewId, verdict })
@@ -304,6 +305,16 @@ export function createMcpServer(baseUrl: string): McpServer {
   )
 
   server.tool(
+    'resolve_feedback',
+    'Resolve a floating feedback annotation only when the user explicitly asks you to dismiss that specific item. Get the feedbackId from read_map or read_selection. Resolution removes it from the active canvas but preserves it in the shared feedback history.',
+    { project: PROJECT, feedbackId: z.string() },
+    async ({ project, feedbackId }) => {
+      await resolveFeedbackTool(baseUrl, project, feedbackId)
+      return { content: [{ type: 'text', text: 'feedback resolved' }] }
+    },
+  )
+
+  server.tool(
     'group_cards',
     "Group cards so they TRAVEL TOGETHER on the canvas — a mechanical binding (a tldraw group), like selecting cards and choosing Group. Once grouped, moving any of them moves the whole set, so their spatial relationship is preserved when the piece is rearranged. Use it for cards that must stay adjacent: a note and the reference cards that annotate it (so the sources ride along with the note), or a tight narrative cluster. read_map already shows a `groups[]` list (each with its member cardIds and bounds) plus a `groupId` on each grouped card, so you can see what is already bound before adding more. Pass 2 or more card ids. The group carries no label or meaning — it is purely 'these move together'.",
     { project: PROJECT, cardIds: z.array(z.string()).min(2) },
@@ -348,7 +359,7 @@ export function createMcpServer(baseUrl: string): McpServer {
 
 1. Pick the project: ${project ? `use '${project}'.` : 'call list_projects and confirm with me if it is ambiguous.'}
 2. Check list_reviews first — if a pending '${id}' pass is already waiting, claim it with start_review(reviewId); otherwise open an ad-hoc pass with start_review(personality: '${id}'${focus ? `, focus: ${JSON.stringify(focus)}` : ''}).
-3. Follow the brief it returns exactly: read the draft first, stay in character, respect the budgets, and tag every comment with the pass's reviewId.
+3. Follow the brief it returns exactly: read the whole scoped canvas first, stay in character, respect the budgets, and tag every annotation with the pass's reviewId.
 4. Finish with complete_review and tell me the verdict here.`,
           },
         }],

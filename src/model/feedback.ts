@@ -15,6 +15,14 @@ export interface FeedbackProps {
 export const FEEDBACK_DEFAULT_W = CARD_DEFAULT_W
 export const FEEDBACK_DEFAULT_H = 96
 
+/** Resolved feedback stays in the document for history, but leaves the active
+ * canvas entirely — both rendering and hit-testing. */
+export function feedbackIsHidden(
+  shape: { type: string; props: { resolved?: boolean } },
+): boolean {
+  return shape.type === 'feedback' && shape.props.resolved === true
+}
+
 export function makeFeedbackProps(
   text = '', authoredBy = 'claude',
   metadata: Partial<Pick<FeedbackProps, 'type' | 'reviewId' | 'reviewer'>> = {},

@@ -301,6 +301,16 @@ export function createFeedbackTool(
   ]))
 }
 
+export function resolveFeedbackTool(
+  baseUrl: string,
+  projectId: string,
+  feedbackId: string,
+): Promise<void> {
+  return postChangeSet(baseUrl, projectId, makeChangeSet([
+    { kind: 'resolve_feedback', feedbackId },
+  ]))
+}
+
 export function groupCardsTool(
   baseUrl: string,
   projectId: string,

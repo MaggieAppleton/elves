@@ -1,5 +1,6 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
 import { BASE, resetProject, serverCardIds } from './helpers'
+import { createFeedbackTool } from '../mcp/tools'
 
 let projectId: string
 
@@ -151,6 +152,31 @@ test('summoning runs a full pass in-app', async ({ page, request }) => {
   // The old "wait for an external agent" hint is gone entirely — the app runs
   // the pass itself now.
   await expect(page.getByTestId('review-hint')).toHaveCount(0)
+})
+
+test('resolved floating feedback leaves the canvas and can be restored from review home', async ({ page }) => {
+  await openCanvas(page)
+  await page.getByTestId('new-prose').click()
+  await page.keyboard.press('Escape')
+
+  await createFeedbackTool(BASE, projectId, {
+    text: 'The middle needs a bridge',
+    x: 80,
+    y: 80,
+    type: 'structure',
+    reviewer: 'architect',
+  })
+
+  const feedback = page.locator('.elves-feedback', { hasText: 'The middle needs a bridge' })
+  await expect(feedback).toBeVisible()
+  await feedback.getByRole('button', { name: 'Resolve feedback' }).click()
+  await expect(feedback).toHaveCount(0)
+
+  const restore = page.getByRole('button', { name: 'Restore feedback: The middle needs a bridge' })
+  await expect(restore).toBeVisible()
+  await restore.click()
+  await expect(feedback).toBeVisible()
+  await expect(restore).toHaveCount(0)
 })
 
 test('a failing run marks the pass failed, with Retry', async ({ page }) => {

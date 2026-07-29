@@ -259,11 +259,10 @@ Run: `npm run typecheck`
 
 Run: `npm test -- --maxWorkers=1 --minWorkers=1`
 
-Run: `npm run build:local`
+Run: `npm run build`
 
 - [ ] **Step 5: Review the diff and commit**
 
 Run: `git diff --check && git status --short`
 
 Commit: `git commit -am "Document canvas-wide agent feedback"`
-

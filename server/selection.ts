@@ -47,13 +47,24 @@ export function createSelectionStore(): SelectionStore {
  * One selected shape, enriched from the canvas map so the agent gets enough to
  * orient in a single call. Cards carry their kind + gist (the same one-line
  * summary `read_map` shows); sections and questions carry their label/question
- * text; groups carry their member count. The agent drills into card text with
- * read_cards when it needs the full content.
+ * text; feedback carries its immutable text and provenance; groups carry their
+ * member count. The agent drills into card text with read_cards when it needs
+ * the full content.
  */
 export type SelectedShape =
   | { id: string; type: 'card'; kind: CardKind; gist: string }
   | { id: string; type: 'section'; text: string }
   | { id: string; type: 'question'; text: string }
+  | {
+      id: string
+      type: 'feedback'
+      text: string
+      authoredBy: string
+      feedbackType: string | null
+      reviewId: string | null
+      reviewer: string | null
+      resolved: boolean
+    }
   | { id: string; type: 'group'; memberCount: number }
 
 /**
@@ -67,6 +78,18 @@ export function enrichSelection(map: CardMap, shapeIds: string[]): SelectedShape
   for (const c of map.cards) byId.set(c.id, { id: c.id, type: 'card', kind: c.kind, gist: c.gist })
   for (const s of map.sections) byId.set(s.id, { id: s.id, type: 'section', text: s.text })
   for (const q of map.questions) byId.set(q.id, { id: q.id, type: 'question', text: q.text })
+  for (const f of map.feedback) {
+    byId.set(f.id, {
+      id: f.id,
+      type: 'feedback',
+      text: f.text,
+      authoredBy: f.authoredBy,
+      feedbackType: f.type,
+      reviewId: f.reviewId,
+      reviewer: f.reviewer,
+      resolved: f.resolved,
+    })
+  }
   for (const g of map.groups) byId.set(g.id, { id: g.id, type: 'group', memberCount: g.memberCount })
   return shapeIds.map((id) => byId.get(id)).filter((s): s is SelectedShape => s !== undefined)
 }

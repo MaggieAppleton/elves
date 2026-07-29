@@ -48,14 +48,23 @@ const MAP: CardMap = {
   sections: [{ id: 'shape:s', text: 'Soil prep', x: 0, y: 0, authoredBy: 'user' }],
   questions: [{ id: 'shape:q', text: 'How deep?', x: 0, y: 0, authoredBy: 'claude', dismissed: false }],
   groups: [{ id: 'shape:g', cardIds: ['shape:c', 'shape:p'], memberCount: 2, bounds: { x: 0, y: 0, w: 2, h: 1 } }],
-  feedback: [],
+  feedback: [{
+    id: 'shape:f', text: 'The middle needs a bridge', x: -100, y: 20,
+    authoredBy: 'codex', type: 'structure', reviewId: 'review-a',
+    reviewer: 'architect', resolved: false,
+  }],
 }
 
 test('enrichSelection reports each shape type with the right fields', () => {
-  expect(enrichSelection(MAP, ['shape:c', 'shape:s', 'shape:q', 'shape:g'])).toEqual([
+  expect(enrichSelection(MAP, ['shape:c', 'shape:s', 'shape:q', 'shape:f', 'shape:g'])).toEqual([
     { id: 'shape:c', type: 'card', kind: 'note', gist: 'compost ratios' },
     { id: 'shape:s', type: 'section', text: 'Soil prep' },
     { id: 'shape:q', type: 'question', text: 'How deep?' },
+    {
+      id: 'shape:f', type: 'feedback', text: 'The middle needs a bridge',
+      authoredBy: 'codex', feedbackType: 'structure', reviewId: 'review-a',
+      reviewer: 'architect', resolved: false,
+    },
     { id: 'shape:g', type: 'group', memberCount: 2 },
   ])
 })
@@ -102,6 +111,13 @@ const CANVAS = {
         id: 'shape:q', typeName: 'shape', type: 'question', parentId: 'page:p', x: 0, y: 0,
         props: { w: 200, h: 80, text: 'How deep should the beds be?', authoredBy: 'claude', dismissed: false },
       },
+      'shape:f': {
+        id: 'shape:f', typeName: 'shape', type: 'feedback', parentId: 'page:p', x: -100, y: 20,
+        props: {
+          w: 240, h: 96, text: 'The middle needs a bridge', authoredBy: 'codex',
+          type: 'structure', reviewId: 'review-a', reviewer: 'architect', resolved: false,
+        },
+      },
       'shape:grp': { id: 'shape:grp', typeName: 'shape', type: 'group', parentId: 'page:p', x: 0, y: 0, props: {} },
       'shape:m1': {
         id: 'shape:m1', typeName: 'shape', type: 'card', parentId: 'shape:grp', x: 0, y: 200,
@@ -133,7 +149,7 @@ test('a reported selection comes back enriched with project, gists, and a timest
   await seed(app)
   const post = await request(app)
     .post('/projects/garden/selection')
-    .send({ shapeIds: ['shape:card', 'shape:sec', 'shape:q', 'shape:grp'] })
+    .send({ shapeIds: ['shape:card', 'shape:sec', 'shape:q', 'shape:f', 'shape:grp'] })
   expect(post.status).toBe(200)
 
   const res = await request(app).get('/selection')
@@ -144,6 +160,11 @@ test('a reported selection comes back enriched with project, gists, and a timest
     { id: 'shape:card', type: 'card', kind: 'prose', gist: 'the bed layout matters' },
     { id: 'shape:sec', type: 'section', text: 'Soil prep' },
     { id: 'shape:q', type: 'question', text: 'How deep should the beds be?' },
+    {
+      id: 'shape:f', type: 'feedback', text: 'The middle needs a bridge',
+      authoredBy: 'codex', feedbackType: 'structure', reviewId: 'review-a',
+      reviewer: 'architect', resolved: false,
+    },
     { id: 'shape:grp', type: 'group', memberCount: 2 },
   ])
 })

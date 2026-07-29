@@ -3,5 +3,5 @@
 .elves-feedback__meta { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; color: var(--elves-ink-faint); font-size: 11px; font-weight: 600; text-transform: capitalize; }
 .elves-feedback__meta span { color: var(--elves-primary-strong); }
 .elves-feedback__text { font-size: 14px; line-height: 1.4; }
-.elves-feedback__resolve { margin-left: auto; border: 0; border-radius: 4px; background: transparent; color: var(--elves-ink-faint); cursor: pointer; font: inherit; }
+.elves-feedback__resolve { margin-left: auto; border: 0; border-radius: 4px; background: transparent; color: var(--elves-ink-faint); cursor: pointer; font: inherit; pointer-events: all; }
 .elves-feedback__resolve:hover { background: var(--elves-tertiary); color: var(--elves-ink); }

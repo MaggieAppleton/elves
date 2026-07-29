@@ -42,4 +42,3 @@ Resolving or dismissing a floating comment removes it from the active working ca
 ## Validation
 
 Cover the shared feedback actions; anchored and floating placement; immutable agent text with human movement; resolve-to-stack behavior; provenance display; canvas-wide reviewer inputs; duplicate suppression; retry safety; and the relocated review home.
-
