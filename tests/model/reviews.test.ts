@@ -207,10 +207,10 @@ describe('composeBrief', () => {
     expect(brief).toContain(p.brief)
   })
 
-  test('states the comment/question budget when the personality asks questions', () => {
+  test('states the annotation/question budget when the personality asks questions', () => {
     const p = PERSONALITIES['devils-advocate']
     const brief = composeBrief(p, null)
-    expect(brief).toContain(`at most ${p.maxComments} comments`)
+    expect(brief).toContain(`at most ${p.maxComments} annotations`)
     expect(brief).toContain(`${p.maxQuestions} question cards`)
   })
 
@@ -224,6 +224,8 @@ describe('composeBrief', () => {
   test('includes the shared pass rules', () => {
     const brief = composeBrief(PERSONALITIES.architect, null)
     expect(brief).toContain('How to run the pass:')
+    expect(brief).toContain('resolved floating feedback')
+    expect(brief).toContain('retry')
     expect(brief).toContain('complete_review')
   })
 

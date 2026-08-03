@@ -22,7 +22,9 @@ It's a writing app where **agents collaborate with you but never write for you.*
 
 **Comments.** An agent flags weak spots in your prose — `needs-evidence`, `weak-argument`, `needs-citation`, `wants-figure`, `counterpoint`, `tighten`, `unclear`, `structure`, or a freeform note — each individually resolvable. Always agent-authored; it comments on your prose, never rewrites it.
 
-**Review passes.** Summon one of five reviewer personalities — Devil's Advocate, The Fact-Checker, The Trimmer, The First Reader, The Architect — for a bounded, in-character editorial pass: each reads for one thing only, works within a comment/question budget, and ends with a short verdict. Click **Review** in the topbar to summon one (with an optional focus note) and watch the pass move from pending to claimed to verdict, or ask your agent in chat ("play devil's advocate on my draft") and its MCP prompt does the same thing without the app. Either way, an agent picks up the pass and annotates the canvas — the app itself never runs a review.
+**Floating feedback.** When a finding concerns a relationship, cluster, missing bridge, or the canvas as a whole rather than one card, an agent leaves a movable feedback card nearby. You can move or resolve it, but its agent-authored words stay immutable. Resolved items leave the working canvas and collect in one shared history above the bottom-right Review home, where you can restore them at their original positions.
+
+**Review passes.** Summon one of five reviewer personalities — Devil's Advocate, The Fact-Checker, The Trimmer, The First Reader, The Architect — for a bounded, in-character editorial pass: each reads the whole scoped canvas for one thing only, works within a shared attached/floating annotation budget, and ends with a short verdict. Click **Review** at the bottom-right to launch one with an optional focus note, or ask your agent in chat ("play devil's advocate on my canvas"). A review can attach feedback to one card or float it beside a relationship or gap.
 
 **Merge duplicates.** Near-identical note cards collapse under one representative (the rest hidden but recoverable) with an "N merged" badge.
 
@@ -34,11 +36,11 @@ It's a writing app where **agents collaborate with you but never write for you.*
 
 **Summaries & the zoom-out map.** Every note and prose card gets a one-line **summary** generated **locally by [Ollama](https://ollama.com)**. Zoom out past ~70% and each card shows its summary instead of its full text (orange, one uniform readable size, cards grow to fit so nothing is cut off) — so a big piece reads at a glance. No Ollama? Summaries just stay empty and nothing breaks.
 
-**Linear draft — read the canvas as a piece.** A **draft drawer** slides in from the right edge — pull it out with the **«** tab, or cycle **Canvas · Split · Draft** with `⌘/Ctrl + \` (add `⇧` to walk back) — compiling your prose cards into one continuous reading pane, in true narrative order: **sections** run left → right as the order of the piece, and **within a section** cards run top → bottom. Click any paragraph to jump to its card on the canvas; **Copy as Markdown** exports the whole thing with `##` headings. Only prose compiles (notes, figures, and questions stay off the page), and you can opt any card out of the draft so an aside doesn't read as part of the piece. It's read-only — the canvas stays the one place prose is written — and an agent reads the very same compile through `read_draft`.
+**Linear draft — read the canvas as a piece.** A **draft drawer** slides in from the right edge — pull it out with the **«** tab, or cycle **Canvas · Split · Draft** with `⌘/Ctrl + \` (add `⇧` to walk back) — compiling your prose cards into one continuous reading pane, in true narrative order: **sections** run left → right as the order of the piece, and **within a section** cards run top → bottom. Click any paragraph to jump to its card on the canvas; **Copy as Markdown** exports the whole thing with `##` headings. Only prose compiles (notes, figures, questions, and feedback stay off the page), and you can opt any card out of the draft so an aside doesn't read as part of the piece. It's read-only — the canvas stays the one place prose is written — and an agent reads the very same compile through `read_draft`.
 
 **Projects.** Keep several pieces at once, each a self-contained, portable folder; create / switch / rename from the toolbar.
 
-**Agents via MCP.** With the app running, an agent works the canvas through a scoped [MCP](https://modelcontextprotocol.io) server — Claude, Codex, GitHub Copilot, or any other MCP-capable tool. It **reads** with `list_projects`, `read_map` (a cheap, token-light map with a one-line gist per card, plus the section and group lists), `read_cards` (full text on demand), `read_draft` (the piece as one linear draft), and `read_selection` (the cards you've selected on the canvas right now). It **organizes and critiques** with `add_comment`, `merge_notes`, `move_cards`, `create_note_card` (transcribe), `create_reference`, `create_figure_card`, `create_question`, `create_section` / `edit_section_text` / `move_sections`, and `group_cards` / `ungroup_cards`. It runs **review passes** with `list_reviews`, `start_review`, and `complete_review` — bounded, in-character editorial reads it discovers pending or opens ad-hoc. It can `edit_card` (a note's body, a reference's annotation, or a figure's title/description) and `delete_card` — but only for working-material cards it authored. Every tool targets a specific project, and **none can write your prose**.
+**Agents via MCP.** With the app running, an agent works the canvas through a scoped [MCP](https://modelcontextprotocol.io) server — Claude, Codex, GitHub Copilot, or any other MCP-capable tool. It **reads** with `list_projects`, `read_map` (a cheap map with card gists plus sections, groups, questions, and active/resolved feedback), `read_cards` (full text on demand), `read_draft` (the piece as one linear draft), and `read_selection` (the shapes you've selected on the canvas right now). It **organizes and critiques** with `add_comment`, `create_feedback` / `resolve_feedback`, `merge_notes`, `move_cards`, `create_note_card` (transcribe), `create_reference`, `create_figure_card`, `create_question`, `create_section` / `edit_section_text` / `move_sections`, and `group_cards` / `ungroup_cards`. It runs **review passes** with `list_reviews`, `start_review`, and `complete_review`. It can `edit_card` (a note's body, a reference's annotation, or a figure's title/description) and `delete_card` — but only for working-material cards it authored. Every tool targets a specific project, and **none can write your prose**.
 
 ## Requirements
 
@@ -101,9 +103,9 @@ so approve it. Then ask the agent things like *"read my canvas and flag weak spo
 *"dedupe my note cards"*, *"transcribe this handwritten note"*, *"reorder these points for
 flow"*, *"read my draft top-to-bottom and tell me where it sags"*, *"suggest where a
 diagram would help"*, *"ask me questions about the gaps"*, or *"play devil's advocate on
-my draft"* to summon a review pass. Its changes appear live and are undoable. A review you
-summon from the app's **Review** button starts out pending — the next agent you talk to
-picks it up via `list_reviews`, so it's fine to summon one before you've opened a chat.
+my canvas"* to summon a review pass. Its changes appear live and are undoable. A review
+you summon from the app's bottom-right **Review** button launches a configured headless
+agent, so it runs without waiting for you to open a separate chat.
 
 Each agent authors under its own id — set `ELVES_AGENT` when launching the MCP server
 (e.g. `ELVES_AGENT=codex`) so its cards carry its own authorship mark; it defaults to
@@ -231,6 +233,7 @@ src/
   model/                  # pure data model: cards, comments, sections, change-set ops
   model/draft.ts          # compile the canvas into narrative reading order (shared by pane + server + MCP)
   model/figures.ts        # figure-card status cycle (idea → sketched → final)
+  model/feedback.ts       # floating agent feedback + resolved-history visibility
   model/questions.ts      # question-card model (agent-authored, dismissable)
   model/references.ts     # pure reference display helpers + guessRefType (type-adaptive faces)
   model/presence.ts       # the PresenceMessage wire-type (ephemeral "looking" glow, never persisted)
@@ -240,7 +243,7 @@ src/
   client/assets.ts        # upload images, build asset URLs (per project)
   client/references.ts    # unfurl a url into a Reference (paste / + Link)
   client/presence.ts      # receive + fade agent presence pulses
-  shapes/                 # custom tldraw shapes: "card" (text/image/reference/figure), "section", "question"
+  shapes/                 # custom tldraw shapes: card, section, question, and floating feedback
   shapes/ReferenceCardFace.tsx # the type-adaptive reference face + hover metadata
   shapes/agents.tsx       # agent registry → accent + logomark (e.g. Claude's orange)
 server/

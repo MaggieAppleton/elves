@@ -1,5 +1,6 @@
 import type { CommentType } from './types'
 import { CARD_DEFAULT_W } from './types'
+import type { PersonalityId } from './reviews'
 
 export interface FeedbackProps {
   w: number
@@ -8,7 +9,7 @@ export interface FeedbackProps {
   authoredBy: string
   type: CommentType | null
   reviewId: string | null
-  reviewer: string | null
+  reviewer: PersonalityId | null
   resolved: boolean
 }
 

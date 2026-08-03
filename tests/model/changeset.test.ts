@@ -160,6 +160,10 @@ describe('isChangeSet', () => {
     expect(isChangeSet({ id: 'x', author: 'claude', ops: [
       { kind: 'create_feedback', text: 'x', x: 0, y: 0, feedback: { type: 'bad-type' } },
     ] })).toBe(false)
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [
+      { kind: 'create_feedback', text: 'x', x: 0, y: 0,
+        feedback: { type: 'structure', reviewer: 'invented-reviewer' } },
+    ] })).toBe(false)
   })
 
   test('rejects every non-finite semantic number', () => {

@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
-import { PERSONALITIES, PERSONALITY_IDS } from '../src/model/reviews'
+import { PERSONALITIES, PERSONALITY_IDS, type PersonalityId } from '../src/model/reviews'
 import {
   readMapTool,
   readCardsTool,
@@ -34,7 +34,7 @@ const COMMENT_TYPE = z.enum([
   'needs-evidence', 'weak-argument', 'needs-citation', 'wants-figure',
   'counterpoint', 'tighten', 'unclear', 'structure',
 ])
-const PERSONALITY = z.enum(PERSONALITY_IDS as [string, ...string[]])
+const PERSONALITY = z.enum(PERSONALITY_IDS as [PersonalityId, ...PersonalityId[]])
 const REF_TYPE = z.enum(['paper', 'article', 'book', 'software', 'social', 'video', 'wiki', 'link'])
 
 // Every tool that touches a canvas requires this. The agent must know which project
@@ -162,7 +162,7 @@ export function createMcpServer(baseUrl: string): McpServer {
       return {
         content: [{
           type: 'text',
-          text: `review complete — ${review.commentCount} comment${review.commentCount === 1 ? '' : 's'} in this pass`,
+          text: `review complete — ${review.commentCount} annotation${review.commentCount === 1 ? '' : 's'} in this pass`,
         }],
       }
     },

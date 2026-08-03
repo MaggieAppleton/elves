@@ -1,4 +1,5 @@
 import { CommentType, Reference, RefType } from './types'
+import { isPersonalityId, type PersonalityId } from './reviews'
 
 export type Op =
   | {
@@ -17,7 +18,7 @@ export type Op =
   | { kind: 'move_sections'; moves: { sectionId: string; x: number; y: number }[] }
   | { kind: 'edit_section_text'; sectionId: string; text: string }
   | { kind: 'create_question'; text: string; x: number; y: number }
-  | { kind: 'create_feedback'; text: string; x: number; y: number; feedback: { type: CommentType | null; reviewId?: string | null; reviewer?: string | null } }
+  | { kind: 'create_feedback'; text: string; x: number; y: number; feedback: { type: CommentType | null; reviewId?: string | null; reviewer?: PersonalityId | null } }
   | { kind: 'resolve_feedback'; feedbackId: string }
   | { kind: 'group_cards'; cardIds: string[] }
   | { kind: 'ungroup_cards'; groupId: string }
@@ -176,7 +177,7 @@ function isOp(v: unknown): v is Op {
       return typeof op.text === 'string' && isFiniteNumber(op.x) && isFiniteNumber(op.y) && !!f &&
         COMMENT_TYPES.includes(f.type as CommentType | null) &&
         (f.reviewId === undefined || isStringOrNull(f.reviewId)) &&
-        (f.reviewer === undefined || isStringOrNull(f.reviewer))
+        (f.reviewer === undefined || f.reviewer === null || isPersonalityId(f.reviewer))
     }
     case 'resolve_feedback': return typeof op.feedbackId === 'string'
     case 'group_cards':

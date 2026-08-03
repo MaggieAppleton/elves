@@ -1,4 +1,5 @@
 import type { CardKind } from '../src/model/types'
+import type { PersonalityId } from '../src/model/reviews'
 import type { CardMap } from './digest'
 
 /**
@@ -62,7 +63,7 @@ export type SelectedShape =
       authoredBy: string
       feedbackType: string | null
       reviewId: string | null
-      reviewer: string | null
+      reviewer: PersonalityId | null
       resolved: boolean
     }
   | { id: string; type: 'group'; memberCount: number }

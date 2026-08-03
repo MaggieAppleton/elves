@@ -207,9 +207,7 @@ export function ReviewPanel({
         <div className="elves-review__resolved-stack" data-feedback-stack aria-label="Resolved feedback">
           <div className="elves-review__resolved-heading">Resolved feedback · {resolved.length}</div>
           {[...resolved].reverse().map((feedback) => {
-            const persona = feedback.props.reviewer && feedback.props.reviewer in PERSONALITIES
-              ? PERSONALITIES[feedback.props.reviewer as PersonalityId]
-              : null
+            const persona = feedback.props.reviewer ? PERSONALITIES[feedback.props.reviewer] : null
             const agent = agentInfo(feedback.props.authoredBy)
             return <button
               type="button"

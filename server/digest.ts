@@ -1,6 +1,7 @@
 import type { CanvasSnapshot } from './store'
 import type { CardKind, NoteKind, Origin, Comment, Reference, RefType, FigureStatus } from '../src/model/types'
 import type { SectionAuthor } from '../src/model/sections'
+import { isPersonalityId, type PersonalityId } from '../src/model/reviews'
 import { SummarizableCard, SummarizableComment, cardGist } from '../src/model/summary'
 import {
   compileDraft, toReadDraftBlocks, type DraftCardInput, type DraftSectionInput, type ReadDraftBlock,
@@ -58,7 +59,7 @@ export interface FeedbackDigest {
   authoredBy: string
   type: string | null
   reviewId: string | null
-  reviewer: string | null
+  reviewer: PersonalityId | null
   resolved: boolean
 }
 
@@ -362,7 +363,8 @@ export function snapshotToFeedback(snapshot: CanvasSnapshot): FeedbackDigest[] {
     .map((r: any) => ({
       id: r.id, text: r.props.text ?? '', ...resolvePageXY(store, r),
       authoredBy: r.props.authoredBy ?? 'claude', type: r.props.type ?? null,
-      reviewId: r.props.reviewId ?? null, reviewer: r.props.reviewer ?? null,
+      reviewId: r.props.reviewId ?? null,
+      reviewer: isPersonalityId(r.props.reviewer) ? r.props.reviewer : null,
       resolved: r.props.resolved ?? false,
     }))
 }
