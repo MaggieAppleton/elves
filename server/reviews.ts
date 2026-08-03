@@ -229,7 +229,9 @@ export function countReviewComments(snapshot: CanvasSnapshot | null, reviewId: s
   let count = 0
   for (const record of Object.values(store)) {
     const r = record as { typeName?: string; type?: string; props?: { comments?: unknown } }
-    if (r.typeName !== 'shape' || r.type !== 'card') continue
+    if (r.typeName !== 'shape') continue
+    if (r.type === 'feedback' && (r.props as any)?.reviewId === reviewId) { count++; continue }
+    if (r.type !== 'card') continue
     const comments = r.props?.comments
     if (!Array.isArray(comments)) continue
     for (const c of comments) {

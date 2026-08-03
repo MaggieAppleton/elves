@@ -371,3 +371,24 @@ export function fittedQuestionGistFontSize(
     maxFontSize,
   )
 }
+
+// --- Floating feedback --------------------------------------------------
+// feedback.css uses the same 14px / 1.4 text and 12px padding as questions.
+// Its metadata row is 14px tall with a 7px bottom margin; only height follows
+// the annotation text because feedback cards keep their fixed canvas width.
+const FEEDBACK_PAD_X = 26 // 1 border + 12 pad, each side
+const FEEDBACK_PAD_Y = 26 // 1 border + 12 pad, top and bottom
+const FEEDBACK_META_ROW = 21 // 14px metadata row + 7px gap
+
+export function measuredFeedbackHeight(editor: Editor, text: string, width: number): number {
+  const { h } = editor.textMeasure.measureText(text || ' ', {
+    fontFamily: FONT_FAMILY,
+    fontSize: 14,
+    lineHeight: 1.4,
+    fontWeight: '400',
+    fontStyle: 'normal',
+    maxWidth: Math.max(40, width - FEEDBACK_PAD_X),
+    padding: '0px',
+  })
+  return Math.ceil(h + FEEDBACK_PAD_Y + FEEDBACK_META_ROW)
+}

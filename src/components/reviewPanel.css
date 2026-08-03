@@ -1,10 +1,13 @@
-/* ---- Review panel (topbar, beside the project switcher) -------------------
+/* ---- Review home (fixed at the canvas bottom-right) -----------------------
    Summon a reviewer personality; watch a pass move pending → in-progress →
    done; read its verdict. Mirrors the project switcher's quiet dropdown
    language so the topbar reads as one family of controls. */
 
 .elves-review {
-  position: relative;
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 20;
 }
 
 .elves-review__button {
@@ -24,6 +27,12 @@
   box-shadow: var(--elves-shadow-md), var(--elves-highlight);
   transition: background-color 100ms ease;
 }
+.elves-review__resolved-stack { position: absolute; right: 0; bottom: calc(100% + 44px); box-sizing: border-box; width: 260px; max-height: calc(100dvh - 112px); display: grid; gap: 5px; padding: 7px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--elves-border); border-radius: 10px; background: var(--elves-surface); box-shadow: var(--elves-shadow-md); }
+.elves-review__resolved-heading { padding: 2px 4px; color: var(--elves-ink-faint); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.elves-review__resolved-item { display: grid; gap: 2px; width: 100%; padding: 6px 7px; border: 0; border-radius: 7px; background: var(--elves-bg); color: var(--elves-ink-soft); font: inherit; font-size: 12px; line-height: 1.35; text-align: left; cursor: pointer; }
+.elves-review__resolved-item:hover { background: var(--elves-tertiary); }
+.elves-review__resolved-item:focus-visible { outline: 2px solid var(--elves-focus-ring); outline-offset: 1px; }
+.elves-review__resolved-meta { color: var(--elves-ink-faint); font-size: 11px; font-weight: 600; text-transform: capitalize; }
 .elves-review__button:hover { background: var(--elves-tertiary); }
 .elves-review__button:focus-visible {
   outline: none;
@@ -60,7 +69,7 @@
 
 .elves-review__menu {
   position: absolute;
-  top: calc(100% + 6px);
+  bottom: calc(100% + 6px);
   right: 0;
   width: 300px;
   max-height: calc(100dvh - 56px);

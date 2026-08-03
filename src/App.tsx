@@ -10,6 +10,8 @@ import { measuredCardPropsHeight } from './shapes/autosize'
 import { cardIsHidden, collapseAll } from './shapes/mergeView'
 import { SectionShapeUtil, SectionShape } from './shapes/SectionShapeUtil'
 import { QuestionShapeUtil } from './shapes/QuestionShapeUtil'
+import { FeedbackShapeUtil } from './shapes/FeedbackShapeUtil'
+import { feedbackIsHidden } from './model/feedback'
 import {
   makeProseCardProps, makeNoteCardProps, makeImageNoteCardProps, makeReferenceCardProps,
   makeFigureCardProps,
@@ -55,7 +57,7 @@ import {
 } from './client/appCanvasMount'
 import { createPointerDragManager, type PointerDragManager } from './client/dividerDrag'
 
-const shapeUtils = [CardShapeUtil, SectionShapeUtil, QuestionShapeUtil]
+const shapeUtils = [CardShapeUtil, SectionShapeUtil, QuestionShapeUtil, FeedbackShapeUtil]
 // OnTheCanvas renders in page space behind the shapes, which is where the snap
 // halo belongs — a wash under the two cards being joined, not a box over them.
 const components = {
@@ -75,12 +77,15 @@ const canvasTransport = {
 const questionIsHidden = (shape: { type: string; props: { dismissed?: boolean } }) =>
   shape.type === 'question' && !!shape.props.dismissed
 
-// Cards merged away into a representative are kept for recovery but must not
+// Cards merged away into a representative and resolved feedback are kept for
+// recovery/history but must not
 // render as their own shape — hidden here from BOTH rendering and hit-testing so
 // they can't become invisible-yet-selectable "ghosts". The representative shows
 // them (a stack + an on-demand fan-out). Dismissed questions hide the same way.
 const getShapeVisibility = (shape: Parameters<typeof cardIsHidden>[0]) =>
-  cardIsHidden(shape) || questionIsHidden(shape as { type: string; props: { dismissed?: boolean } })
+  cardIsHidden(shape) ||
+  questionIsHidden(shape as { type: string; props: { dismissed?: boolean } }) ||
+  feedbackIsHidden(shape as { type: string; props: { resolved?: boolean } })
     ? ('hidden' as const)
     : ('inherit' as const)
 const LAST_PROJECT_KEY = 'elves:lastProject'

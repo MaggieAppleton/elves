@@ -26,6 +26,8 @@ import {
   listReviewsTool,
   startReviewTool,
   completeReviewTool,
+  createFeedbackTool,
+  resolveFeedbackTool,
 } from '../../mcp/tools'
 import { PERSONALITIES } from '../../src/model/reviews'
 import { createSelectionStore } from '../../server/selection'
@@ -257,6 +259,33 @@ test('createNoteCardTool posts a create_note_card change-set', async () => {
   ws.close()
 })
 
+test('floating feedback can be created and explicitly resolved through the shared tools', async () => {
+  const { base } = await liveElves()
+  await seedEmptyCanvas(base)
+
+  await createFeedbackTool(base, 'essay', {
+    text: 'The middle needs a bridge',
+    x: -100,
+    y: 20,
+    type: 'structure',
+    reviewId: 'review-a',
+    reviewer: 'architect',
+  })
+  const created = await readMapTool(base, 'essay')
+  expect(created.feedback).toHaveLength(1)
+  expect(created.feedback[0]).toMatchObject({
+    text: 'The middle needs a bridge',
+    authoredBy: 'claude',
+    type: 'structure',
+    reviewId: 'review-a',
+    reviewer: 'architect',
+    resolved: false,
+  })
+
+  await resolveFeedbackTool(base, 'essay', created.feedback[0].id)
+  expect((await readMapTool(base, 'essay')).feedback[0].resolved).toBe(true)
+})
+
 // Every canvas mutation tool delegates to postChangeSet; this create-only call
 // proves that shared boundary because only protocol 2 can queue without a canvas.
 test('a tool mutation gets a token and queues through the shared protocol-2 client', async () => {
@@ -314,6 +343,7 @@ test('readMapTool reads the cheap map (gist, no full text) for the project', asy
     sections: [],
     questions: [],
     groups: [],
+    feedback: [],
   })
 })
 

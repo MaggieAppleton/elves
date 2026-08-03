@@ -1,6 +1,7 @@
 import type { CanvasSnapshot } from './store'
 import type { CardKind, NoteKind, Origin, Comment, Reference, RefType, FigureStatus } from '../src/model/types'
 import type { SectionAuthor } from '../src/model/sections'
+import { isPersonalityId, type PersonalityId } from '../src/model/reviews'
 import { SummarizableCard, SummarizableComment, cardGist } from '../src/model/summary'
 import {
   compileDraft, toReadDraftBlocks, type DraftCardInput, type DraftSectionInput, type ReadDraftBlock,
@@ -50,6 +51,18 @@ export interface QuestionDigest {
   dismissed: boolean
 }
 
+export interface FeedbackDigest {
+  id: string
+  text: string
+  x: number
+  y: number
+  authoredBy: string
+  type: string | null
+  reviewId: string | null
+  reviewer: PersonalityId | null
+  resolved: boolean
+}
+
 /**
  * A group on the MAP — a mechanical "these cards travel together" binding
  * (a tldraw group). `cardIds` are its direct card members; `bounds` is the
@@ -66,6 +79,7 @@ export interface CanvasDigest {
   cards: CardDigest[]
   sections: SectionDigest[]
   questions: QuestionDigest[]
+  feedback: FeedbackDigest[]
 }
 
 /**
@@ -101,6 +115,7 @@ export interface CardMap {
   sections: SectionDigest[]
   questions: QuestionDigest[]
   groups: GroupDigest[]
+  feedback: FeedbackDigest[]
 }
 
 function storeOf(snapshot: CanvasSnapshot): Record<string, any> {
@@ -262,6 +277,7 @@ export function snapshotToCardMap(snapshot: CanvasSnapshot): CardMap {
     sections: snapshotToSections(snapshot),
     questions: snapshotToQuestions(snapshot),
     groups: snapshotToGroups(snapshot),
+    feedback: snapshotToFeedback(snapshot),
   }
 }
 
@@ -340,11 +356,25 @@ export function snapshotToQuestions(snapshot: CanvasSnapshot): QuestionDigest[] 
     }))
 }
 
+export function snapshotToFeedback(snapshot: CanvasSnapshot): FeedbackDigest[] {
+  const store = storeOf(snapshot)
+  return Object.values(store)
+    .filter((r: any) => r && r.typeName === 'shape' && r.type === 'feedback' && r.props)
+    .map((r: any) => ({
+      id: r.id, text: r.props.text ?? '', ...resolvePageXY(store, r),
+      authoredBy: r.props.authoredBy ?? 'claude', type: r.props.type ?? null,
+      reviewId: r.props.reviewId ?? null,
+      reviewer: isPersonalityId(r.props.reviewer) ? r.props.reviewer : null,
+      resolved: r.props.resolved ?? false,
+    }))
+}
+
 export function snapshotToCanvasDigest(snapshot: CanvasSnapshot, assetsDir?: string): CanvasDigest {
   return {
     cards: snapshotToCards(snapshot, assetsDir),
     sections: snapshotToSections(snapshot),
     questions: snapshotToQuestions(snapshot),
+    feedback: snapshotToFeedback(snapshot),
   }
 }
 

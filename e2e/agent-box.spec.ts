@@ -171,9 +171,18 @@ test('the input grows to fit a multi-line message', async ({ page }) => {
   expect(tall).toBeGreaterThan(short)
 })
 
-test('a transcript and long prompt stay usable inside the agent box in a short viewport', async ({ page }) => {
+// Short windows are where the box is tightest: the header and input row cannot
+// shrink and the transcript stops at its own floor, so a cap even slightly too
+// small clips the send button off the bottom. Sweep the range rather than
+// spot-checking one height — the input's own max-height grows with the viewport
+// until it caps at ~285px tall, so the squeeze is worst in the middle of this
+// range, not at its short end.
+// 400 is in the list because it is the tightest point of the roomy band: the cap
+// steps down by 40px there, and every taller window has more slack than it does.
+for (const height of [220, 260, 300, 340, 400, 420]) {
+test(`a transcript and long prompt stay usable inside the agent box at ${height}px tall`, async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' })
-  await page.setViewportSize({ width: 800, height: 220 })
+  await page.setViewportSize({ width: 800, height })
   await page.route('**/agent/run', (route) =>
     route.fulfill({
       status: 200,
@@ -213,6 +222,9 @@ test('a transcript and long prompt stay usable inside the agent box in a short v
     expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(boxBounds!.y + boxBounds!.height)
   }
   expect((await transcript.boundingBox())!.height).toBeGreaterThanOrEqual(48)
+  // The box itself must fit the window, not just its children fit the box.
+  expect(boxBounds!.y).toBeGreaterThanOrEqual(0)
+  expect(boxBounds!.y + boxBounds!.height).toBeLessThanOrEqual(height)
 
   await input.focus()
   await page.keyboard.press('End')
@@ -222,6 +234,58 @@ test('a transcript and long prompt stay usable inside the agent box in a short v
 
   await page.getByTestId('agent-collapse').click()
   await expect(box).toBeHidden()
+})
+}
+
+test('a long transcript grows the box towards the full height of a tall viewport', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.setViewportSize({ width: 1000, height: 900 })
+  await page.route('**/agent/run', (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body: sse([
+        dataFrame({ type: 'started' }),
+        ...Array.from({ length: 25 }, (_, i) =>
+          dataFrame({ type: 'text', text: `Paragraph ${i + 1} of the agent's reading of the canvas.` }),
+        ),
+        dataFrame({ type: 'done', reply: 'The conclusion needs stronger evidence.' }),
+      ]),
+    }),
+  )
+  await openReadyCanvas(page)
+
+  await page.keyboard.press('/')
+  await page.getByTestId('agent-input').fill('review this canvas')
+  await page.getByTestId('agent-send').click()
+  const transcript = page.getByTestId('agent-transcript')
+  await expect(transcript).toContainText('The conclusion needs stronger evidence.')
+
+  // The old inner cap was min(42dvh, 500px), which on a 900px viewport pinned the
+  // transcript at 378px however much the agent said. It now fills the box instead.
+  const transcriptBounds = (await transcript.boundingBox())!
+  expect(transcriptBounds.height).toBeGreaterThan(500)
+
+  // Growing upward must not push the box off the top or clip its own controls:
+  // the whole box stays on screen, with a strip of canvas left visible above it.
+  const boxBounds = (await page.locator('.elves-agentbox').boundingBox())!
+  expect(boxBounds.y).toBeGreaterThanOrEqual(40)
+  expect(boxBounds.y + boxBounds.height).toBeLessThanOrEqual(900)
+  const inputRow = (await page.locator('.elves-agentbox__inputrow').boundingBox())!
+  expect(inputRow.y + inputRow.height).toBeLessThanOrEqual(boxBounds.y + boxBounds.height)
+
+  // The transcript scrolls rather than overflowing, and follows the newest line.
+  // Polled because the auto-scroll runs in a passive effect, after the paint that
+  // makes the final reply assertable above.
+  // Polled as a pair rather than one boolean so a failure names which half broke.
+  await expect
+    .poll(() =>
+      transcript.evaluate((el) => ({
+        overflowing: el.scrollHeight > el.clientHeight,
+        atBottom: el.scrollTop + el.clientHeight >= el.scrollHeight - 2,
+      })),
+    )
+    .toEqual({ overflowing: true, atBottom: true })
 })
 
 test('/ is a literal slash while typing in the box, not a re-trigger', async ({ page }) => {

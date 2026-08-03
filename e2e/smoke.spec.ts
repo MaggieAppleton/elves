@@ -163,6 +163,7 @@ test.describe('touch creation toolbar', () => {
         type: 'touchMove',
         touchPoints: [{ x: startX + (endX - startX) * (step / 8), y }],
       })
+      await page.waitForTimeout(16)
     }
     await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
     await expect.poll(() => toolbar.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0)

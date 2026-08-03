@@ -1,4 +1,5 @@
 import { CommentType, Reference, RefType } from './types'
+import { isPersonalityId, type PersonalityId } from './reviews'
 
 export type Op =
   | {
@@ -17,6 +18,8 @@ export type Op =
   | { kind: 'move_sections'; moves: { sectionId: string; x: number; y: number }[] }
   | { kind: 'edit_section_text'; sectionId: string; text: string }
   | { kind: 'create_question'; text: string; x: number; y: number }
+  | { kind: 'create_feedback'; text: string; x: number; y: number; feedback: { type: CommentType | null; reviewId?: string | null; reviewer?: PersonalityId | null } }
+  | { kind: 'resolve_feedback'; feedbackId: string }
   | { kind: 'group_cards'; cardIds: string[] }
   | { kind: 'ungroup_cards'; groupId: string }
   | {
@@ -169,6 +172,14 @@ function isOp(v: unknown): v is Op {
       return typeof op.sectionId === 'string' && typeof op.text === 'string'
     case 'create_question':
       return typeof op.text === 'string' && isFiniteNumber(op.x) && isFiniteNumber(op.y)
+    case 'create_feedback': {
+      const f = op.feedback as Record<string, unknown> | undefined
+      return typeof op.text === 'string' && isFiniteNumber(op.x) && isFiniteNumber(op.y) && !!f &&
+        COMMENT_TYPES.includes(f.type as CommentType | null) &&
+        (f.reviewId === undefined || isStringOrNull(f.reviewId)) &&
+        (f.reviewer === undefined || f.reviewer === null || isPersonalityId(f.reviewer))
+    }
+    case 'resolve_feedback': return typeof op.feedbackId === 'string'
     case 'group_cards':
       return Array.isArray(op.cardIds) && op.cardIds.length >= 2 &&
         op.cardIds.every((id) => typeof id === 'string')
@@ -282,6 +293,8 @@ export function changeSetWritesText(cs: ChangeSet): boolean {
       case 'move_sections':
       case 'edit_section_text':
       case 'create_question':
+      case 'create_feedback':
+      case 'resolve_feedback':
       case 'group_cards':
       case 'ungroup_cards':
       case 'set_summary':
@@ -376,4 +389,8 @@ export function referencedQuestionIds(cs: ChangeSet): string[] {
     if (op.kind === 'set_question_summary') ids.push(op.questionId)
   }
   return ids
+}
+
+export function referencedFeedbackIds(cs: ChangeSet): string[] {
+  return cs.ops.flatMap((op) => op.kind === 'resolve_feedback' ? [op.feedbackId] : [])
 }

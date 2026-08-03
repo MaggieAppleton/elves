@@ -4,6 +4,7 @@ import {
   referencedCardIds,
   referencedGroupIds,
   referencedQuestionIds,
+  referencedFeedbackIds,
   referencedSectionIds,
   type ChangeSet,
 } from '../src/model/changeset'
@@ -72,6 +73,7 @@ function targetValidation(
     ...referencedSectionIds(changeSet).filter((id) => !isShape(id, 'section')),
     ...referencedGroupIds(changeSet).filter((id) => !isShape(id, 'group')),
     ...referencedQuestionIds(changeSet).filter((id) => !isShape(id, 'question')),
+    ...referencedFeedbackIds(changeSet).filter((id) => !isShape(id, 'feedback')),
     ...changeSet.ops.flatMap((op) => {
       if (op.kind !== 'set_comment_summary') return []
       const card = addressableShapeRecord(identity, op.cardId, 'card')
@@ -97,7 +99,7 @@ function isCreateOnly(changeSet: ChangeSet): boolean {
   return changeSet.ops.length > 0 && changeSet.ops.every((op) =>
     op.kind === 'create_note_card' || op.kind === 'create_reference' ||
     op.kind === 'create_section' || op.kind === 'create_figure_card' ||
-    op.kind === 'create_question')
+    op.kind === 'create_question' || op.kind === 'create_feedback')
 }
 
 export function admitTokenizedChangeSet(
