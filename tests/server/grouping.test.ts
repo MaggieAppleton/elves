@@ -2,6 +2,7 @@ import { expect, test } from 'vitest'
 import { applyChangeSetToSnapshot } from '../../server/applyChangeSet'
 import { snapshotToCards, snapshotToCardMap, snapshotToGroups } from '../../server/digest'
 import type { ChangeSet } from '../../src/model/changeset'
+import { CANVAS_GAP } from '../../src/model/layout'
 
 // Two loose, top-level cards whose page coords we can watch survive (un)grouping.
 function twoCardSnapshot() {
@@ -77,13 +78,16 @@ test('ungroup_cards restores page coords to the members and removes the group', 
 
 test('move_cards on a grouped card writes local coords after collision-safe page placement', () => {
   const grouped = applyChangeSetToSnapshot(twoCardSnapshot(), cs({ kind: 'group_cards', cardIds: ['shape:a', 'shape:b'] }))!
-  const moved = applyChangeSetToSnapshot(grouped, cs({ kind: 'move_cards', moves: [{ cardId: 'shape:a', x: 200, y: 200 }] }))!
+  // shape:b's bottom is y=180. Ask for a spot 8px short of a clear gutter, so
+  // layout has to nudge it down to exactly one gap below.
+  const requested = 180 + CANVAS_GAP - 8
+  const moved = applyChangeSetToSnapshot(grouped, cs({ kind: 'move_cards', moves: [{ cardId: 'shape:a', x: 200, y: requested }] }))!
   const store = storeOf(moved)
 
-  // The requested y=200 is only 20px below shape:b, so layout nudges it to
-  // y=204 for the 24px gutter. Stored coords remain local to the group origin.
-  expect({ x: store['shape:a'].x, y: store['shape:a'].y }).toEqual({ x: 100, y: 154 })
-  expect(snapshotToCards(moved).find((c) => c.id === 'shape:a')).toMatchObject({ x: 200, y: 204 })
+  // Stored coords remain local to the group origin (y=50), while the digest
+  // resolves them back to the nudged page position.
+  expect({ x: store['shape:a'].x, y: store['shape:a'].y }).toEqual({ x: 100, y: 130 + CANVAS_GAP })
+  expect(snapshotToCards(moved).find((c) => c.id === 'shape:a')).toMatchObject({ x: 200, y: 180 + CANVAS_GAP })
 })
 
 test('move_cards on a loose card is unchanged (page coords written directly)', () => {

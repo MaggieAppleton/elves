@@ -323,6 +323,7 @@ test('Esc closes the box', async ({ page }) => {
 
 test('Cancel stays cancelling and blocks resubmission until the run stream ends', async ({ page }) => {
   let endRun!: () => void
+  let runActive = true
   const runMayEnd = new Promise<void>((resolve) => { endRun = resolve })
   await page.route('**/agent/run', async (route) => {
     await runMayEnd
@@ -340,6 +341,12 @@ test('Cancel stays cancelling and blocks resubmission until the run stream ends'
     abandonHit = true
     return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' })
   })
+  await page.route('**/agent/runs/*', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ active: runActive }),
+    }))
 
   await openReadyCanvas(page)
 
@@ -356,6 +363,7 @@ test('Cancel stays cancelling and blocks resubmission until the run stream ends'
   await expect(page.getByTestId('agent-send')).toBeHidden()
   await expect.poll(() => abandonHit).toBe(true)
 
+  runActive = false
   endRun()
   await expect(page.getByTestId('agent-send')).toBeVisible()
   await expect(page.getByTestId('agent-input')).toBeEnabled()

@@ -4,9 +4,15 @@ import type { QuestionShape } from '../shapes/QuestionShapeUtil'
 import {
   placeBelowObstacles,
   reflowVerticalLane,
+  snapToNeighbours,
   type LayoutItem,
   type LayoutRect,
 } from '../model/layout'
+
+// How close a dragged card must come to a snap slot before it is pulled in,
+// measured in SCREEN pixels. A page-space radius would feel dead when zoomed
+// out and grabby when zoomed in; dividing by the zoom keeps the pull constant.
+export const SNAP_RADIUS_PX = 40
 
 export function cardLayoutItems(
   editor: Editor,
@@ -81,6 +87,41 @@ export function clearCardPosition(
   excludedIds: ReadonlySet<string> = new Set(),
 ): LayoutRect {
   return placeBelowObstacles(rect, canvasObstacles(editor, excludedIds))
+}
+
+export interface SnappedPosition {
+  /** Parent-space, ready to hand back to tldraw as the shape's x/y. */
+  x: number
+  y: number
+  /** The same point in page space, for drawing the halo. */
+  page: { x: number; y: number }
+  /** The card that was joined, or null when the drop position stands. */
+  snappedTo: LayoutRect | null
+}
+
+/**
+ * The position a card being dragged should take, snapped to a neighbouring
+ * card or question when one is within reach. Returns the point unchanged when
+ * nothing is close enough, so a card dragged clear of a stack simply stops
+ * snapping.
+ */
+export function snapCardPosition(
+  editor: Editor,
+  id: TLShapeId,
+  pageRect: LayoutRect,
+): SnappedPosition {
+  const snapped = snapToNeighbours(
+    pageRect,
+    canvasObstacles(editor, new Set([id])),
+    SNAP_RADIUS_PX / editor.getZoomLevel(),
+  )
+  const local = editor.getPointInParentSpace(id, snapped)
+  return {
+    x: local.x,
+    y: local.y,
+    page: { x: snapped.x, y: snapped.y },
+    snappedTo: snapped.snappedTo,
+  }
 }
 
 export function reflowCanvasLane(

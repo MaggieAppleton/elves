@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { createQuestionTool } from '../mcp/tools'
 import { BASE, resetProject, serverCardIds } from './helpers'
+import { CANVAS_GAP } from '../src/model/layout'
 
 let projectId: string
 
@@ -85,7 +86,7 @@ test('duplicate questions have contextual dismiss controls', async ({ page, requ
   await expect(dismissButtons).toHaveCount(1)
 })
 
-test('duplicate-position questions keep a 24px visual gap after autosizing', async ({ page, request }) => {
+test('duplicate-position questions keep a one-gap visual separation after autosizing', async ({ page, request }) => {
   await canvasReady(page, request)
 
   await request.post(`${BASE}/projects/${projectId}/changeset`, {
@@ -107,5 +108,5 @@ test('duplicate-position questions keep a 24px visual gap after autosizing', asy
       return { top: bounds.top, bottom: bounds.bottom }
     }))).sort((a, b) => a.top - b.top)
     return Math.round(boxes[1].top - boxes[0].bottom)
-  }).toBe(24)
+  }).toBe(CANVAS_GAP)
 })
