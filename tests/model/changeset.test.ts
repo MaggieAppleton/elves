@@ -151,6 +151,20 @@ describe('isChangeSet', () => {
     expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'create_question', text: 'why?', x: 0, y: 0 }] })).toBe(true)
     expect(isChangeSet({ id: 'x', author: 'claude', ops: [{ kind: 'create_question', text: 'why?' }] })).toBe(false) // missing x/y
   })
+  test('accepts floating feedback creation and resolution', () => {
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [
+      { kind: 'create_feedback', text: 'The middle needs a bridge', x: -100, y: 20,
+        feedback: { type: 'structure', reviewId: 'rev-1', reviewer: 'architect' } },
+      { kind: 'resolve_feedback', feedbackId: 'shape:feedback' },
+    ] })).toBe(true)
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [
+      { kind: 'create_feedback', text: 'x', x: 0, y: 0, feedback: { type: 'bad-type' } },
+    ] })).toBe(false)
+    expect(isChangeSet({ id: 'x', author: 'claude', ops: [
+      { kind: 'create_feedback', text: 'x', x: 0, y: 0,
+        feedback: { type: 'structure', reviewer: 'invented-reviewer' } },
+    ] })).toBe(false)
+  })
 
   test('rejects every non-finite semantic number', () => {
     const numericOps = [

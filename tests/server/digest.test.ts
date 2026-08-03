@@ -3,6 +3,7 @@ import {
   snapshotToCards,
   snapshotToSections,
   snapshotToQuestions,
+  snapshotToFeedback,
   snapshotToCanvasDigest,
   snapshotToCardMap,
   snapshotToCardsById,
@@ -442,5 +443,6 @@ test('snapshotToCanvasDigest combines cards and sections', () => {
     cards: snapshotToCards(snapshot),
     sections: snapshotToSections(snapshot),
     questions: snapshotToQuestions(snapshot),
+    feedback: snapshotToFeedback(snapshot),
   })
 })

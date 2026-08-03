@@ -3,11 +3,13 @@ import { CHANGE_SET_STAMP_META_KEY, ChangeSet, Op, planMerge } from '../model/ch
 import { CardShape } from '../shapes/CardShapeUtil'
 import { SectionShape } from '../shapes/SectionShapeUtil'
 import { QuestionShape } from '../shapes/QuestionShapeUtil'
+import { FeedbackShape } from '../shapes/FeedbackShapeUtil'
 import { makeComment, addComment, estimateCommentHeight } from '../model/comments'
 import { makeNoteCardProps, makeReferenceCardProps, makeFigureCardProps, claudeMayEditCardText } from '../model/cards'
 import { reattribute } from '../model/attribution'
 import { makeSectionProps } from '../model/sections'
 import { makeQuestionProps } from '../model/questions'
+import { makeFeedbackProps } from '../model/feedback'
 import { canvasObstacles, clearCardPosition, reflowCardLane } from '../client/canvasLayout'
 import { placeBelowObstacles } from '../model/layout'
 
@@ -233,6 +235,19 @@ function applyCreateQuestion(
   return [id]
 }
 
+function applyCreateFeedback(editor: Editor, op: Extract<Op, { kind: 'create_feedback' }>, author: string, acceptedTokenStamp?: string): TLShapeId[] {
+  const id = createShapeId()
+  editor.createShape<FeedbackShape>({ id, type: 'feedback', x: op.x, y: op.y, props: makeFeedbackProps(op.text, author, op.feedback), meta: acceptedTokenStamp ? { [CHANGE_SET_STAMP_META_KEY]: acceptedTokenStamp } : {} })
+  return [id]
+}
+
+function applyResolveFeedback(editor: Editor, op: Extract<Op, { kind: 'resolve_feedback' }>): TLShapeId[] {
+  const shape = editor.getShape(op.feedbackId as FeedbackShape['id']) as FeedbackShape | undefined
+  if (!shape) return []
+  editor.updateShape<FeedbackShape>({ id: shape.id, type: 'feedback', props: { resolved: true } })
+  return [shape.id]
+}
+
 function applyGroupCards(editor: Editor, op: Extract<Op, { kind: 'group_cards' }>): TLShapeId[] {
   const ids = op.cardIds
     .map((id) => editor.getShape(id as CardShape['id'])?.id)
@@ -332,6 +347,8 @@ function applyOp(editor: Editor, op: Op, author: string, acceptedTokenStamp?: st
       return applyEditSectionText(editor, op, author)
     case 'create_question':
       return applyCreateQuestion(editor, op, author, acceptedTokenStamp)
+    case 'create_feedback': return applyCreateFeedback(editor, op, author, acceptedTokenStamp)
+    case 'resolve_feedback': return applyResolveFeedback(editor, op)
     case 'group_cards':
       return applyGroupCards(editor, op)
     case 'ungroup_cards':
