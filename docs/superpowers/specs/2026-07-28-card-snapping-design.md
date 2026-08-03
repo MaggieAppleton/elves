@@ -103,7 +103,8 @@ The override:
    `{ x, y }` as a `TLShapePartial<CardShape>`.
 5. Publishes the halo box (or null) to the `snapHighlight` signal.
 
-`onTranslateEnd` clears the signal so the halo never outlives a drag.
+`onTranslateEnd` and `onTranslateCancel` clear the signal so the halo never
+outlives either a completed or cancelled drag.
 
 Because `onTranslate` runs each frame and derives position purely from the
 cursor, the snap needs no state and nothing to unwind when the drag ends.
@@ -129,6 +130,10 @@ Fix: capture the previous height before the `props.h` update and call
 `editor.run(..., { history: 'ignore' })`, mirroring the comment-height path.
 
 This is what makes a snapped column stay a column while you write into it.
+
+When a card is dropped into an occupied snap slot, `onTranslateEnd` also uses
+`reflowCardLane` with the dropped card as the anchor. The existing occupant and
+its contiguous lane move down, inserting the dropped card without overlap.
 
 ### 5. Snap affordance — the halo
 
@@ -176,12 +181,15 @@ gap 16, 24, and 32, which is the check that the constant is genuinely a knob.
 - Type into the top card of a snapped column; the card below is pushed down and
   the gap survives.
 - The halo appears mid-drag, contains both cards, vanishes when the card is
-  dragged back out of range, and is gone after release.
+  dragged back out of range, and is gone after Escape cancels the drag.
+- Dropping a third card into an occupied slot inserts it into the column and
+  pushes the former occupant down by one card height plus the gap.
 - Drag a snapped card far away; it lands where dropped, unsnapped.
 
-Both behavioural tests were mutation-checked: with `SNAP_RADIUS_PX` forced to 0
-the snap test fails by exactly the offset it aims off by, and with the new
-`reflowCardLane` call removed the growth test fails with a 63px overlap.
+The original snap and growth behaviours were mutation-checked: with
+`SNAP_RADIUS_PX` forced to 0 the snap test fails by exactly the offset it aims
+off by, and with the new `reflowCardLane` call removed the growth test fails
+with a 63px overlap.
 
 **Regression:** existing `tests/server/grouping.test.ts` must still pass
 untouched — snapping does not disturb agent-created groups.
@@ -203,23 +211,6 @@ untouched — snapping does not disturb agent-created groups.
   of the undo stack. This matches the comment-height path exactly and is
   arguably a fix (autosize height is derived state; undoing into a stale height
   was never useful), but it is a side effect of this change, not a goal of it.
-- **Snapping does not check whether the slot is already occupied.** Dragging a
-  card into a slot where another card already sits will stack them on top of
-  each other. Deliberately out of scope: see below.
-
-## Known follow-up: occupied slots
-
-`snapToNeighbours` scores candidates purely on distance and never asks whether
-anything is already sitting in the slot it picks. Three ways to close that, none
-of them obviously right:
-
-1. **Leave it.** The overlap is visible and a second drag fixes it. Zero code.
-2. **Reject occupied candidates** — filter each candidate through the existing
-   `conflictsWithGap` against the other neighbours before scoring it, so the
-   snap falls through to the next-nearest free slot.
-3. **Insert into the column** — snap into the slot and push the current occupant
-   (and everything under it) down via `reflowVerticalLane`, so dropping a card
-   mid-stack splices it in.
-
-(3) is the most useful and the most surprising; (2) is the most predictable.
-Deferred until the base snap has been lived with.
+- **Occupied slots insert into the lane.** This is more spatially active than
+  rejecting the snap, but it preserves the user's chosen slot and guarantees
+  the completed drop does not leave cards overlapped.

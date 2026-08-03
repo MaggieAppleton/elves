@@ -29,7 +29,10 @@ async function dragCardTo(page: Page, card: Locator, to: { x: number; y: number 
   // snap has frames in which to engage the way it would under a real pointer.
   await page.mouse.move(grab.x + (to.x - box.x), grab.y + (to.y - box.y), { steps: 12 })
   await page.mouse.up()
-  await expect.poll(async () => (await boxOf(card)).x).not.toBe(box.x)
+  await expect.poll(async () => {
+    const moved = await boxOf(card)
+    return Math.hypot(moved.x - box.x, moved.y - box.y)
+  }).toBeGreaterThan(1)
 }
 
 test('a card dragged near another snaps to a clean gap below it', async ({ page }) => {
@@ -106,7 +109,52 @@ test('a snapped column keeps its gap when the card above grows', async ({ page }
   expect(m.y - (a.y + a.height)).toBeGreaterThanOrEqual(GAP - 1)
 })
 
-test('the snap halo appears mid-drag, contains both cards, and clears on release', async ({ page }) => {
+test('dropping into an occupied snap slot inserts the card into the column', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  await page.getByTestId('new-prose').click()
+  await page.keyboard.press('Escape')
+  await page.getByTestId('new-note').click()
+  await page.locator('.elves-card--note .elves-card__editor').last().fill('Occupant')
+  await page.keyboard.press('Escape')
+
+  const anchor = page.locator('.elves-card--prose').first()
+  const occupant = page.locator('.elves-card--note').filter({ hasText: 'Occupant' })
+  await expect(occupant).toBeVisible()
+
+  // Build the two-card column before creating the third card, so the initial
+  // cascade does not leave two notes overlapping under the pointer.
+  const anchorBox = await boxOf(anchor)
+  const occupiedSlot = {
+    x: anchorBox.x,
+    y: anchorBox.y + anchorBox.height + GAP,
+  }
+  await dragCardTo(page, occupant, occupiedSlot)
+
+  await page.getByTestId('new-note').click()
+  await page.locator('.elves-card--note .elves-card__editor').last().fill('Mover')
+  await page.keyboard.press('Escape')
+  const mover = page.locator('.elves-card--note').filter({ hasText: 'Mover' })
+  await expect(mover).toBeVisible()
+  await dragCardTo(page, mover, { x: anchorBox.x - 250, y: anchorBox.y + 250 })
+
+  // Dropping the mover into that same snap slot should splice it into the
+  // column, moving the former occupant down instead of stacking the cards.
+  await dragCardTo(page, mover, occupiedSlot)
+
+  const [a, inserted, shifted] = [
+    await boxOf(anchor),
+    await boxOf(mover),
+    await boxOf(occupant),
+  ]
+  expect(Math.abs(inserted.x - a.x)).toBeLessThanOrEqual(1)
+  expect(Math.abs(inserted.y - (a.y + a.height + GAP))).toBeLessThanOrEqual(1)
+  expect(Math.abs(shifted.x - inserted.x)).toBeLessThanOrEqual(1)
+  expect(Math.abs(shifted.y - (inserted.y + inserted.height + GAP))).toBeLessThanOrEqual(1)
+})
+
+test('the snap halo clears out of range, on cancel, and on release', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
 
@@ -151,10 +199,33 @@ test('the snap halo appears mid-drag, contains both cards, and clears on release
   expect(haloBox.y + haloBox.height).toBeGreaterThanOrEqual(Math.max(a.y + a.height, m.y + m.height))
 
   // Drag back out of range while still held: the halo goes, which is how
-  // "you have left the stack" reads.
+  // "you have left the stack" reads. Re-enter before testing cancellation.
   await page.mouse.move(anchorBox.x + 400, anchorBox.y + 400, { steps: 10 })
   await expect(halo).toHaveCount(0)
+  await page.mouse.move(
+    grab.x + (slot.x - moverBox.x),
+    grab.y + (slot.y - moverBox.y),
+    { steps: 12 },
+  )
+  await expect(halo).toBeVisible()
 
+  // Escape takes tldraw's cancellation path rather than its drag-end path.
+  // The halo must clear and the card must return to its pre-drag position.
+  await page.keyboard.press('Escape')
+  await expect(halo).toHaveCount(0)
+  const cancelled = await boxOf(mover)
+  expect(Math.abs(cancelled.x - moverBox.x)).toBeLessThanOrEqual(1)
+  expect(Math.abs(cancelled.y - moverBox.y)).toBeLessThanOrEqual(1)
+
+  // A subsequent snap that completes normally still clears on release.
+  await page.mouse.move(grab.x, grab.y)
+  await page.mouse.down()
+  await page.mouse.move(
+    grab.x + (slot.x - moverBox.x),
+    grab.y + (slot.y - moverBox.y),
+    { steps: 12 },
+  )
+  await expect(halo).toBeVisible()
   await page.mouse.up()
   await expect(halo).toHaveCount(0)
 })

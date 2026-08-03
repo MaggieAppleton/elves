@@ -1208,6 +1208,9 @@ export function createServer(
       console.error('[elves] review broadcast failed:', error)
     }
   }
+  const activeReviewRuns = new Map<string, Promise<void>>()
+  const activeReviewRunKey = (projectId: string, reviewId: string, runId: string) =>
+    `${projectId}\0${reviewId}\0${runId}`
 
   // Fire-and-forget: spawn an in-app agent to claim and run review <reviewId>,
   // reusing the SAME headless runner the chat box drives (server/agentRun.ts).
@@ -1270,6 +1273,29 @@ export function createServer(
     if (updated) await broadcastReviewsBestEffort(projectId, updated)
   }
 
+  function startReviewRun(
+    projectId: string,
+    reviewId: string,
+    runId: string,
+    reservation: AgentRunReservation,
+  ): void {
+    const key = activeReviewRunKey(projectId, reviewId, runId)
+    const run = launchReviewRun(projectId, reviewId, runId, reservation)
+      .catch((err) => console.error('[elves] review run failed to launch:', err))
+    activeReviewRuns.set(key, run)
+    void run.finally(() => {
+      if (activeReviewRuns.get(key) === run) activeReviewRuns.delete(key)
+    })
+  }
+
+  async function waitForReviewRun(
+    projectId: string,
+    reviewId: string,
+    runId: string,
+  ): Promise<void> {
+    await activeReviewRuns.get(activeReviewRunKey(projectId, reviewId, runId))
+  }
+
   async function settleReviewDismissal(
     projectId: string,
     reviewId: string,
@@ -1281,6 +1307,7 @@ export function createServer(
       return null
     }
     let safelySettled = false
+    let waitForCancelledRun = false
     try {
       if (!(await requireProject(projectId, res))) {
         safelySettled = true
@@ -1302,6 +1329,7 @@ export function createServer(
       }
       if (agent && (before.status === 'pending' || before.status === 'in-progress')) {
         const cancelled = await agent.cancelAndWait(`review:${reviewId}`, before.attemptId ?? before.id)
+        waitForCancelledRun = cancelled.status === 'accepted'
         if (cancelled.status === 'signal-failed' || cancelled.status === 'run-mismatch') {
           safelySettled = true // the live attempt/lease remains exclusionary
           const message = cancelled.status === 'run-mismatch'
@@ -1330,6 +1358,9 @@ export function createServer(
       if (dismissed === null) {
         safelySettled = true
         return null
+      }
+      if (waitForCancelledRun) {
+        await waitForReviewRun(projectId, reviewId, before.attemptId ?? before.id)
       }
       safelySettled = true
       return dismissed
@@ -1403,9 +1434,7 @@ export function createServer(
         // active/reserved owner exists, so safely relaunch the same attempt.
         if (review.status === 'pending' && reservation) {
           handedOff = true
-          void launchReviewRun(req.params.id, review.id, review.attemptId ?? review.id, reservation).catch((err) =>
-            console.error('[elves] review run failed to launch:', err),
-          )
+          startReviewRun(req.params.id, review.id, review.attemptId ?? review.id, reservation)
         }
         await broadcastReviews(req.params.id)
         res.json({ review })
@@ -1477,12 +1506,12 @@ export function createServer(
         if (accepted === null) return
         if (accepted.review.status === 'pending' && reservation) {
           handedOff = true
-          void launchReviewRun(
+          startReviewRun(
             req.params.id,
             req.params.reviewId,
             attemptId,
             reservation,
-          ).catch((err) => console.error('[elves] review run failed to launch:', err))
+          )
         }
         await broadcastReviews(req.params.id)
         res.status(202).json({ review: accepted.review })

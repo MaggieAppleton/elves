@@ -423,22 +423,38 @@ test('dismiss settlement retains its lease across a transient persistence failur
 
 test('a broadcast failure after durable dismiss does not block response or rename', async () => {
   const fake = makeFakeRunner()
+  let releaseLaunchSettlement!: () => void
+  const launchSettlementGate = new Promise<void>((resolve) => { releaseLaunchSettlement = resolve })
   let throwBroadcast = false
   const app = await appWithRunner(fake.runner, () => {
     if (throwBroadcast) throw new Error('socket broadcast failed')
+  }, {
+    async beforePersist(kind) {
+      if (kind === 'launch') await launchSettlementGate
+    },
   })
   const created = await request(app).post('/projects/essay/reviews').send({ personality: 'trimmer' })
   const key = `review:${created.body.review.id}`
   throwBroadcast = true
+  let responseSettled = false
   const dismissing = request(app)
     .post(`/projects/essay/reviews/${created.body.review.id}/status`)
     .send({ status: 'dismissed', mutationId: 'dismiss-a' })
-  void dismissing.then(() => {})
+    .then((response) => {
+      responseSettled = true
+      return response
+    })
   for (let wait = 0; wait < 20 && fake.cancelled.length === 0; wait++) {
     await new Promise((resolve) => setTimeout(resolve, 5))
   }
   fake.finish(key)
 
+  await waitForReview(app, (review) => review.status === 'dismissed')
+  try {
+    expect(responseSettled).toBe(false)
+  } finally {
+    releaseLaunchSettlement()
+  }
   expect((await dismissing).status).toBe(200)
   expect((await request(app).patch('/projects/essay').send({ name: 'Settled' })).status).toBe(200)
 })

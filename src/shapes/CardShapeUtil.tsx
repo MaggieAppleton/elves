@@ -946,7 +946,21 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     return { id: current.id, type: 'card', x: next.x, y: next.y }
   }
 
-  override onTranslateEnd() {
+  override onTranslateEnd(_initial: CardShape, current: CardShape) {
+    const snapped = snapHighlight.get() !== null
+    clearSnapHighlight()
+    if (snapped) {
+      // If the chosen slot was already occupied, make the dropped card the
+      // lane anchor and shift the existing contiguous stack out of its way.
+      reflowCardLane(
+        this.editor,
+        current.id,
+        current.props.h + Math.max(0, current.props.commentH ?? 0),
+      )
+    }
+  }
+
+  override onTranslateCancel() {
     clearSnapHighlight()
   }
 

@@ -143,6 +143,8 @@ test.describe('touch creation toolbar', () => {
     await expect(page.locator('.elves-stage')).toHaveAttribute('data-view', 'split')
 
     const toolbar = page.locator('.elves-toolbar')
+    await expect.poll(() => toolbar.evaluate((element) => element.scrollWidth > element.clientWidth))
+      .toBe(true)
     await page.getByTestId('new-prose').tap()
     await expect(page.locator('.elves-card--prose')).toHaveCount(1)
 
@@ -150,14 +152,18 @@ test.describe('touch creation toolbar', () => {
     expect(box).not.toBeNull()
     const client = await page.context().newCDPSession(page)
     const y = box!.y + box!.height / 2
+    const startX = box!.x + box!.width - 12
+    const endX = box!.x + 12
     await client.send('Input.dispatchTouchEvent', {
       type: 'touchStart',
-      touchPoints: [{ x: box!.x + box!.width - 12, y }],
+      touchPoints: [{ x: startX, y }],
     })
-    await client.send('Input.dispatchTouchEvent', {
-      type: 'touchMove',
-      touchPoints: [{ x: box!.x + 12, y }],
-    })
+    for (let step = 1; step <= 8; step += 1) {
+      await client.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [{ x: startX + (endX - startX) * (step / 8), y }],
+      })
+    }
     await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
     await expect.poll(() => toolbar.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0)
 

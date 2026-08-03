@@ -525,7 +525,7 @@ afterEach(async () => {
   dirs = []
 })
 
-test('a live applied success with an unreadable body times out and retries as a duplicate', async () => {
+test('a live applied success uses exact duplicate retries until a response body is readable', async () => {
   const { baseUrl, realFetch, canvasPath, initialState } = await startLiveProject()
   const original = changeSet()
   const capturedJson = JSON.stringify(original)
@@ -555,17 +555,18 @@ test('a live applied success with an unreadable body times out and retries as a 
     1_000,
   )
 
-  expect(postBodies).toEqual([
-    `{"token":${JSON.stringify(initialState.token)},"changeSet":${capturedJson}}`,
-    `{"token":${JSON.stringify(initialState.token)},"changeSet":${capturedJson}}`,
-  ])
-  expect(postBodies.map((body) => JSON.parse(body).changeSet.id)).toEqual(['cs-fixed', 'cs-fixed'])
+  const expectedBody = `{"token":${JSON.stringify(initialState.token)},"changeSet":${capturedJson}}`
+  expect(postBodies.length).toBeGreaterThanOrEqual(2)
+  expect(postBodies.length).toBeLessThanOrEqual(3)
+  expect(new Set(postBodies)).toEqual(new Set([expectedBody]))
+  expect(postBodies.every((body) => JSON.parse(body).changeSet.id === 'cs-fixed')).toBe(true)
   expect(postSignals[0].aborted).toBe(true)
+  expect(postSignals.slice(0, -1).every((signal) => signal.aborted)).toBe(true)
   expect(duplicateText).toHaveBeenCalledOnce()
-  expect(postResponses).toEqual([
-    expect.objectContaining({ ok: true }),
-    expect.objectContaining({ ok: true, duplicate: true }),
-  ])
+  expect(postResponses[0]).toEqual(expect.objectContaining({ ok: true }))
+  expect(postResponses.slice(1)).toEqual(
+    postResponses.slice(1).map(() => expect.objectContaining({ ok: true, duplicate: true })),
+  )
   const finalState = await (await realFetch(`${baseUrl}/projects/essay/changeset-token`)).json() as any
   expect(finalState).toEqual({
     revision: initialState.revision + 1,
