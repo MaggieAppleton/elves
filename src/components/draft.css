@@ -87,6 +87,10 @@
   margin: 0;
   padding-bottom: 0;
 }
+.elves-draft__heading:not(:has(.elves-draft__section-editor)),
+.elves-draft__figure-title:not(:has(.elves-draft__figure-editor)) {
+  cursor: text;
+}
 .elves-draft__section:first-child .elves-draft__heading-row { margin-top: 4px; }
 /* Claude-authored labels carry the same warm orange as on the canvas. */
 .elves-draft__heading[data-authored-by="claude"] { color: var(--elves-claude-accent); }
@@ -187,6 +191,21 @@
   font-weight: 650;
   line-height: 1.35;
   color: var(--elves-ink);
+}
+
+.elves-draft__title-editor {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 1.35em;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  background: transparent;
+  border: 0;
+  outline: none;
+  resize: none;
+  overflow: hidden;
 }
 
 .elves-draft__figure-status {

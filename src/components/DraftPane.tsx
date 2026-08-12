@@ -71,9 +71,13 @@ export function DraftPane({
 
   // The paragraph currently open as a textarea (one at a time). Cleared on blur.
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingTitleId, setEditingTitleId] = useState<string | null>(null)
 
   useEffect(() => {
-    if (readOnly) setEditingId(null)
+    if (readOnly) {
+      setEditingId(null)
+      setEditingTitleId(null)
+    }
   }, [readOnly])
 
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle')
@@ -150,8 +154,16 @@ export function DraftPane({
                       className="elves-draft__heading"
                       data-authored-by={block.authoredBy ?? 'user'}
                       data-testid="draft-heading"
+                      onClick={!readOnly ? () => setEditingTitleId(block.sectionId!) : undefined}
                     >
-                      {block.section}
+                      {!readOnly && editor && editingTitleId === block.sectionId ? (
+                        <SectionTitleEditor
+                          editor={editor}
+                          sectionId={block.sectionId!}
+                          initialText={block.section}
+                          onDone={() => setEditingTitleId(null)}
+                        />
+                      ) : block.section}
                     </h2>
                   </div>
                 )}
@@ -159,8 +171,19 @@ export function DraftPane({
                   if (item.type === 'figure') {
                     return (
                       <figure key={item.id} className="elves-draft__figure" data-testid="draft-figure">
-                        <figcaption className="elves-draft__figure-title">
-                          {item.title.trim() || 'Untitled figure'}
+                        <figcaption
+                          className="elves-draft__figure-title"
+                          data-testid="draft-figure-title"
+                          onClick={!readOnly ? () => setEditingTitleId(item.id) : undefined}
+                        >
+                          {!readOnly && editor && editingTitleId === item.id ? (
+                            <FigureTitleEditor
+                              editor={editor}
+                              cardId={item.id}
+                              initialText={item.title}
+                              onDone={() => setEditingTitleId(null)}
+                            />
+                          ) : item.title.trim() || 'Untitled figure'}
                           {item.status ? (
                             <span className="elves-draft__figure-status">{item.status}</span>
                           ) : null}
@@ -348,6 +371,67 @@ function ProseEditor({
           e.currentTarget.blur()
         }
         e.stopPropagation()
+      }}
+    />
+  )
+}
+
+function SectionTitleEditor({
+  editor, sectionId, initialText, onDone,
+}: {
+  editor: Editor
+  sectionId: string
+  initialText: string
+  onDone: () => void
+}) {
+  return (
+    <textarea
+      className="elves-draft__title-editor elves-draft__section-editor"
+      data-testid="draft-section-editor"
+      autoFocus
+      defaultValue={initialText}
+      onClick={(event) => event.stopPropagation()}
+      onChange={(event) => editor.updateShape<SectionShape>({
+        id: sectionId as SectionShape['id'],
+        type: 'section',
+        props: { text: event.currentTarget.value, authoredBy: 'user' },
+      })}
+      onBlur={(event) => {
+        if (event.currentTarget.value.trim() === '') editor.deleteShape(sectionId as SectionShape['id'])
+        onDone()
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') event.currentTarget.blur()
+        event.stopPropagation()
+      }}
+    />
+  )
+}
+
+function FigureTitleEditor({
+  editor, cardId, initialText, onDone,
+}: {
+  editor: Editor
+  cardId: string
+  initialText: string
+  onDone: () => void
+}) {
+  return (
+    <textarea
+      className="elves-draft__title-editor elves-draft__figure-editor"
+      data-testid="draft-figure-editor"
+      autoFocus
+      defaultValue={initialText}
+      onClick={(event) => event.stopPropagation()}
+      onChange={(event) => editor.updateShape<CardShape>({
+        id: cardId as CardShape['id'],
+        type: 'card',
+        props: { figureTitle: event.currentTarget.value, authoredBy: null },
+      })}
+      onBlur={onDone}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') event.currentTarget.blur()
+        event.stopPropagation()
       }}
     />
   )
