@@ -7,6 +7,7 @@ import type { Editor } from 'tldraw'
 
 vi.mock('tldraw', () => ({
   useValue: (_name: string, getValue: () => unknown) => getValue(),
+  createShapeId: () => 'shape:split-card',
 }))
 
 vi.mock('../../src/client/assets', () => ({
@@ -495,6 +496,97 @@ test('renders safe Markdown links beside a separate prose edit control', () => {
   const textarea = renderer.container.querySelector<HTMLTextAreaElement>('[data-testid="draft-editor"]')
   expect(textarea?.value).toBe(markdownSource)
   expect(onSelectCard).toHaveBeenCalledWith('shape:linked-prose')
+
+  unmount(renderer)
+})
+
+test('Enter splits prose at the cursor and inserts its new card before later draft cards', () => {
+  const shapes = [
+    {
+      id: 'shape:source', type: 'card', x: 0, y: 0,
+      props: {
+        kind: 'prose', noteKind: null, text: 'Before after', attribution: [],
+        w: 240, h: 120, mergedInto: null, draftExcluded: false, comments: [],
+      },
+    },
+    {
+      id: 'shape:later', type: 'card', x: 0, y: 136,
+      props: {
+        kind: 'prose', noteKind: null, text: 'Later paragraph', attribution: [],
+        w: 240, h: 120, mergedInto: null, draftExcluded: false, comments: [],
+      },
+    },
+  ]
+  const splitEditor = {
+    getCurrentPageShapes: () => shapes,
+    getShapePageBounds: (id: string) => {
+      const shape = shapes.find((candidate) => candidate.id === id)
+      return shape && { x: shape.x, y: shape.y, w: shape.props.w, h: shape.props.h }
+    },
+    getShape: (id: string) => shapes.find((shape) => shape.id === id),
+    getPointInParentSpace: (_id: string, point: { x: number; y: number }) => point,
+    updateShape: vi.fn((update) => {
+      const shape = shapes.find((candidate) => candidate.id === update.id)
+      if (!shape) return
+      Object.assign(shape, update, { props: { ...shape.props, ...update.props } })
+    }),
+    createShape: vi.fn((shape) => { shapes.push(shape) }),
+    run: (fn: () => void) => fn(),
+  } as unknown as Editor
+  const renderer = render(createElement(DraftPane, { editor: splitEditor, onSelectCard: vi.fn() }))
+
+  const edit = renderer.container.querySelector<HTMLButtonElement>('button[aria-label="Edit paragraph"]')
+  act(() => { edit?.click() })
+  const textarea = renderer.container.querySelector<HTMLTextAreaElement>('[data-testid="draft-editor"]')
+  textarea?.setSelectionRange(7, 7)
+  act(() => { textarea?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+
+  expect(shapes.find((shape) => shape.id === 'shape:source')?.props.text).toBe('Before ')
+  expect(shapes.find((shape) => shape.id === 'shape:split-card')?.props.text).toBe('after')
+  expect(shapes.find((shape) => shape.id === 'shape:later')?.y).toBeGreaterThan(
+    shapes.find((shape) => shape.id === 'shape:split-card')?.y ?? Infinity,
+  )
+  const splitEditorElement = renderer.container.querySelector<HTMLTextAreaElement>('[data-testid="draft-editor"]')
+  expect(splitEditorElement?.value).toBe('after')
+  expect(document.activeElement).toBe(splitEditorElement)
+  expect(splitEditorElement?.selectionStart).toBe(0)
+
+  unmount(renderer)
+})
+
+test('Enter at the end of prose creates an empty following card', () => {
+  const shapes = [{
+    id: 'shape:source', type: 'card', x: 0, y: 0,
+    props: {
+      kind: 'prose', noteKind: null, text: 'Ending', attribution: [],
+      w: 240, h: 120, mergedInto: null, draftExcluded: false, comments: [],
+    },
+  }]
+  const splitEditor = {
+    getCurrentPageShapes: () => shapes,
+    getShapePageBounds: (id: string) => {
+      const shape = shapes.find((candidate) => candidate.id === id)
+      return shape && { x: shape.x, y: shape.y, w: shape.props.w, h: shape.props.h }
+    },
+    getShape: (id: string) => shapes.find((shape) => shape.id === id),
+    getPointInParentSpace: (_id: string, point: { x: number; y: number }) => point,
+    updateShape: vi.fn((update) => {
+      const shape = shapes.find((candidate) => candidate.id === update.id)
+      if (shape) Object.assign(shape, update, { props: { ...shape.props, ...update.props } })
+    }),
+    createShape: vi.fn((shape) => { shapes.push(shape) }),
+    run: (fn: () => void) => fn(),
+  } as unknown as Editor
+  const renderer = render(createElement(DraftPane, { editor: splitEditor, onSelectCard: vi.fn() }))
+
+  act(() => { renderer.container.querySelector<HTMLButtonElement>('button[aria-label="Edit paragraph"]')?.click() })
+  const textarea = renderer.container.querySelector<HTMLTextAreaElement>('[data-testid="draft-editor"]')
+  textarea?.setSelectionRange(6, 6)
+  act(() => { textarea?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+
+  expect(shapes.find((shape) => shape.id === 'shape:source')?.props.text).toBe('Ending')
+  expect(shapes.find((shape) => shape.id === 'shape:split-card')?.props.text).toBe('')
+  expect(renderer.container.querySelector<HTMLTextAreaElement>('[data-testid="draft-editor"]')?.selectionStart).toBe(0)
 
   unmount(renderer)
 })
