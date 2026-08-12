@@ -105,6 +105,29 @@ const visualEditor = {
   },
 } as unknown as Editor
 
+const titleEditor = {
+  getCurrentPageShapes: () => [
+    {
+      id: 'shape:section-1',
+      type: 'section',
+      props: { text: 'Opening', authoredBy: 'user' },
+    },
+    {
+      id: 'shape:figure-1',
+      type: 'card',
+      props: {
+        kind: 'figure', noteKind: null, text: 'A diagram.', figureTitle: 'System map',
+        figureStatus: null, mergedInto: null, draftExcluded: false, comments: [],
+      },
+    },
+  ],
+  getShapePageBounds: (id: string) => ({
+    x: 0, y: id === 'shape:section-1' ? 0 : 100, w: 240, h: 120,
+  }),
+  updateShape: vi.fn(),
+  deleteShape: vi.fn(),
+} as unknown as Editor
+
 const markdownSource =
   'Read [Maggie](https://maggieappleton.com) and [unsafe](javascript:alert(1)).'
 
@@ -160,6 +183,12 @@ function copyButton(harness: Harness): HTMLButtonElement {
 
 function copyLabel(harness: Harness): string {
   return copyButton(harness).textContent ?? ''
+}
+
+function enterText(input: HTMLTextAreaElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+  setter?.call(input, value)
+  input.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
 beforeEach(() => {
@@ -313,6 +342,112 @@ test('renders figures and images between prose in draft order', () => {
   expect(image?.src).toContain('/assets/loop.png')
 
   unmount(renderer)
+})
+
+test('edits section and figure titles through their canvas shapes', () => {
+  const renderer = render(createElement(DraftPane, {
+    editor: titleEditor,
+    onSelectCard: vi.fn(),
+  }))
+
+  const sectionTitle = renderer.container.querySelector<HTMLButtonElement>('[aria-label="Edit section heading"]')
+  act(() => { sectionTitle?.click() })
+  const sectionEditor = renderer.container.querySelector<HTMLTextAreaElement>('[data-testid="draft-section-editor"]')
+  expect(sectionEditor?.value).toBe('Opening')
+  act(() => {
+    if (!sectionEditor) return
+    enterText(sectionEditor, 'Introduction')
+    sectionEditor.blur()
+  })
+  expect(titleEditor.updateShape).toHaveBeenCalledWith({
+    id: 'shape:section-1', type: 'section', props: { text: 'Introduction', authoredBy: 'user' },
+  })
+
+  const figureTitle = renderer.container.querySelector<HTMLButtonElement>('[aria-label="Edit figure title"]')
+  act(() => { figureTitle?.click() })
+  const figureEditor = renderer.container.querySelector<HTMLTextAreaElement>('[data-testid="draft-figure-editor"]')
+  expect(figureEditor?.value).toBe('System map')
+  act(() => {
+    if (!figureEditor) return
+    enterText(figureEditor, 'Architecture map')
+    figureEditor.blur()
+  })
+  expect(titleEditor.updateShape).toHaveBeenCalledWith({
+    id: 'shape:figure-1', type: 'card', props: { figureTitle: 'Architecture map', authoredBy: null },
+  })
+
+  unmount(renderer)
+})
+
+test('deletes an empty section but retains an empty-titled figure', () => {
+  const renderer = render(createElement(DraftPane, {
+    editor: titleEditor,
+    onSelectCard: vi.fn(),
+  }))
+  const sectionTitle = renderer.container.querySelector<HTMLButtonElement>('[aria-label="Edit section heading"]')
+  act(() => { sectionTitle?.click() })
+  const sectionEditor = renderer.container.querySelector<HTMLTextAreaElement>('[data-testid="draft-section-editor"]')
+  act(() => {
+    if (!sectionEditor) return
+    enterText(sectionEditor, '')
+    sectionEditor.blur()
+  })
+  expect(titleEditor.deleteShape).toHaveBeenCalledWith('shape:section-1')
+
+  const figureTitle = renderer.container.querySelector<HTMLButtonElement>('[aria-label="Edit figure title"]')
+  act(() => { figureTitle?.click() })
+  const figureEditor = renderer.container.querySelector<HTMLTextAreaElement>('[data-testid="draft-figure-editor"]')
+  act(() => {
+    if (!figureEditor) return
+    enterText(figureEditor, '')
+    figureEditor.blur()
+  })
+  expect(titleEditor.deleteShape).toHaveBeenCalledTimes(1)
+  expect(titleEditor.updateShape).toHaveBeenCalledWith({
+    id: 'shape:figure-1', type: 'card', props: { figureTitle: '', authoredBy: null },
+  })
+
+  unmount(renderer)
+})
+
+test('does not open title editors in read-only mode', () => {
+  const renderer = render(createElement(DraftPane, {
+    editor: titleEditor,
+    readOnly: true,
+    onSelectCard: vi.fn(),
+  }))
+
+  act(() => {
+    renderer.container.querySelector<HTMLElement>('[data-testid="draft-heading"]')?.click()
+    renderer.container.querySelector<HTMLElement>('[data-testid="draft-figure-title"]')?.click()
+  })
+  expect(renderer.container.querySelector('[data-testid="draft-section-editor"]')).toBeNull()
+  expect(renderer.container.querySelector('[data-testid="draft-figure-editor"]')).toBeNull()
+
+  unmount(renderer)
+})
+
+test('uses title edit buttons only when the draft is editable', () => {
+  const editable = render(createElement(DraftPane, {
+    editor: titleEditor,
+    onSelectCard: vi.fn(),
+  }))
+  const sectionButton = editable.container.querySelector<HTMLButtonElement>('[aria-label="Edit section heading"]')
+  const figureButton = editable.container.querySelector<HTMLButtonElement>('[aria-label="Edit figure title"]')
+  expect(sectionButton?.textContent).toBe('Opening')
+  expect(figureButton?.textContent).toBe('System map')
+  act(() => { sectionButton?.click() })
+  expect(editable.container.querySelector('[data-testid="draft-section-editor"]')).not.toBeNull()
+  unmount(editable)
+
+  const readOnly = render(createElement(DraftPane, {
+    editor: titleEditor,
+    readOnly: true,
+    onSelectCard: vi.fn(),
+  }))
+  expect(readOnly.container.querySelector('[aria-label="Edit section heading"]')).toBeNull()
+  expect(readOnly.container.querySelector('[aria-label="Edit figure title"]')).toBeNull()
+  unmount(readOnly)
 })
 
 test('copy-as-Markdown includes figures and images in draft order', async () => {
