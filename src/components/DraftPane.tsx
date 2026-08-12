@@ -154,7 +154,6 @@ export function DraftPane({
                       className="elves-draft__heading"
                       data-authored-by={block.authoredBy ?? 'user'}
                       data-testid="draft-heading"
-                      onClick={!readOnly ? () => setEditingTitleId(block.sectionId!) : undefined}
                     >
                       {!readOnly && editor && editingTitleId === block.sectionId ? (
                         <SectionTitleEditor
@@ -163,6 +162,15 @@ export function DraftPane({
                           initialText={block.section}
                           onDone={() => setEditingTitleId(null)}
                         />
+                      ) : !readOnly ? (
+                        <button
+                          type="button"
+                          className="elves-draft__title-edit-target"
+                          aria-label="Edit section heading"
+                          onClick={() => setEditingTitleId(block.sectionId!)}
+                        >
+                          {block.section}
+                        </button>
                       ) : block.section}
                     </h2>
                   </div>
@@ -174,7 +182,6 @@ export function DraftPane({
                         <figcaption
                           className="elves-draft__figure-title"
                           data-testid="draft-figure-title"
-                          onClick={!readOnly ? () => setEditingTitleId(item.id) : undefined}
                         >
                           {!readOnly && editor && editingTitleId === item.id ? (
                             <FigureTitleEditor
@@ -183,6 +190,15 @@ export function DraftPane({
                               initialText={item.title}
                               onDone={() => setEditingTitleId(null)}
                             />
+                          ) : !readOnly ? (
+                            <button
+                              type="button"
+                              className="elves-draft__title-edit-target"
+                              aria-label="Edit figure title"
+                              onClick={() => setEditingTitleId(item.id)}
+                            >
+                              {item.title.trim() || 'Untitled figure'}
+                            </button>
                           ) : item.title.trim() || 'Untitled figure'}
                           {item.status ? (
                             <span className="elves-draft__figure-status">{item.status}</span>
