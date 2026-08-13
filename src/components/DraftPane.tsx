@@ -1,9 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { useValue, type Editor } from 'tldraw'
+import { createShapeId, useValue, type Editor } from 'tldraw'
 import type { CardShape } from '../shapes/CardShapeUtil'
 import type { SectionShape } from '../shapes/SectionShapeUtil'
 import { visibleComments } from '../model/comments'
 import { reattribute, USER_AUTHOR } from '../model/attribution'
+import { makeProseCardProps } from '../model/cards'
+import { CANVAS_GAP } from '../model/layout'
 import {
   compileDraft, draftToMarkdown, type DraftBlock, type DraftCardInput, type DraftSectionInput,
 } from '../model/draft'
@@ -72,11 +74,13 @@ export function DraftPane({
   // The paragraph currently open as a textarea (one at a time). Cleared on blur.
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null)
+  const [editingAtStartId, setEditingAtStartId] = useState<string | null>(null)
 
   useEffect(() => {
     if (readOnly) {
       setEditingId(null)
       setEditingTitleId(null)
+      setEditingAtStartId(null)
     }
   }, [readOnly])
 
@@ -119,7 +123,59 @@ export function DraftPane({
   const startEditing = (cardId: string) => {
     if (readOnly) return
     onSelectCard(cardId)
+    setEditingAtStartId(null)
     setEditingId(cardId)
+  }
+
+  const splitProse = (cardId: string, text: string, cursor: number) => {
+    if (!editor) return
+    const source = editor.getShape<CardShape>(cardId as CardShape['id'])
+    const sourceBounds = source && editor.getShapePageBounds(source.id)
+    if (!source || !sourceBounds) return
+
+    const block = blocks.find((candidate) => candidate.items.some((item) => item.id === cardId))
+    const sourceIndex = block?.items.findIndex((item) => item.id === cardId) ?? -1
+    if (!block || sourceIndex < 0) return
+
+    const id = createShapeId()
+    const before = text.slice(0, cursor)
+    const after = text.slice(cursor)
+    const props = { ...makeProseCardProps(after), w: source.props.w, h: source.props.h }
+    const pagePosition = { x: sourceBounds.x, y: sourceBounds.y + sourceBounds.h + CANVAS_GAP }
+    const localPosition = editor.getPointInParentSpace(source.id, pagePosition)
+    const followingIds = block.items.slice(sourceIndex + 1).map((item) => item.id)
+
+    editor.run(() => {
+      editor.updateShape<CardShape>({
+        id: source.id,
+        type: 'card',
+        props: {
+          text: before,
+          authoredBy: null,
+          attribution: reattribute(source.props.text, before, source.props.attribution, USER_AUTHOR),
+        },
+      })
+      editor.createShape<CardShape>({
+        id,
+        type: 'card',
+        parentId: source.parentId,
+        x: localPosition.x,
+        y: localPosition.y,
+        props,
+      })
+
+      let nextY = pagePosition.y + props.h + CANVAS_GAP
+      for (const followingId of followingIds) {
+        const following = editor.getShape<CardShape>(followingId as CardShape['id'])
+        const bounds = following && editor.getShapePageBounds(following.id)
+        if (!following || !bounds) continue
+        const local = editor.getPointInParentSpace(following.id, { x: bounds.x, y: nextY })
+        editor.updateShape<CardShape>({ id: following.id, type: 'card', x: local.x, y: local.y })
+        nextY += bounds.h + CANVAS_GAP
+      }
+    })
+    setEditingAtStartId(id)
+    setEditingId(id)
   }
 
   const empty = blocks.length === 0
@@ -232,7 +288,12 @@ export function DraftPane({
                         editor={editor}
                         cardId={item.id}
                         initialText={item.text}
-                        onDone={() => setEditingId(null)}
+                        focusAtStart={editingAtStartId === item.id}
+                        onSplit={splitProse}
+                        onDone={() => {
+                          setEditingAtStartId(null)
+                          setEditingId(null)
+                        }}
                       />
                     </div>
                   ) : (
@@ -328,11 +389,15 @@ function ProseEditor({
   editor,
   cardId,
   initialText,
+  focusAtStart,
+  onSplit,
   onDone,
 }: {
   editor: Editor
   cardId: string
   initialText: string
+  focusAtStart: boolean
+  onSplit: (cardId: string, text: string, cursor: number) => void
   onDone: () => void
 }) {
   const ref = useRef<HTMLTextAreaElement>(null)
@@ -348,9 +413,8 @@ function ProseEditor({
     const el = ref.current
     if (!el) return
     fit(el)
-    // Drop the caret at the end so you land ready to keep writing.
-    const end = el.value.length
-    el.setSelectionRange(end, end)
+    const caret = focusAtStart ? 0 : el.value.length
+    el.setSelectionRange(caret, caret)
   }, [])
 
   return (
@@ -379,10 +443,10 @@ function ProseEditor({
       }}
       onBlur={onDone}
       onKeyDown={(e) => {
-        // Escape leaves edit mode. Enter is left alone — prose has paragraphs,
-        // so a newline is the expected keystroke, not a commit. stopPropagation
-        // keeps typing out of any global/canvas hotkey handlers.
-        if (e.key === 'Escape') {
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          onSplit(cardId, e.currentTarget.value, e.currentTarget.selectionStart)
+        } else if (e.key === 'Escape') {
           e.preventDefault()
           e.currentTarget.blur()
         }
