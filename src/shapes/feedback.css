@@ -5,3 +5,12 @@
   top: 0;
   margin-top: 0;
 }
+
+/* Attached markers occupy a card's full width so their reserved lane row lines
+   up with the card. Floating feedback has no card edge to align to: at detail
+   zoom it should instead wrap its bounded gist tightly, capped by its existing
+   shape width. Overview keeps the shared compact type-and-count treatment. */
+.elves-annotation-marker.elves-feedback-marker[data-mode="detail"] {
+  width: fit-content;
+  max-width: 100%;
+}
