@@ -277,7 +277,7 @@
   padding: 7px 11px;
   font-size: 14px;
   line-height: 1.5;
-  color: var(--elves-ink);
+  color: var(--elves-ink-soft);
   white-space: pre-wrap;
   background: var(--elves-surface-muted);
   border: 1px solid var(--elves-border-subtle);
@@ -291,12 +291,22 @@
   color: var(--elves-ink);
   white-space: pre-wrap;
 }
+.elves-agentbox__text[data-testid='agent-result'] {
+  padding: 9px 10px;
+  background: color-mix(in srgb, var(--elves-claude-accent) 5%, var(--elves-surface));
+  border: 1px solid color-mix(in srgb, var(--elves-claude-accent) 22%, var(--elves-border-subtle));
+  border-radius: 9px;
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--elves-claude-accent) 55%, transparent);
+}
 
 .elves-agentbox__tool {
   margin: 0;
+  padding: 3px 7px;
   font-size: 12.5px;
   line-height: 1.4;
   color: var(--elves-ink-faint);
+  background: var(--elves-surface-muted);
+  border-radius: 5px;
 }
 .elves-agentbox__tool-name {
   color: var(--elves-ink-soft);
@@ -309,9 +319,14 @@
 
 .elves-agentbox__error {
   margin: 0;
+  padding: 8px 10px;
   font-size: 13px;
+  font-weight: 600;
   line-height: 1.45;
   color: var(--elves-cc-evidence-label, #b4472a);
+  background: color-mix(in srgb, var(--elves-cc-evidence-label, #b4472a) 9%, var(--elves-surface));
+  border: 1px solid color-mix(in srgb, var(--elves-cc-evidence-label, #b4472a) 35%, var(--elves-border-subtle));
+  border-radius: 7px;
 }
 
 .elves-agentbox__working {
@@ -319,6 +334,7 @@
   align-items: center;
   gap: 7px;
   margin: 0;
+  padding: 2px 0;
   font-size: 12.5px;
   color: var(--elves-ink-faint);
 }

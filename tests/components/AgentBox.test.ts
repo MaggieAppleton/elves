@@ -54,6 +54,65 @@ test('a suggestion fills but does not send the prompt', async () => {
   expect(runAgentMock).not.toHaveBeenCalled()
 })
 
+test('the final agent prose is distinguished from user, tool, error, and working activity', async () => {
+  vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
+  vi.stubGlobal('cancelAnimationFrame', vi.fn())
+  vi.stubGlobal('document', {
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  })
+
+  let emit!: (event: AgentEvent) => void
+  let finish!: () => void
+  const done = new Promise<void>((resolve) => { finish = resolve })
+  runAgentMock.mockImplementation((_input, onEvent: (event: AgentEvent) => void) => {
+    emit = onEvent
+    return {
+      runId: 'run-1',
+      suppressCallbacks: vi.fn(),
+      dispose: vi.fn(),
+      requestCancel: vi.fn(async () => {}),
+      done,
+    } satisfies AgentRunHandle
+  })
+
+  let renderer!: ReactTestRenderer
+  await act(async () => {
+    renderer = create(createElement(AgentBox, {
+      open: true,
+      projectId: 'project-1',
+      selectedCount: 0,
+      onClose: vi.fn(),
+    }))
+  })
+  await act(async () => {
+    renderer.root.findByProps({ 'data-testid': 'agent-input' }).props.onChange({
+      target: { value: 'Critique this canvas' },
+    })
+  })
+  await act(async () => {
+    renderer.root.findByProps({ 'data-testid': 'agent-send' }).props.onClick()
+  })
+  await act(async () => {
+    emit({ type: 'text', text: 'I am checking the evidence.' })
+    emit({ type: 'tool', name: 'read_map', summary: 'Reviewed 4 cards' })
+    emit({ type: 'text', text: 'The conclusion needs evidence.' })
+    emit({ type: 'error', message: 'A second source was unavailable.' })
+  })
+
+  const transcript = renderer.root.findByProps({ 'data-testid': 'agent-transcript' })
+  expect(transcript.findByProps({ 'data-kind': 'user' }).children).toEqual(['Critique this canvas'])
+  expect(transcript.findByProps({ 'data-kind': 'tool' })
+    .findByProps({ className: 'elves-agentbox__tool-name' }).children).toEqual(['read map'])
+  expect(transcript.findByProps({ 'data-kind': 'error' }).children).toEqual(['A second source was unavailable.'])
+  expect(transcript.findByProps({ 'data-kind': 'working' }).children).toContain('working…')
+  expect(transcript.findAllByProps({ 'data-testid': 'agent-result' })).toHaveLength(1)
+  expect(transcript.findByProps({ 'data-testid': 'agent-result' }).children)
+    .toEqual(['The conclusion needs evidence.'])
+
+  await act(async () => { finish() })
+})
+
 test('unmount cancels the active run and disposes its callbacks without reacting to rerenders', async () => {
   vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
   vi.stubGlobal('cancelAnimationFrame', vi.fn())

@@ -96,7 +96,12 @@ test('pressing / opens the box and streams a transcript', async ({ page }) => {
   const transcript = page.getByTestId('agent-transcript')
   await expect(transcript).toContainText('Looking at your cards.')
   // The tool name renders with underscores turned to spaces.
-  await expect(transcript).toContainText('read map')
+  await expect(page.locator('[data-kind="user"]')).toHaveText('critique my argument')
+  await expect(page.locator('[data-kind="text"]').filter({ hasText: 'Looking at your cards.' }))
+    .toHaveCount(1)
+  await expect(page.locator('[data-kind="tool"]')).toContainText('read map')
+  await expect(page.getByTestId('agent-result')).toHaveText('Found two weak spots.')
+  await expect(page.getByTestId('agent-result')).toHaveCount(1)
 })
 
 test('a suggested task fills the prompt without sending it', async ({ page }) => {
