@@ -18,6 +18,7 @@ interface Props {
   onSummon: (personality: PersonalityId, focus: string | null) => void
   onDismiss: (reviewId: string) => void
   onRetry: (reviewId: string) => void
+  onOpenAnnotation: (feedbackId: string) => void
 }
 
 // Each personality's swatch borrows the label colour of its signature comment
@@ -99,6 +100,7 @@ export function ReviewPanel({
   onSummon,
   onDismiss,
   onRetry,
+  onOpenAnnotation,
 }: Props) {
   const [open, setOpen] = useState(false)
   const [focus, setFocus] = useState('')
@@ -166,17 +168,6 @@ export function ReviewPanel({
     setOpen(false)
   }
 
-  const restoreFeedback = (feedback: FeedbackShape) => {
-    if (!editor) return
-    editor.updateShape<FeedbackShape>({
-      id: feedback.id,
-      type: 'feedback',
-      props: { resolved: false },
-    })
-    editor.select(feedback.id)
-    editor.zoomToSelection({ animation: { duration: 320 } })
-  }
-
   return (
     <div className="elves-review" ref={ref}>
       <button
@@ -214,7 +205,10 @@ export function ReviewPanel({
               className="elves-review__resolved-item"
               key={feedback.id}
               aria-label={`Restore feedback: ${mechanicalGist(feedback.props.text, 80)}`}
-              onClick={() => restoreFeedback(feedback)}
+              onClick={() => {
+                onOpenAnnotation(feedback.id)
+                setOpen(false)
+              }}
             >
               <span className="elves-review__resolved-meta" style={persona ? { color: personalityTone(persona.id) } : undefined}>
                 {persona?.name ?? 'Agent feedback'}{persona && agent ? ` · ${agent.name}` : !persona ? ` · ${agent?.name ?? feedback.props.authoredBy}` : ''}

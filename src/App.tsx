@@ -10,8 +10,9 @@ import { measuredCardPropsHeight } from './shapes/autosize'
 import { cardIsHidden, collapseAll } from './shapes/mergeView'
 import { SectionShapeUtil, SectionShape } from './shapes/SectionShapeUtil'
 import { QuestionShapeUtil } from './shapes/QuestionShapeUtil'
-import { FeedbackShapeUtil } from './shapes/FeedbackShapeUtil'
+import { FeedbackShapeUtil, type FeedbackShape } from './shapes/FeedbackShapeUtil'
 import { feedbackIsHidden } from './model/feedback'
+import { resolveComment } from './model/comments'
 import {
   makeProseCardProps, makeNoteCardProps, makeImageNoteCardProps, makeReferenceCardProps,
   makeFigureCardProps,
@@ -39,6 +40,8 @@ import type { Review, PersonalityId } from './model/reviews'
 import { LinkPrompt } from './components/LinkPrompt'
 import { AgentBox } from './components/AgentBox'
 import { DraftPane } from './components/DraftPane'
+import { AnnotationRail } from './components/AnnotationRail'
+import { subscribeAnnotationOpen, type AnnotationTarget } from './client/annotationSelection'
 import { DraftDrawerControls } from './components/DraftDrawerControls'
 import { type ViewState, moreDraft, lessDraft } from './client/viewMachine'
 import { prefersReducedMotion } from './client/motion'
@@ -178,6 +181,9 @@ export default function App() {
   const [view, setView] = useState<ViewState>('canvas')
   const [split, setSplit] = useState(DEFAULT_SPLIT)
   const [dragging, setDragging] = useState(false)
+  const [annotationTarget, setAnnotationTarget] = useState<AnnotationTarget | null>(null)
+  const viewBeforeAnnotation = useRef<ViewState | null>(null)
+  const viewRef = useRef<ViewState>('canvas')
   const stageRef = useRef<HTMLDivElement>(null)
   const canvasPaneRef = useRef<HTMLDivElement>(null)
   const dividerDragRef = useRef<PointerDragManager | null>(null)
@@ -398,9 +404,63 @@ export default function App() {
     )
   }, [currentProjectId])
 
+  useEffect(() => {
+    viewRef.current = view
+  }, [view])
+
   const changeView = (next: ViewState) => {
     setView(next)
     if (currentProjectId) localStorage.setItem(viewKey(currentProjectId), next)
+  }
+
+  const openAnnotation = (target: AnnotationTarget) => {
+    setAnnotationTarget((current) => {
+      if (!current) viewBeforeAnnotation.current = viewRef.current
+      return target
+    })
+  }
+
+  useEffect(() => subscribeAnnotationOpen(openAnnotation), [])
+
+  const closeAnnotation = () => {
+    const previous = viewBeforeAnnotation.current
+    setAnnotationTarget(null)
+    if (previous) changeView(previous)
+    viewBeforeAnnotation.current = null
+  }
+
+  const resolveAnnotation = (target: AnnotationTarget, commentId?: string) => {
+    if (canvasMutationsLocked || !editor) return
+    if (target.kind === 'card' && commentId) {
+      const shape = editor.getShape(target.cardId as TLShapeId) as CardShape | undefined
+      if (!shape || shape.type !== 'card') return
+      editor.updateShape<CardShape>({
+        id: shape.id,
+        type: 'card',
+        props: { comments: resolveComment(shape.props.comments, commentId) },
+      })
+      return
+    }
+    if (target.kind === 'feedback') {
+      const shape = editor.getShape(target.feedbackId as TLShapeId)
+      if (!shape || shape.type !== 'feedback') return
+      editor.updateShape<FeedbackShape>({
+        id: target.feedbackId as TLShapeId,
+        type: 'feedback',
+        props: { resolved: true },
+      })
+    }
+  }
+
+  const restoreFeedback = (feedbackId: string) => {
+    if (canvasMutationsLocked || !editor) return
+    const shape = editor.getShape(feedbackId as TLShapeId)
+    if (!shape || shape.type !== 'feedback') return
+    editor.updateShape<FeedbackShape>({
+      id: feedbackId as TLShapeId,
+      type: 'feedback',
+      props: { resolved: false },
+    })
   }
 
   // The drawer moves one step at a time: « widens toward draft, » narrows
@@ -853,8 +913,11 @@ export default function App() {
   // Pane widths for the three states. tldraw stays mounted; draft-only just
   // collapses the canvas pane to 0 (and vice-versa), and CSS transitions the
   // width so moving between states feels continuous rather than modal.
-  const canvasWidth = view === 'canvas' ? '100%' : view === 'draft' ? '0%' : `${split * 100}%`
-  const draftWidth = view === 'canvas' ? '0%' : view === 'draft' ? '100%' : `${(1 - split) * 100}%`
+  // The inspector is a visual right pane only: preserve the stored view so a
+  // close returns precisely where the reader was (including draft-only).
+  const visualView: ViewState = annotationTarget ? 'split' : view
+  const canvasWidth = visualView === 'canvas' ? '100%' : visualView === 'draft' ? '0%' : `${split * 100}%`
+  const draftWidth = visualView === 'canvas' ? '0%' : visualView === 'draft' ? '100%' : `${(1 - split) * 100}%`
   const writeStatusLabel = canvasWriteStatusLabel(canvasWriteStatus)
   const realtimeLabel = realtimeStatusLabel(realtimeStatus)
 
@@ -874,7 +937,7 @@ export default function App() {
         onClose={() => setAgentBoxOpen(false)}
       />
       {/* Canvas-editing chrome is only meaningful when the canvas is visible. */}
-      {view !== 'draft' && (
+      {visualView !== 'draft' && (
         <button
           className="elves-tools-toggle"
           data-active={showTools}
@@ -937,6 +1000,7 @@ export default function App() {
           onSummon={handleSummonReview}
           onDismiss={handleDismissReview}
           onRetry={handleRetryReview}
+          onOpenAnnotation={(feedbackId) => openAnnotation({ kind: 'feedback', feedbackId })}
         />
         <ProjectSwitcher
           projects={projects}
@@ -948,12 +1012,12 @@ export default function App() {
           onRename={renameFlow}
         />
       </div>
-      <div className="elves-stage" ref={stageRef} data-dragging={dragging} data-view={view}>
+      <div className="elves-stage" ref={stageRef} data-dragging={dragging} data-view={visualView}>
         <div
           className="elves-canvas-pane"
           ref={canvasPaneRef}
           style={{ width: canvasWidth }}
-          data-collapsed={view === 'draft'}
+          data-collapsed={visualView === 'draft'}
         >
           <Tldraw
             key={canvasMountKey}
@@ -964,7 +1028,7 @@ export default function App() {
           />
           {/* Creation toolbar lives inside the canvas pane and scrolls internally
               when that pane is narrow, so it never spills in front of the prose. */}
-          {view !== 'draft' && (
+          {visualView !== 'draft' && (
             <div
               className="elves-toolbar"
               onFocus={(event) => {
@@ -1018,7 +1082,7 @@ export default function App() {
             </div>
           )}
         </div>
-        {view === 'split' && (
+        {visualView === 'split' && !annotationTarget && (
           <div
             className="elves-divider"
             style={{ left: `${split * 100}%` }}
@@ -1032,16 +1096,25 @@ export default function App() {
         <div
           className="elves-draft-pane"
           style={{ width: draftWidth }}
-          aria-hidden={view === 'canvas'}
+          aria-hidden={visualView === 'canvas'}
         >
-          <DraftPane editor={editor} readOnly={canvasMutationsLocked} onSelectCard={onSelectCard} />
+          {annotationTarget ? (
+            <AnnotationRail
+              target={annotationTarget}
+              editor={editor}
+              disabled={canvasMutationsLocked}
+              onClose={closeAnnotation}
+              onResolve={resolveAnnotation}
+              onRestore={restoreFeedback}
+            />
+          ) : <DraftPane editor={editor} readOnly={canvasMutationsLocked} onSelectCard={onSelectCard} />}
         </div>
-        <DraftDrawerControls
+        {!annotationTarget && <DraftDrawerControls
           view={view}
           split={split}
           onExpand={expandDraft}
           onCollapse={collapseDraft}
-        />
+        />}
       </div>
     </div>
   )

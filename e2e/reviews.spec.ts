@@ -138,8 +138,9 @@ test('summoning runs a full pass in-app', async ({ page, request }) => {
   await expect(page.getByTestId('review-verdict')).toContainText('Stub verdict')
   await expect(page.getByTestId('review-tally-trimmer')).toContainText('1 open · 1 notes')
 
-  // The tagged comment renders on the card in its own type styling.
-  const pin = page.locator('.elves-comment[data-type="tighten"]')
+  // The tagged comment renders as the shared compact marker, retaining its
+  // review type while the immutable body lives in the annotation rail.
+  const pin = page.locator('[data-testid="annotation-marker"][data-type="tighten"]')
   await expect(pin).toBeVisible()
   await expect(pin).toContainText('stub note')
 
@@ -167,15 +168,22 @@ test('resolved floating feedback leaves the canvas and can be restored from revi
     reviewer: 'architect',
   })
 
-  const feedback = page.locator('.elves-feedback', { hasText: 'The middle needs a bridge' })
-  await expect(feedback).toBeVisible()
-  await feedback.getByRole('button', { name: 'Resolve feedback' }).click()
-  await expect(feedback).toHaveCount(0)
+  const marker = page.locator('.elves-feedback-marker')
+  await expect(marker).toBeVisible()
+  await expect(page.locator('.elves-feedback')).toHaveCount(0)
+  await marker.click()
+  const rail = page.getByTestId('annotation-rail')
+  await expect(rail).toBeVisible()
+  await expect(rail).toContainText('The middle needs a bridge')
+  await rail.getByRole('button', { name: 'Resolve feedback' }).click()
+  await expect(marker).toHaveCount(0)
 
   const restore = page.getByRole('button', { name: 'Restore feedback: The middle needs a bridge' })
   await expect(restore).toBeVisible()
   await restore.click()
-  await expect(feedback).toBeVisible()
+  await expect(rail).toBeVisible()
+  await rail.getByRole('button', { name: 'Restore feedback' }).click()
+  await expect(marker).toBeVisible()
   await expect(restore).toHaveCount(0)
 })
 
@@ -206,7 +214,7 @@ test('resolved feedback history stays on-screen and scrolls on a short viewport'
   expect(await history.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true)
 })
 
-test('floating feedback grows to contain a multi-line annotation', async ({ page }) => {
+test('floating feedback stays a bounded marker while the full annotation is immutable in the rail', async ({ page }) => {
   await openCanvas(page)
   const text = `The opening and conclusion make the same promise, but the middle never supplies ${'thecausalbridge'.repeat(18)}.`
 
@@ -218,21 +226,14 @@ test('floating feedback grows to contain a multi-line annotation', async ({ page
     reviewer: 'architect',
   })
 
-  const feedback = page.locator('.elves-feedback', { hasText: text })
-  const annotation = feedback.locator('.elves-feedback__text')
-  await expect(feedback).toBeVisible()
-
-  await expect.poll(async () => {
-    const [feedbackBox, annotationBox] = await Promise.all([
-      feedback.boundingBox(),
-      annotation.boundingBox(),
-    ])
-    if (!feedbackBox || !annotationBox) return false
-    const fitsWidth = await annotation.evaluate((element) => element.scrollWidth <= element.clientWidth)
-    return annotationBox.y + annotationBox.height <= feedbackBox.y + feedbackBox.height + 1 && fitsWidth
-  }).toBe(true)
-
-  expect((await feedback.boundingBox())!.height).toBeGreaterThan(96)
+  const marker = page.locator('.elves-feedback-marker')
+  await expect(marker).toBeVisible()
+  expect((await marker.boundingBox())!.height).toBe(34)
+  await expect(page.locator('.elves-feedback__text')).toHaveCount(0)
+  await marker.click()
+  const rail = page.getByTestId('annotation-rail')
+  await expect(rail).toContainText(text)
+  await expect(rail.locator('textarea')).toHaveCount(0)
 })
 
 test('a failing run marks the pass failed, with Retry', async ({ page }) => {

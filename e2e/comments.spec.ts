@@ -133,3 +133,15 @@ test('attached comments collapse to one marker and do not expose full bodies at 
   await expect(page.getByTestId('annotation-marker')).toHaveCount(1)
   await expect(page.locator('.elves-comment__text')).toHaveCount(0)
 })
+
+test('closing an annotation rail restores split view', async ({ page, request }) => {
+  await addCardAndComment(page, request, { type: 'needs-evidence', text: 'This needs a source.' })
+
+  await page.getByTestId('draft-open').click()
+  await expect(page.getByTestId('draft-divider')).toBeVisible()
+  await page.getByTestId('annotation-marker').click()
+  await expect(page.getByTestId('annotation-rail')).toBeVisible()
+  await expect(page.getByTestId('annotation-rail')).toContainText('This needs a source.')
+  await page.getByRole('button', { name: 'Close annotation' }).click()
+  await expect(page.getByTestId('draft-divider')).toBeVisible()
+})

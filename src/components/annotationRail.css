@@ -1,0 +1,18 @@
+.elves-annotation-rail { height: 100%; display: flex; flex-direction: column; background: var(--elves-surface); color: var(--elves-ink); }
+.elves-annotation-rail__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 52px 18px 15px; border-bottom: 1px solid var(--elves-border); }
+.elves-annotation-rail__header h2 { margin: 2px 0 0; font-size: 17px; line-height: 1.2; letter-spacing: -.015em; }
+.elves-annotation-rail__eyebrow { color: var(--elves-ink-faint); font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.elves-annotation-rail__close { width: 29px; height: 29px; padding: 0; border: 1px solid var(--elves-border); border-radius: 7px; background: transparent; color: var(--elves-ink-soft); font: 20px/1 var(--elves-card-font); cursor: pointer; }
+.elves-annotation-rail__close:hover { background: var(--elves-tertiary); color: var(--elves-ink); }
+.elves-annotation-rail__close:focus-visible, .elves-annotation-rail__resolve:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring); }
+.elves-annotation-rail__scroll { flex: 1; min-height: 0; overflow: auto; padding: 14px; }
+.elves-annotation-rail__list { display: grid; gap: 10px; }
+.elves-annotation-rail__item { display: grid; gap: 10px; padding: 13px; border: 1px solid var(--elves-border); border-radius: 10px; background: var(--elves-bg); }
+.elves-annotation-rail__item[data-selected="true"] { border-color: var(--elves-primary); box-shadow: 0 0 0 1px var(--elves-primary-tint-2); }
+.elves-annotation-rail__meta { display: flex; flex-wrap: wrap; gap: 5px 8px; color: var(--elves-ink-faint); font-size: 11px; font-weight: 550; text-transform: capitalize; }
+.elves-annotation-rail__type { color: var(--elves-primary-strong); }
+.elves-annotation-rail__text { margin: 0; color: var(--elves-ink); font-size: 14px; line-height: 1.52; white-space: pre-wrap; overflow-wrap: anywhere; }
+.elves-annotation-rail__resolve { justify-self: start; padding: 5px 8px; border: 1px solid var(--elves-border-strong); border-radius: 6px; background: transparent; color: var(--elves-ink-soft); font: 12px var(--elves-card-font); cursor: pointer; }
+.elves-annotation-rail__resolve:hover:not(:disabled) { background: var(--elves-tertiary); color: var(--elves-ink); }
+.elves-annotation-rail__resolve:disabled { opacity: .52; cursor: default; }
+.elves-annotation-rail__empty { margin: 4px; color: var(--elves-ink-soft); font-size: 13px; line-height: 1.45; }
