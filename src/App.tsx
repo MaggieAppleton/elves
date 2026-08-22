@@ -183,7 +183,9 @@ export default function App() {
   const [dragging, setDragging] = useState(false)
   const [annotationTarget, setAnnotationTarget] = useState<AnnotationTarget | null>(null)
   const viewBeforeAnnotation = useRef<ViewState | null>(null)
+  const annotationProjectId = useRef<string | null>(null)
   const viewRef = useRef<ViewState>('canvas')
+  const currentProjectIdRef = useRef<string | null>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const canvasPaneRef = useRef<HTMLDivElement>(null)
   const dividerDragRef = useRef<PointerDragManager | null>(null)
@@ -408,6 +410,10 @@ export default function App() {
     viewRef.current = view
   }, [view])
 
+  useEffect(() => {
+    currentProjectIdRef.current = currentProjectId
+  }, [currentProjectId])
+
   const changeView = (next: ViewState) => {
     setView(next)
     if (currentProjectId) localStorage.setItem(viewKey(currentProjectId), next)
@@ -415,7 +421,10 @@ export default function App() {
 
   const openAnnotation = (target: AnnotationTarget) => {
     setAnnotationTarget((current) => {
-      if (!current) viewBeforeAnnotation.current = viewRef.current
+      if (!current) {
+        viewBeforeAnnotation.current = viewRef.current
+        annotationProjectId.current = currentProjectIdRef.current
+      }
       return target
     })
   }
@@ -425,8 +434,12 @@ export default function App() {
   const closeAnnotation = () => {
     const previous = viewBeforeAnnotation.current
     setAnnotationTarget(null)
-    if (previous) changeView(previous)
+    // A project transition discards annotation state before mounting the new
+    // canvas. This guard also makes a delayed close harmless: never write the
+    // old project's saved view into the incoming project's localStorage key.
+    if (previous && annotationProjectId.current === currentProjectId) changeView(previous)
     viewBeforeAnnotation.current = null
+    annotationProjectId.current = null
   }
 
   const resolveAnnotation = (target: AnnotationTarget, commentId?: string) => {
@@ -806,6 +819,12 @@ export default function App() {
       editorRef.current = null
       setEditor(null)
     }
+    // The rail is a view of live shapes in the current project. Clear its
+    // retained target and pre-rail view before `currentProjectId` changes so
+    // neither can leak into the next project's persisted view state.
+    setAnnotationTarget(null)
+    viewBeforeAnnotation.current = null
+    annotationProjectId.current = null
     localStorage.setItem(LAST_PROJECT_KEY, id)
     setCurrentProjectId(id)
     setCanvasMountKey((key) => key + 1)
