@@ -284,9 +284,9 @@ export function AgentBox({
 
   const hasTranscript = entries.length > 0 || running
   // A stream can contain several prose events before its terminal reply. Only
-  // the last prose line is the result: giving the selector to each streamed
-  // line would make assistive and test consumers mistake in-progress thought
-  // for the completed answer.
+  // the last prose line of a settled run is the result: giving the selector to
+  // a streamed line would make assistive and test consumers mistake
+  // in-progress thought for the completed answer.
   const lastAgentTextIndex = entries.reduce(
     (last, entry, index) => entry.kind === 'text' ? index : last,
     -1,
@@ -357,7 +357,7 @@ export function AgentBox({
               <p
                 className="elves-agentbox__text"
                 data-kind="text"
-                data-testid={i === lastAgentTextIndex ? 'agent-result' : undefined}
+                data-testid={!running && i === lastAgentTextIndex ? 'agent-result' : undefined}
                 key={i}
               >
                 {en.text}

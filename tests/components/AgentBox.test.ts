@@ -106,11 +106,17 @@ test('the final agent prose is distinguished from user, tool, error, and working
     .findByProps({ className: 'elves-agentbox__tool-name' }).children).toEqual(['read map'])
   expect(transcript.findByProps({ 'data-kind': 'error' }).children).toEqual(['A second source was unavailable.'])
   expect(transcript.findByProps({ 'data-kind': 'working' }).children).toContain('working…')
-  expect(transcript.findAllByProps({ 'data-testid': 'agent-result' })).toHaveLength(1)
-  expect(transcript.findByProps({ 'data-testid': 'agent-result' }).children)
-    .toEqual(['The conclusion needs evidence.'])
+  expect(transcript.findAllByProps({ 'data-testid': 'agent-result' })).toHaveLength(0)
 
-  await act(async () => { finish() })
+  await act(async () => {
+    emit({ type: 'done', reply: 'The conclusion needs evidence.' })
+    finish()
+  })
+
+  const settledTranscript = renderer.root.findByProps({ 'data-testid': 'agent-transcript' })
+  expect(settledTranscript.findAllByProps({ 'data-testid': 'agent-result' })).toHaveLength(1)
+  expect(settledTranscript.findByProps({ 'data-testid': 'agent-result' }).children)
+    .toEqual(['The conclusion needs evidence.'])
 })
 
 test('unmount cancels the active run and disposes its callbacks without reacting to rerenders', async () => {
