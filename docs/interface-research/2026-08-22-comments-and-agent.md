@@ -1,6 +1,6 @@
 # Canvas annotations and in-app agent — research brief
 
-**Status:** discovery complete; no implementation decision yet.
+**Status:** discovery complete; annotation inspector direction chosen (right rail).
 
 ## What exists
 
@@ -23,6 +23,40 @@ It can collapse to a status pill while a run continues. The component is
 functionally mature (selection scope, cancellation, transcript preservation,
 short-viewports and reduced motion are covered), but its visual model still
 reads as a generic floating chat window rather than a canvas-native workbench.
+
+## Live local audit — 22 August
+
+The documented local setup is now running against a disposable project in this
+worktree. These captures are the actual current UI, with one attached
+`needs-evidence` comment, one free-floating `structure` feedback item, and the
+agent invoked on the selected prose card.
+
+### Current annotation behaviour at 100%
+
+![Current attached and floating annotations at 100%](references/current-annotation-state.png)
+
+The attached comment is a wide coloured block below the card; the floating
+feedback is a separate white card. They do not read as the same system even
+before zoom changes. Both expose resolution as a small glyph, but neither has
+an affordance for opening a thread or returning to resolved feedback.
+
+### Current annotation behaviour at 50%
+
+![Current attached and floating annotations at 50%](references/current-annotation-overview-50.png)
+
+At 50%, the attached comment uses its gist but still projects a large panel
+below the card. Floating feedback has no equivalent mode: its whole card is
+scaled down until provenance and content are effectively unreadable. This is
+the concrete failure the shared marker contract must solve.
+
+### Current agent entry state
+
+![Current agent composer](references/current-agent-composer.png)
+
+The composer does correctly show selected scope, but it takes a broad,
+bottom-centre modal-like footprint and begins as an empty prompt. It has no
+visible suggested action, no sense of the selected card's identity, and no
+relationship to the annotation/review surfaces elsewhere in the canvas.
 
 ## Reference captures
 
@@ -110,6 +144,15 @@ right rail grouped by card/cluster/review. It maximises prose readability but
 is a larger navigation change and can feel too document-like for free-form
 canvas work.
 
+## Chosen navigation surface
+
+The annotation inspector will be a **right rail**. It gives the thread a stable
+reading width, leaves the canvas fully visible and separates detailed reading
+from spatial navigation. The rail should sit above, not replace, the existing
+draft drawer: opening an annotation changes the canvas/draft layout to canvas +
+annotation rail, and restores the prior view on close. It must not open over a
+card or resize the actual canvas coordinate system.
+
 ## Recommended initial PR slices
 
 Do not start these until the interaction direction is approved.
@@ -122,7 +165,7 @@ Do not start these until the interaction direction is approved.
    floating feedback cards at overview zoom with non-overlapping, accessible
    markers; preserve the current layout-obstacle guarantees. Add canvas E2E
    coverage at normal and overview zoom.
-3. **Annotation inspector and resolved stack.** Implement the single thread
+3. **Annotation right rail and resolved stack.** Implement the single thread
    inspector, resolve/reopen flow and provenance, reusing the review-home
    direction already described in `2026-07-28-canvas-review-feedback-design.md`.
 4. **Agent composer.** Redesign the idle `/` entry state around scope, useful
@@ -135,13 +178,10 @@ Do not start these until the interaction direction is approved.
 
 ## Implementation constraints and questions
 
-- The application could not be run for a visual audit in this checkout because
-  `node_modules` is absent (`concurrently` is unavailable). This brief is
-  grounded in source and existing e2e specifications; agents should run
-  `npm ci`, then add before/after captures to their PRs.
-- Decide whether the inspector is a **right rail** (best on desktop, stable
-  width) or a **bottom sheet** (keeps draft split available). The answer sets
-  the task boundary for slices 2 and 3.
+- Dependencies are installed with `npm ci`, and `npm run dev:all` is the
+  verified local command. npm reported 15 audit findings (1 low, 5 moderate,
+  8 high and 1 critical); that is a separate dependency-maintenance task, not
+  part of this UI work.
 - Decide whether users can author/reply to comments in v1. Current comments are
   agent-authored and immutable; the proposed UI should not imply a capability
   that does not exist.
