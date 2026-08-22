@@ -2,6 +2,9 @@
 
 **Status:** discovery complete; annotation inspector direction chosen (right rail).
 
+The approved design is now specified in
+[`2026-08-22-annotations-and-agent-workbench-design.md`](../superpowers/specs/2026-08-22-annotations-and-agent-workbench-design.md).
+
 ## What exists
 
 There are two annotation primitives, with materially different visual and zoom
@@ -183,8 +186,8 @@ Do not start these until the interaction direction is approved.
   8 high and 1 critical); that is a separate dependency-maintenance task, not
   part of this UI work.
 - Decide whether users can author/reply to comments in v1. Current comments are
-  agent-authored and immutable; the proposed UI should not imply a capability
-  that does not exist.
+  agent-authored and immutable. **Decided:** only agents leave comments; the
+  proposed UI must not imply human authoring or replies.
 - Preserve: `/` is literal while typing, Escape does not accidentally cancel a
   run, canvas operations remain usable while a run is collapsed, and no
   annotation body may block unrelated canvas content at overview zoom.
