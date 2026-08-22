@@ -56,7 +56,7 @@
    or the whole canvas. Tinted with the accent only when a selection scopes it. */
 .elves-agentbox__scope {
   font-size: 11.5px;
-  font-weight: 500;
+  font-weight: 600;
   padding: 2px 8px;
   border-radius: 999px;
   color: var(--elves-ink-faint);
@@ -109,6 +109,48 @@
 .elves-agentbox__close svg {
   width: 15px;
   height: 15px;
+}
+
+/* --- Idle command dock ------------------------------------------------- */
+/* Three concise prompt starters orient a new session without behaving like
+   actions: they only place text in the composer, leaving Enter and Send as the
+   explicit run triggers. */
+.elves-agentbox__suggestions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--elves-border-subtle);
+}
+.elves-agentbox__suggestion {
+  appearance: none;
+  padding: 4px 8px;
+  border: 1px solid var(--elves-border-subtle);
+  border-radius: 999px;
+  background: var(--elves-surface-muted);
+  color: var(--elves-ink-soft);
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.25;
+  cursor: pointer;
+  transition: border-color 100ms ease, background-color 100ms ease, color 100ms ease;
+}
+.elves-agentbox__suggestion:hover {
+  border-color: color-mix(in srgb, var(--elves-claude-accent) 35%, var(--elves-border-strong));
+  background: color-mix(in srgb, var(--elves-claude-accent) 7%, var(--elves-surface));
+  color: var(--elves-ink);
+}
+.elves-agentbox__suggestion:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring);
+}
+.elves-agentbox__sendhint {
+  margin-left: auto;
+  color: var(--elves-ink-faint);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 /* --- Collapsed bar ------------------------------------------------------ */

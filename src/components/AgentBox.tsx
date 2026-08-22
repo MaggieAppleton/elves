@@ -3,6 +3,7 @@ import { Broom, CaretDown, Check, PaperPlaneRight } from '@phosphor-icons/react'
 import { agentInfo } from '../shapes/agents'
 import { runAgent, type AgentEvent, type AgentRunHandle } from '../client/agent'
 import { deriveStatus } from '../client/agentStatus'
+import { agentSuggestions } from '../client/agentSuggestions'
 import type { AgentConversationMessage } from '../../server/agentRun'
 import './agentBox.css'
 
@@ -319,6 +320,23 @@ export function AgentBox({
           </button>
         </div>
       </div>
+
+      {!hasTranscript && (
+        <div className="elves-agentbox__suggestions" role="group" aria-label="Suggested agent tasks">
+          {agentSuggestions(hasSelection).map((suggestion) => (
+            <button
+              key={suggestion.id}
+              type="button"
+              className="elves-agentbox__suggestion"
+              data-testid={`agent-suggestion-${suggestion.id}`}
+              onClick={() => setPrompt(suggestion.prompt)}
+            >
+              {suggestion.label}
+            </button>
+          ))}
+          <span className="elves-agentbox__sendhint">Enter to send</span>
+        </div>
+      )}
 
       {hasTranscript && (
         <div className="elves-agentbox__transcript" ref={scrollRef} data-testid="agent-transcript">

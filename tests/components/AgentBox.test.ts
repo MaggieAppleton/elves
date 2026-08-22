@@ -15,6 +15,45 @@ afterEach(() => {
   runAgentMock.mockReset()
 })
 
+test('a suggestion fills but does not send the prompt', async () => {
+  vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
+  vi.stubGlobal('cancelAnimationFrame', vi.fn())
+  vi.stubGlobal('document', {
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  })
+
+  const handle: AgentRunHandle = {
+    runId: 'run-1',
+    suppressCallbacks: vi.fn(),
+    dispose: vi.fn(),
+    requestCancel: vi.fn(async () => {}),
+    done: new Promise<void>(() => {}),
+  }
+  runAgentMock.mockReturnValue(handle)
+
+  let renderer!: ReactTestRenderer
+  await act(async () => {
+    renderer = create(createElement(AgentBox, {
+      open: true,
+      projectId: 'project-1',
+      selectedCount: 1,
+      onClose: vi.fn(),
+    }))
+  })
+
+  const send = renderer.root.findByProps({ 'data-testid': 'agent-send' })
+  expect(send.props.disabled).toBe(true)
+  await act(async () => {
+    renderer.root.findByProps({ 'data-testid': 'agent-suggestion-critique' }).props.onClick()
+  })
+
+  expect(renderer.root.findByProps({ 'data-testid': 'agent-input' }).props.value)
+    .toBe('Critique the selected cards.')
+  expect(renderer.root.findByProps({ 'data-testid': 'agent-send' }).props.disabled).toBe(false)
+  expect(runAgentMock).not.toHaveBeenCalled()
+})
+
 test('unmount cancels the active run and disposes its callbacks without reacting to rerenders', async () => {
   vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
   vi.stubGlobal('cancelAnimationFrame', vi.fn())
