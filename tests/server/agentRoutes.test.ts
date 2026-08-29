@@ -91,6 +91,58 @@ test('annotation run uses the requested persisted user message rather than the t
   expect(agent.runs[0].prompt).not.toContain('Do not answer this')
 })
 
+test('annotation response remains with the user turn it answers when a later reply is already saved', async () => {
+  const agent = fakeAgent([{ type: 'done', reply: 'First answer.' }])
+  await request(app()).post('/projects/essay/canvas').send({ document: { store: {
+    'shape:card': {
+      id: 'shape:card', typeName: 'shape', type: 'card', x: 0, y: 0,
+      props: { text: 'Annotated draft', comments: [{
+        id: 'c1', text: 'Initial note', author: 'claude',
+        messages: [
+          { id: 'claude-1', author: 'claude', text: 'Initial note', createdAt: 'T0' },
+          { id: 'user-1', author: 'user', text: 'First question', createdAt: 'T1' },
+          { id: 'user-2', author: 'user', text: 'Second question', createdAt: 'T2' },
+        ],
+      }] },
+    },
+  } }, session: null }).expect(200)
+  const port = await listen(agent)
+
+  await postForStream(port, {
+    target: { kind: 'card', cardId: 'shape:card', commentId: 'c1' }, messageId: 'user-1', runId: 'annotation:user-1',
+  }, '/projects/essay/annotations/run')
+
+  const snapshot = await request(app()).get('/projects/essay/canvas').expect(200)
+  expect(snapshot.body.document.store['shape:card'].props.comments[0].messages.map((message: { id: string }) => message.id)).toEqual([
+    'claude-1', 'user-1', 'user-1:claude', 'user-2',
+  ])
+})
+
+test('annotation run bounds legacy context and thread history before launching the agent', async () => {
+  const agent = fakeAgent([{ type: 'done', reply: 'Bounded.' }])
+  const messages = Array.from({ length: 14 }, (_, index) => ({
+    id: `old-${index}`, author: index % 2 ? 'user' : 'claude', text: 'x'.repeat(1_200), createdAt: `T${index}`,
+  }))
+  messages.push({ id: 'current', author: 'user', text: 'Current question', createdAt: 'T-current' })
+  await request(app()).post('/projects/essay/canvas').send({ document: { store: {
+    'shape:card': {
+      id: 'shape:card', typeName: 'shape', type: 'card', x: 0, y: 0,
+      props: { text: 'y'.repeat(50_000), comments: [{ id: 'c1', text: 'Initial note', author: 'claude', messages }] },
+    },
+  } }, session: null }).expect(200)
+  const port = await listen(agent)
+
+  await postForStream(port, {
+    target: { kind: 'card', cardId: 'shape:card', commentId: 'c1' }, messageId: 'current', runId: 'annotation:current',
+  }, '/projects/essay/annotations/run')
+
+  const [run] = agent.runs
+  expect(run).toBeDefined()
+  expect(run!.history).toHaveLength(10)
+  expect(run!.history!.reduce((total, message) => total + message.text.length, 0)).toBeLessThanOrEqual(12_000)
+  expect(run!.prompt.length).toBeLessThan(20_000)
+})
+
 test('annotation retry returns the saved response for its user turn without another agent run', async () => {
   const agent = fakeAgent([{ type: 'done', reply: 'This must not run.' }])
   await request(app()).post('/projects/essay/canvas').send({ document: { store: {

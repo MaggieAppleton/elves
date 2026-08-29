@@ -28,8 +28,15 @@ export function appendThreadMessage<T extends AnnotationThreadSource>(
   annotation: T,
   message: AnnotationMessage,
 ): T {
-  if (threadMessages(annotation).some((existing) => existing.id === message.id)) return annotation
-  return { ...annotation, messages: [...threadMessages(annotation), message] }
+  const messages = threadMessages(annotation)
+  if (messages.some((existing) => existing.id === message.id)) return annotation
+  const parentIndex = message.inReplyToMessageId === undefined
+    ? -1
+    : messages.findIndex((existing) => existing.id === message.inReplyToMessageId)
+  const nextMessages = parentIndex < 0
+    ? [...messages, message]
+    : [...messages.slice(0, parentIndex + 1), message, ...messages.slice(parentIndex + 1)]
+  return { ...annotation, messages: nextMessages }
 }
 
 export function makeComment(

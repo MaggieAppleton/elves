@@ -8,8 +8,10 @@ import {
   isChangeSet,
   ChangeSet,
   changeSetWritesText,
+  MAX_ANNOTATION_MESSAGE_CHARS,
 } from '../src/model/changeset'
 import { threadMessages } from '../src/model/comments'
+import type { AnnotationMessage } from '../src/model/types'
 import type { PresenceMessage } from '../src/model/presence'
 import {
   snapshotToCardMap, snapshotToCardsById, snapshotToDraft,
@@ -64,6 +66,7 @@ const MAX_OEMBED_BYTES = 200_000
 const CANVAS_REVISION_HEADER = 'x-elves-canvas-revision'
 const MAX_AGENT_HISTORY_MESSAGES = 12
 const MAX_AGENT_HISTORY_CHARS = 12_000
+const MAX_ANNOTATION_CONTEXT_CHARS = 12_000
 
 function parseAgentHistory(value: unknown): AgentConversationMessage[] | null {
   if (value === undefined) return []
@@ -80,6 +83,26 @@ function parseAgentHistory(value: unknown): AgentConversationMessage[] | null {
     history.push({ role: expectedRole, text })
   }
   return history
+}
+
+function boundedAnnotationText(text: string, maximum: number): string {
+  return text.length <= maximum ? text : text.slice(0, maximum)
+}
+
+/** Existing canvases may contain arbitrarily large turns, so bound the input
+ * here too instead of relying solely on the current change-set validator. */
+function annotationHistory(messages: AnnotationMessage[]): AgentConversationMessage[] {
+  const newestFirst: AgentConversationMessage[] = []
+  let chars = 0
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (newestFirst.length >= MAX_AGENT_HISTORY_MESSAGES) break
+    const text = boundedAnnotationText(message.text, MAX_ANNOTATION_MESSAGE_CHARS)
+    if (chars + text.length > MAX_AGENT_HISTORY_CHARS) break
+    chars += text.length
+    newestFirst.push({ role: message.author === 'user' ? 'user' : 'assistant', text })
+  }
+  return newestFirst.reverse()
 }
 
 type ProjectPaths = { canvasPath: string; assetsDir: string }
@@ -1140,7 +1163,7 @@ export function createServer(
     projectId: string,
     response: Response,
     target: AnnotationTarget,
-    message: { id: string; author: string; text: string; createdAt: string },
+    message: AnnotationMessage,
     changeSetId: string,
   ): Promise<boolean> => {
     const changeSet: ChangeSet = {
@@ -1189,30 +1212,24 @@ export function createServer(
       return
     }
     const requestedMessage = thread.messages[requestedMessageIndex]
-    // A Claude turn belongs to the user turn immediately before it. Do not
-    // accidentally replay a later turn's answer when another user reply was
-    // saved while this transport was disconnected.
-    let completedReply: typeof thread.messages[number] | undefined
-    for (const message of thread.messages.slice(requestedMessageIndex + 1)) {
-      if (message.author === 'user') break
-      completedReply = message
-      break
-    }
+    // New replies explicitly identify their source user turn. Keep the id
+    // fallback solely for replies saved before that field existed.
+    const completedReply = thread.messages.find((message) => message.author !== 'user' && (
+      message.inReplyToMessageId === messageId ||
+      (message.inReplyToMessageId === undefined && message.id === `${messageId}:claude`)
+    ))
     if (completedReply) {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform' })
       res.write(`data: ${JSON.stringify({ type: 'done', reply: completedReply.text })}\n\n`)
       res.end('event: end\ndata: {}\n\n')
       return
     }
-    const history: AgentConversationMessage[] = thread.messages.slice(0, requestedMessageIndex).map((message) =>
-      message.author === 'user'
-        ? { role: 'user', text: message.text }
-        : { role: 'assistant', text: message.text })
+    const history = annotationHistory(thread.messages.slice(0, requestedMessageIndex))
     const prompt = [
       'Reply to the user in this annotation thread. Keep the reply focused on the annotation; do not edit the canvas.',
       `Annotation target: ${target.kind === 'card' ? `card ${target.cardId}, comment ${target.commentId}` : `feedback ${target.feedbackId}`}.`,
-      `Annotated context: ${thread.text}`,
-      `User reply: ${requestedMessage.text}`,
+      `Annotated context: ${boundedAnnotationText(thread.text, MAX_ANNOTATION_CONTEXT_CHARS)}`,
+      `User reply: ${boundedAnnotationText(requestedMessage.text, MAX_ANNOTATION_MESSAGE_CHARS)}`,
     ].join('\n')
     const key = annotationRunKey(req.params.id, target)
     if (activeAnnotationReplies.has(key)) {
@@ -1246,7 +1263,11 @@ export function createServer(
       send({ type: 'error', message: 'the annotation run failed unexpectedly' })
     }).then(async () => {
       if (finalReply.trim()) {
-        const message = { id: `${messageId}:claude`, author: 'claude', text: finalReply, createdAt: new Date().toISOString() }
+        const message: AnnotationMessage = {
+          id: `${messageId}:claude`, author: 'claude',
+          text: boundedAnnotationText(finalReply, MAX_ANNOTATION_MESSAGE_CHARS),
+          createdAt: new Date().toISOString(), inReplyToMessageId: messageId,
+        }
         if (!await appendAnnotationMessage(req.params.id, res, target, message, `annotation-reply:${messageId}:claude`)) {
           send({ type: 'error', message: 'Claude replied, but the annotation reply could not be saved.' })
         }

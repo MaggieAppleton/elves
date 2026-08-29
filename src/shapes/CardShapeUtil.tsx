@@ -411,7 +411,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
         summaryOfHash: T.nullable(T.string),
         summaryBy: T.nullable(T.string),
         summaryAt: T.nullable(T.string),
-        messages: T.arrayOf(T.object({ id: T.string, author: T.string, text: T.string, createdAt: T.string })).optional(),
+        messages: T.arrayOf(T.object({ id: T.string, author: T.string, text: T.string, createdAt: T.string, inReplyToMessageId: T.string.optional() })).optional(),
       }),
     ),
     commentH: T.number,

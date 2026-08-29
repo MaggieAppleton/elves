@@ -61,7 +61,7 @@
 .elves-annotation-popover {
   position: absolute;
   top: -8px;
-  right: calc(100% + 10px);
+  right: 100%;
   width: min(300px, 72vw);
   opacity: 0;
   visibility: hidden;

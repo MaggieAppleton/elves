@@ -144,6 +144,22 @@ test('focus exposes a complete thread without opening the rail', async ({ page, 
   await expect(page.getByTestId('annotation-rail')).toHaveCount(0)
 })
 
+test('a mouse can travel from a pin into its hover popover and use the reply controls', async ({ page, request }) => {
+  await addCardAndComment(page, request, { type: 'needs-evidence', text: 'Keep the hover controls reachable.' })
+
+  const pin = page.getByTestId('annotation-pin')
+  const popover = page.getByTestId('annotation-popover')
+  await pin.hover()
+  await expect(popover).toBeVisible()
+  const box = await pin.boundingBox()
+  expect(box).not.toBeNull()
+  await page.mouse.move(box!.x - 2, box!.y + box!.height / 2)
+  await expect(popover).toBeVisible()
+  await popover.getByLabel('Reply to annotation').fill('Can you make this source more specific?')
+  await popover.getByRole('button', { name: 'Send reply' }).click()
+  await expect(popover.getByRole('button', { name: 'Replying…' })).toBeDisabled()
+})
+
 test('a resolved card thread can be reopened from Review and restored', async ({ page, request }) => {
   await addCardAndComment(page, request, { type: 'needs-evidence', text: 'Keep this thread recoverable.' })
 

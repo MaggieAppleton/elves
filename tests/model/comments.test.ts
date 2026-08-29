@@ -50,6 +50,24 @@ describe('comment helpers', () => {
     expect(commentThread(twice).messages.map((message) => message.author)).toEqual(['claude', 'user'])
   })
 
+  test('an agent reply is inserted directly after the user turn it answers', () => {
+    const comment = {
+      ...makeComment('c1', 'Initial note'),
+      messages: [
+        { id: 'user-1', author: 'user' as const, text: 'First question', createdAt: 'T1' },
+        { id: 'user-2', author: 'user' as const, text: 'Second question', createdAt: 'T2' },
+      ],
+    }
+    const reply = {
+      id: 'user-1:claude', author: 'claude', text: 'First answer', createdAt: 'T3',
+      inReplyToMessageId: 'user-1',
+    }
+
+    expect(appendThreadMessage(comment, reply).messages?.map((message) => message.id)).toEqual([
+      'user-1', 'user-1:claude', 'user-2',
+    ])
+  })
+
   test('resolveComment marks one resolved without touching others', () => {
     const a = makeComment('c1', 'a')
     const b = makeComment('c2', 'b')

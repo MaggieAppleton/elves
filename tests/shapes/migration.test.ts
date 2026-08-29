@@ -170,6 +170,14 @@ test('feedback pin migration compacts legacy geometry and round-trips it', () =>
   expect(props).toMatchObject({ w: 370, h: 96 })
 })
 
+test('feedback pin migration compacts autosized legacy geometry', () => {
+  const props: Record<string, unknown> = { w: 370, h: 228 }
+
+  compactFeedbackPinUp(props)
+
+  expect(props).toMatchObject({ w: 28, h: 28 })
+})
+
 test('card pin migration removes an existing comment footprint', () => {
   const props: Record<string, unknown> = { commentH: 178, comments: [{ id: 'c1' }] }
   removeCommentFootprintUp(props)

@@ -26,6 +26,8 @@ export interface AnnotationMessage {
   author: 'user' | string
   text: string
   createdAt: string
+  /** The user turn an agent message answers. Omitted on legacy canvases. */
+  inReplyToMessageId?: string
 }
 
 // Re-exported so CardProps' attribution field and the model layer share one type.

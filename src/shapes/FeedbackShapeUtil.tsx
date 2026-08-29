@@ -16,10 +16,8 @@ const LEGACY_FEEDBACK_H = 96
 /** Existing feedback was stored as a card-sized shape. Its saved x/y stays
  * untouched; only its hit-test rectangle changes to match the compact pin. */
 export function compactFeedbackPinUp(props: Record<string, unknown>): void {
-  if (props.w === LEGACY_FEEDBACK_W && props.h === LEGACY_FEEDBACK_H) {
-    props.w = FEEDBACK_DEFAULT_W
-    props.h = FEEDBACK_DEFAULT_H
-  }
+  props.w = FEEDBACK_DEFAULT_W
+  props.h = FEEDBACK_DEFAULT_H
 }
 
 export function compactFeedbackPinDown(props: Record<string, unknown>): void {
@@ -44,7 +42,7 @@ export class FeedbackShapeUtil extends ShapeUtil<FeedbackShape> {
   static override props = {
     w: T.number, h: T.number, text: T.string, authoredBy: T.string,
     type: T.nullable(T.string), reviewId: T.nullable(T.string), reviewer: T.nullable(T.string), resolved: T.boolean,
-    messages: T.arrayOf(T.object({ id: T.string, author: T.string, text: T.string, createdAt: T.string })).optional(),
+    messages: T.arrayOf(T.object({ id: T.string, author: T.string, text: T.string, createdAt: T.string, inReplyToMessageId: T.string.optional() })).optional(),
   }
   getDefaultProps(): FeedbackShape['props'] { return makeFeedbackProps() }
   getGeometry(shape: FeedbackShape): Geometry2d { return new Rectangle2d({ width: shape.props.w, height: shape.props.h, isFilled: true }) }

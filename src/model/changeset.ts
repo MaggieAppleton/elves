@@ -1,6 +1,9 @@
 import { AnnotationMessage, CommentType, Reference, RefType } from './types'
 import { isPersonalityId, type PersonalityId } from './reviews'
 
+/** Keeps durable annotation turns below a safe command-line prompt budget. */
+export const MAX_ANNOTATION_MESSAGE_CHARS = 12_000
+
 export type Op =
   | {
       kind: 'add_comment'
@@ -78,7 +81,10 @@ function isAnnotationMessage(value: unknown): value is AnnotationMessage {
   return typeof message.id === 'string' && message.id.length > 0 &&
     typeof message.author === 'string' && message.author.length > 0 &&
     typeof message.text === 'string' && message.text.trim().length > 0 &&
-    typeof message.createdAt === 'string' && message.createdAt.length > 0
+    message.text.length <= MAX_ANNOTATION_MESSAGE_CHARS &&
+    typeof message.createdAt === 'string' && message.createdAt.length > 0 &&
+    (message.inReplyToMessageId === undefined ||
+      (typeof message.inReplyToMessageId === 'string' && message.inReplyToMessageId.length > 0))
 }
 
 function isAnnotationTarget(value: unknown): boolean {
