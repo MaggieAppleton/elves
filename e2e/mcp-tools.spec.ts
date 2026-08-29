@@ -20,9 +20,9 @@ test('an MCP add_comment tool call lands as a comment in the open app', async ({
 
   await addCommentTool(BASE, projectId, { cardId, text: 'MCP says: no source', type: 'needs-evidence' })
 
-  const pin = page.locator('.elves-comment[data-type="needs-evidence"]')
+  const pin = page.locator('[data-testid="annotation-pin"][data-type="needs-evidence"]')
   await expect(pin).toBeVisible()
-  await expect(pin).toContainText('MCP says: no source')
+  await expect(pin).toHaveAccessibleName(/MCP says: no source/)
 })
 
 test('a note card Claude creates via the MCP shows its authorship mark in the top-right corner', async ({ page }) => {

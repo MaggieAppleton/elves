@@ -1115,9 +1115,12 @@ export function createServer(
     }
     return null
   }
-  const annotationRunKey = (projectId: string, target: AnnotationTarget, messageId: string) => target.kind === 'card'
-    ? `annotation:${projectId}:card:${target.cardId}:${target.commentId}:${messageId}`
-    : `annotation:${projectId}:feedback:${target.feedbackId}:${messageId}`
+  // Keep the target lock separate from the durable message id. The latter
+  // makes retry idempotent, but permits a later user turn to overlap with an
+  // active turn if it is also used as the lock identity.
+  const annotationRunKey = (projectId: string, target: AnnotationTarget) => target.kind === 'card'
+    ? `annotation:${projectId}:card:${target.cardId}:${target.commentId}`
+    : `annotation:${projectId}:feedback:${target.feedbackId}`
   const annotationThreadFromCanvas = (canvas: CanvasSnapshot, target: AnnotationTarget) => {
     const store = (canvas as any)?.document?.store as Record<string, any> | undefined
     if (!store) return null
@@ -1211,7 +1214,7 @@ export function createServer(
       `Annotated context: ${thread.text}`,
       `User reply: ${requestedMessage.text}`,
     ].join('\n')
-    const key = annotationRunKey(req.params.id, target, messageId)
+    const key = annotationRunKey(req.params.id, target)
     if (activeAnnotationReplies.has(key)) {
       res.status(409).json({ code: 'annotation-reply-active', error: 'a reply for this message is already running', retryable: true })
       return

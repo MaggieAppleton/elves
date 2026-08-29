@@ -48,6 +48,16 @@ test('thread renders durable replies and only disables its own send control whil
   expect(tree.root.findByProps({ className: 'elves-annotation-thread__resolve' }).props.disabled).toBe(false)
 })
 
+test('a restored card retains a comment action name', () => {
+  const tree = create(createElement(AnnotationThread, {
+    comment: { id: 'c1', type: 'needs-evidence', text: 'Needs a source', resolved: true, author: 'claude' },
+    mode: 'rail', actionLabel: 'Restore comment', onResolve: vi.fn(),
+  }))
+
+  expect(tree.root.findByProps({ className: 'elves-annotation-thread__resolve' }).props['aria-label'])
+    .toBe('Restore Needs evidence comment')
+})
+
 test('pin popover receives thread-local progress, error, and retry state', () => {
   const retry = vi.fn()
   const target = { kind: 'card' as const, cardId: 'shape:card', commentId: 'c1' }

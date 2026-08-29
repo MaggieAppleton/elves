@@ -116,6 +116,51 @@ test('annotation retry returns the saved response for its user turn without anot
   expect(agent.runs).toEqual([])
 })
 
+test('annotation replies are single-flight per target across distinct user messages', async () => {
+  const releaseRuns: (() => void)[] = []
+  let notifyFirstRun: (() => void) | undefined
+  const firstRunStarted = new Promise<void>((resolve) => { notifyFirstRun = resolve })
+  const agent = fakeAgent()
+  agent.run = async (_key, input, onEvent) => {
+    agent.runs.push(input)
+    notifyFirstRun?.()
+    await new Promise<void>((resolve) => { releaseRuns.push(resolve) })
+    onEvent({ type: 'done', reply: 'The first response.' })
+  }
+  await request(app()).post('/projects/essay/canvas').send({ document: { store: {
+    'shape:card': {
+      id: 'shape:card', typeName: 'shape', type: 'card', x: 0, y: 0,
+      props: { text: 'Annotated draft', comments: [{
+        id: 'c1', text: 'Initial note', author: 'claude',
+        messages: [
+          { id: 'claude-1', author: 'claude', text: 'Initial note', createdAt: 'T0' },
+          { id: 'user-1', author: 'user', text: 'First question', createdAt: 'T1' },
+          { id: 'user-2', author: 'user', text: 'Second question', createdAt: 'T2' },
+        ],
+      }] },
+    },
+  } }, session: null }).expect(200)
+  const port = await listen(agent)
+  const first = postForStream(port, {
+    target: { kind: 'card', cardId: 'shape:card', commentId: 'c1' }, messageId: 'user-1', runId: 'annotation:user-1',
+  }, '/projects/essay/annotations/run')
+  await firstRunStarted
+  const second = postForStream(port, {
+    target: { kind: 'card', cardId: 'shape:card', commentId: 'c1' }, messageId: 'user-2', runId: 'annotation:user-2',
+  }, '/projects/essay/annotations/run')
+  const secondResult = await Promise.race([
+    second,
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 40)),
+  ])
+  try {
+    expect(secondResult?.status).toBe(409)
+    expect(agent.runs).toHaveLength(1)
+  } finally {
+    releaseRuns.forEach((release) => release())
+    await Promise.all([first, second])
+  }
+})
+
 let agentRoot: string
 beforeAll(async () => {
   agentRoot = await mkdtemp(join(tmpdir(), 'elves-agent-routes-'))

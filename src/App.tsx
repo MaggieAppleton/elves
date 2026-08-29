@@ -447,7 +447,9 @@ export default function App() {
   const closeAnnotation = () => {
     const previous = viewBeforeAnnotation.current
     setAnnotationTarget(null)
-    setAnnotationThreadStates({})
+    // Closing the inspector is only a presentation change. In-flight reply
+    // state must remain published to its pin so a close/reopen cannot submit a
+    // second reply before the server settles the first one.
     // A project transition discards annotation state before mounting the new
     // canvas. This guard also makes a delayed close harmless: never write the
     // old project's saved view into the incoming project's localStorage key.

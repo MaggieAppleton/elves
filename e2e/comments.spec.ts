@@ -1,5 +1,4 @@
 import { test, expect } from '@playwright/test'
-import { CANVAS_GAP } from '../src/model/layout'
 import { BASE, resetProject, serverCardIds } from './helpers'
 
 let projectId: string
@@ -46,6 +45,14 @@ test('comments do not reserve a marker row before the next card', async ({ page,
   }
   await expect.poll(async () => (await serverCardIds(request, projectId)).length).toBe(2)
   const [firstCardId, secondCardId] = await serverCardIds(request, projectId)
+  const card = page.locator(`[data-shape-id="${firstCardId}"] .elves-card`)
+  const nextCard = page.locator(`[data-shape-id="${secondCardId}"] .elves-card`)
+  await expect(card).toBeVisible()
+  const beforeCard = await card.boundingBox()
+  const beforeNextCard = await nextCard.boundingBox()
+  expect(beforeCard).not.toBeNull()
+  expect(beforeNextCard).not.toBeNull()
+  const beforeGap = Math.round(beforeNextCard!.y - (beforeCard!.y + beforeCard!.height))
 
   await request.post(`${BASE}/projects/${projectId}/changeset`, {
     data: {
@@ -70,15 +77,13 @@ test('comments do not reserve a marker row before the next card', async ({ page,
     },
   })
 
-  const card = page.locator(`[data-shape-id="${firstCardId}"] .elves-card`)
-  const nextCard = page.locator(`[data-shape-id="${secondCardId}"] .elves-card`)
-  await expect(card).toBeVisible()
+  await expect(page.getByTestId('annotation-pin')).toHaveCount(2)
   await expect.poll(async () => {
     const cardBox = await card.boundingBox()
     const nextCardBox = await nextCard.boundingBox()
     if (!cardBox || !nextCardBox) return null
     return Math.round(nextCardBox.y - (cardBox.y + cardBox.height))
-  }).toBe(CANVAS_GAP)
+  }).toBe(beforeGap)
 })
 
 test("Claude's injected comment renders as a pin and is one Ctrl-Z away from gone", async ({ page, request }) => {
@@ -144,14 +149,14 @@ test('a resolved card thread can be reopened from Review and restored', async ({
 
   await page.getByTestId('annotation-pin').click()
   const rail = page.getByTestId('annotation-rail')
-  await rail.getByRole('button', { name: 'Resolve comment' }).click()
+  await rail.getByRole('button', { name: /^Resolve .* comment$/ }).click()
   await expect(page.getByTestId('annotation-pin')).toHaveCount(0)
 
   const restoreFromReview = page.getByRole('button', { name: 'Restore annotation: Keep this thread recoverable.' })
   await expect(restoreFromReview).toBeVisible()
   await restoreFromReview.click()
-  await expect(rail.getByRole('button', { name: 'Restore comment' })).toBeVisible()
-  await rail.getByRole('button', { name: 'Restore comment' }).click()
+  await expect(rail.getByRole('button', { name: /^Restore .* comment$/ })).toBeVisible()
+  await rail.getByRole('button', { name: /^Restore .* comment$/ }).click()
   await expect(page.getByTestId('annotation-pin')).toBeVisible()
 })
 

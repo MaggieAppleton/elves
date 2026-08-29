@@ -99,7 +99,7 @@ export function AnnotationThread({
       <button
         type="button"
         className="elves-annotation-thread__resolve"
-        aria-label={`${actionLabel.replace(/ comment$| feedback$/, '')} ${type} ${comment.resolved ? 'feedback' : 'comment'}`}
+        aria-label={`${actionLabel.replace(/ comment$| feedback$/, '')} ${type} ${actionLabel.endsWith('feedback') ? 'feedback' : 'comment'}`}
         disabled={disabled || !onResolve}
         onClick={onResolve}
       >

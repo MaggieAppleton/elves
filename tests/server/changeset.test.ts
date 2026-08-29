@@ -307,7 +307,7 @@ test('applyChangeSetToSnapshot stamps the change-set author onto an added commen
   expect(card.props.comments[0].author).toBe('codex')
 })
 
-test('add_comment reserves its footprint and reflows the downstream card', () => {
+test('add_comment leaves the card footprint unchanged for compact pins', () => {
   const snap = {
     document: {
       store: {
@@ -329,11 +329,11 @@ test('add_comment reserves its footprint and reflows the downstream card', () =>
     ops: [{ kind: 'add_comment', cardId: 'shape:a', comment: { type: null, text: 'short' } }],
   }) as any
 
-  expect(next.document.store['shape:a'].props.commentH).toBe(42)
-  expect(next.document.store['shape:b']).toMatchObject({ x: 0, y: 162 + CANVAS_GAP })
+  expect(next.document.store['shape:a'].props.commentH).toBe(0)
+  expect(next.document.store['shape:b']).toMatchObject({ x: 0, y: 120 + CANVAS_GAP })
 })
 
-test('add_comment reflows a downstream question out of the comment footprint', () => {
+test('add_comment leaves a downstream question in place for compact pins', () => {
   const snap = {
     document: {
       store: {
@@ -355,7 +355,7 @@ test('add_comment reflows a downstream question out of the comment footprint', (
     ops: [{ kind: 'add_comment', cardId: 'shape:a', comment: { type: null, text: 'short' } }],
   }) as any
 
-  expect(next.document.store['shape:q']).toMatchObject({ x: 0, y: 162 + CANVAS_GAP })
+  expect(next.document.store['shape:q']).toMatchObject({ x: 0, y: 120 + CANVAS_GAP })
 })
 
 test('applyChangeSetToSnapshot writes a set_comment_summary onto the matching comment only', () => {

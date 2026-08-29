@@ -6,13 +6,13 @@ import {
 } from 'tldraw'
 import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { CardKind, NoteKind, Origin, Comment, Reference, FigureStatus, Attribution } from '../model/types'
-import { makeProseCardProps, canConvertNoteToProse, noteToProseProps, canConvertProseToNote, proseToNoteProps } from '../model/cards'
+import { CARD_DEFAULT_W, makeProseCardProps, canConvertNoteToProse, noteToProseProps, canConvertProseToNote, proseToNoteProps } from '../model/cards'
 import { reattribute, USER_AUTHOR } from '../model/attribution'
 import { AuthorMarks } from './AuthorMarks'
 import { BlameText, hasAgentRun } from './BlameText'
 import { nextFigureStatus } from '../model/figures'
 import { cardGist } from '../model/summary'
-import { visibleComments } from '../model/comments'
+import { estimateCommentHeight, visibleComments } from '../model/comments'
 import { cardAnnotationPins } from '../model/annotationPins'
 import { requestAnnotationOpen, requestAnnotationReply, requestAnnotationRetry } from '../client/annotationSelection'
 import { AnnotationPin } from '../components/AnnotationThread'
@@ -150,6 +150,18 @@ export function addCommentMessagesUp(props: Record<string, unknown>): void {
   props.comments = props.comments.map((comment) => ({ messages: [], ...(comment as Record<string, unknown>) }))
 }
 
+/** Pins render beside a card, not in a block beneath it. Old persisted
+ * comment heights would otherwise leave a phantom vertical footprint. */
+export function removeCommentFootprintUp(props: Record<string, unknown>): void {
+  props.commentH = 0
+}
+
+export function restoreCommentFootprintDown(props: Record<string, unknown>): void {
+  const comments = Array.isArray(props.comments) ? props.comments as Comment[] : []
+  const width = typeof props.w === 'number' ? props.w : CARD_DEFAULT_W
+  props.commentH = estimateCommentHeight(comments, width)
+}
+
 // Seeds per-character authorship from a card's last-writer + text. An existing
 // card has one author for its whole body — the human (authoredBy null → 'user')
 // or the agent that wrote it — so its attribution is one run of that author over
@@ -188,6 +200,7 @@ const cardVersions = createShapePropsMigrationIds('card', {
   AddCommentReviewId: 11,
   AddCommentHeight: 12,
   AddCommentMessages: 13,
+  RemoveCommentFootprint: 14,
 })
 
 export const cardMigrations = createShapePropsMigrationSequence({
@@ -303,6 +316,11 @@ export const cardMigrations = createShapePropsMigrationSequence({
         const comments = (props as Record<string, unknown>).comments
         if (Array.isArray(comments)) for (const comment of comments as Record<string, unknown>[]) delete comment.messages
       },
+    },
+    {
+      id: cardVersions.RemoveCommentFootprint,
+      up: (props) => removeCommentFootprintUp(props as Record<string, unknown>),
+      down: (props) => restoreCommentFootprintDown(props as Record<string, unknown>),
     },
   ],
 })
