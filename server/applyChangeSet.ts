@@ -2,7 +2,7 @@ import { createShapeId } from '@tldraw/tlschema'
 import { getIndexAbove, IndexKey } from '@tldraw/utils'
 import type { CanvasSnapshot } from './store'
 import { CHANGE_SET_STAMP_META_KEY, ChangeSet, planMerge } from '../src/model/changeset'
-import { makeComment, addComment, estimateCommentHeight } from '../src/model/comments'
+import { makeComment, addComment, appendThreadMessage, estimateCommentHeight } from '../src/model/comments'
 import {
   makeNoteCardProps, makeReferenceCardProps, makeFigureCardProps, claudeMayEditCardText,
   CARD_DEFAULT_W, CARD_DEFAULT_H,
@@ -207,6 +207,20 @@ export function applyChangeSetToSnapshot(
         shape.props.comments = addComment(shape.props.comments ?? [], comment)
         shape.props.commentH = estimateCommentHeight(shape.props.comments, shape.props.w ?? CARD_DEFAULT_W)
         reflowCardLaneInStore(store, shape.id, previousHeight)
+        break
+      }
+      case 'append_annotation_message': {
+        if (op.target.kind === 'card') {
+          const { cardId, commentId } = op.target
+          const shape = findCardShape(store, cardId)
+          const comments = shape?.props.comments
+          if (!Array.isArray(comments)) break
+          shape.props.comments = comments.map((comment: any) =>
+            comment?.id === commentId ? appendThreadMessage(comment, op.message) : comment)
+        } else {
+          const shape = findFeedbackShape(store, op.target.feedbackId)
+          if (shape) shape.props = appendThreadMessage(shape.props, op.message)
+        }
         break
       }
       case 'merge_notes': {

@@ -13,9 +13,12 @@ export interface AnnotationRailProps {
   onClose: () => void
   onResolve: (target: AnnotationTarget, commentId?: string) => void
   onRestore: (feedbackId: string) => void
+  threadState?: { running: boolean; streamingText?: string; error?: string | null }
+  onReply?: (target: AnnotationTarget, text: string) => void
+  onRetry?: (target: AnnotationTarget) => void
 }
 
-export function AnnotationRail({ target, editor, disabled = false, onClose, onResolve, onRestore }: AnnotationRailProps) {
+export function AnnotationRail({ target, editor, disabled = false, onClose, onResolve, onRestore, threadState, onReply, onRetry }: AnnotationRailProps) {
   const shape = useValue(
     'annotation rail target',
     () => editor?.getShape((target.kind === 'card' ? target.cardId : target.feedbackId) as TLShapeId) ?? null,
@@ -38,6 +41,11 @@ export function AnnotationRail({ target, editor, disabled = false, onClose, onRe
             selected={comment.id === target.commentId}
             disabled={disabled}
             onResolve={() => onResolve(target, comment.id)}
+            running={threadState?.running && comment.id === target.commentId}
+            streamingText={comment.id === target.commentId ? threadState?.streamingText : undefined}
+            error={comment.id === target.commentId ? threadState?.error : undefined}
+            onReply={onReply ? (text) => onReply({ kind: 'card', cardId: target.cardId, commentId: comment.id }, text) : undefined}
+            onRetry={onRetry && comment.id === target.commentId ? () => onRetry(target) : undefined}
           />
         ))}
       </div>
@@ -53,6 +61,11 @@ export function AnnotationRail({ target, editor, disabled = false, onClose, onRe
         attribution={feedback.props.reviewer?.replaceAll('-', ' ')}
         actionLabel={feedback.props.resolved ? 'Restore feedback' : 'Resolve feedback'}
         onResolve={feedback.props.resolved ? () => onRestore(feedback.id) : () => onResolve(target)}
+        running={threadState?.running}
+        streamingText={threadState?.streamingText}
+        error={threadState?.error}
+        onReply={onReply ? (text) => onReply(target, text) : undefined}
+        onRetry={onRetry ? () => onRetry(target) : undefined}
       />
     )
   } else {

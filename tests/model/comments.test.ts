@@ -5,6 +5,8 @@ import {
   resolveComment,
   visibleComments,
   estimateCommentHeight,
+  appendThreadMessage,
+  commentThread,
 } from '../../src/model/comments'
 
 describe('comment helpers', () => {
@@ -32,6 +34,20 @@ describe('comment helpers', () => {
     const a = makeComment('c1', 'a')
     const out = addComment([], a)
     expect(out).toEqual([a])
+  })
+
+  test('legacy comments become a single Claude message', () => {
+    expect(commentThread(makeComment('c1', 'Needs evidence'))).toMatchObject({
+      messages: [{ author: 'claude', text: 'Needs evidence' }],
+    })
+  })
+
+  test('appending a reply preserves message order and de-duplicates its id', () => {
+    const comment = makeComment('c1', 'Needs evidence')
+    const reply = { id: 'm-user', author: 'user', text: 'Which source?', createdAt: '2026-08-29T12:00:00.000Z' }
+    const once = appendThreadMessage(comment, reply)
+    const twice = appendThreadMessage(once, reply)
+    expect(commentThread(twice).messages.map((message) => message.author)).toEqual(['claude', 'user'])
   })
 
   test('resolveComment marks one resolved without touching others', () => {

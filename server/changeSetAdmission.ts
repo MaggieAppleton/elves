@@ -75,16 +75,22 @@ function targetValidation(
     ...referencedQuestionIds(changeSet).filter((id) => !isShape(id, 'question')),
     ...referencedFeedbackIds(changeSet).filter((id) => !isShape(id, 'feedback')),
     ...changeSet.ops.flatMap((op) => {
-      if (op.kind !== 'set_comment_summary') return []
-      const card = addressableShapeRecord(identity, op.cardId, 'card')
+      const target = op.kind === 'set_comment_summary'
+        ? { cardId: op.cardId, commentId: op.commentId }
+        : op.kind === 'append_annotation_message' && op.target.kind === 'card'
+          ? { cardId: op.target.cardId, commentId: op.target.commentId }
+          : null
+      if (!target) return []
+      const { commentId, cardId } = target
+      const card = addressableShapeRecord(identity, cardId, 'card')
       if (!card) return []
       const comments = Array.isArray((card.props as { comments?: unknown } | undefined)?.comments)
         ? (card.props as { comments: unknown[] }).comments
         : []
       const matches = comments.filter((comment) =>
         typeof comment === 'object' && comment !== null &&
-        (comment as { id?: unknown }).id === op.commentId)
-      return matches.length === 1 ? [] : [op.commentId]
+        (comment as { id?: unknown }).id === commentId)
+      return matches.length === 1 ? [] : [commentId]
     }),
   ])]
   const invalidMergeReps = mergeRepresentativeIds(changeSet)

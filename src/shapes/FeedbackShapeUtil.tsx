@@ -1,7 +1,7 @@
 import { ShapeUtil, TLBaseShape, HTMLContainer, Rectangle2d, T, type Geometry2d } from 'tldraw'
 import { makeFeedbackProps } from '../model/feedback'
 import { AnnotationPin } from '../components/AnnotationThread'
-import { requestAnnotationOpen } from '../client/annotationSelection'
+import { requestAnnotationOpen, requestAnnotationReply } from '../client/annotationSelection'
 import './feedback.css'
 
 export type FeedbackShape = TLBaseShape<'feedback', ReturnType<typeof makeFeedbackProps>>
@@ -23,7 +23,9 @@ export class FeedbackShapeUtil extends ShapeUtil<FeedbackShape> {
           comment={{ id: shape.id, type: shape.props.type, text: shape.props.text, resolved: false, author: shape.props.authoredBy }}
           zoom={this.editor.getZoomLevel()}
           attribution={shape.props.reviewer?.replaceAll('-', ' ')}
+          target={{ kind: 'feedback', feedbackId: shape.id }}
           onOpen={() => requestAnnotationOpen({ kind: 'feedback', feedbackId: shape.id })}
+          onReply={requestAnnotationReply}
         />
       </HTMLContainer>
     )

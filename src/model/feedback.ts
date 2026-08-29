@@ -1,4 +1,4 @@
-import type { CommentType } from './types'
+import type { AnnotationMessage, CommentType } from './types'
 import { CARD_DEFAULT_W } from './types'
 import type { PersonalityId } from './reviews'
 
@@ -11,6 +11,8 @@ export interface FeedbackProps {
   reviewId: string | null
   reviewer: PersonalityId | null
   resolved: boolean
+  /** Optional so existing feedback annotations remain readable as one Claude turn. */
+  messages?: AnnotationMessage[]
 }
 
 export const FEEDBACK_DEFAULT_W = CARD_DEFAULT_W

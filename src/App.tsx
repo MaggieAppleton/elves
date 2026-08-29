@@ -12,7 +12,8 @@ import { SectionShapeUtil, SectionShape } from './shapes/SectionShapeUtil'
 import { QuestionShapeUtil } from './shapes/QuestionShapeUtil'
 import { FeedbackShapeUtil, type FeedbackShape } from './shapes/FeedbackShapeUtil'
 import { feedbackIsHidden } from './model/feedback'
-import { resolveComment } from './model/comments'
+import { appendThreadMessage, resolveComment } from './model/comments'
+import type { AnnotationMessage } from './model/types'
 import {
   makeProseCardProps, makeNoteCardProps, makeImageNoteCardProps, makeReferenceCardProps,
   makeFigureCardProps,
@@ -41,7 +42,11 @@ import { LinkPrompt } from './components/LinkPrompt'
 import { AgentBox } from './components/AgentBox'
 import { DraftPane } from './components/DraftPane'
 import { AnnotationRail } from './components/AnnotationRail'
-import { subscribeAnnotationOpen, type AnnotationTarget } from './client/annotationSelection'
+import { subscribeAnnotationOpen, subscribeAnnotationReply, type AnnotationTarget } from './client/annotationSelection'
+import {
+  persistAnnotationReply, runAnnotationThread,
+  type AnnotationThreadTarget,
+} from './client/annotationThread'
 import { DraftDrawerControls } from './components/DraftDrawerControls'
 import { type ViewState, moreDraft, lessDraft } from './client/viewMachine'
 import { prefersReducedMotion } from './client/motion'
@@ -182,6 +187,9 @@ export default function App() {
   const [split, setSplit] = useState(DEFAULT_SPLIT)
   const [dragging, setDragging] = useState(false)
   const [annotationTarget, setAnnotationTarget] = useState<AnnotationTarget | null>(null)
+  const [annotationThreadState, setAnnotationThreadState] = useState<{
+    key: string; running: boolean; streamingText: string; error: string | null; messageId: string | null
+  } | null>(null)
   const viewBeforeAnnotation = useRef<ViewState | null>(null)
   const annotationProjectId = useRef<string | null>(null)
   const viewRef = useRef<ViewState>('canvas')
@@ -464,6 +472,71 @@ export default function App() {
       })
     }
   }
+
+  const annotationKey = (target: AnnotationThreadTarget) => target.kind === 'card'
+    ? `card:${target.cardId}:${target.commentId}` : `feedback:${target.feedbackId}`
+
+  const applyAnnotationMessage = (target: AnnotationThreadTarget, message: AnnotationMessage) => {
+    if (!editor) return
+    if (target.kind === 'card') {
+      const shape = editor.getShape(target.cardId as TLShapeId) as CardShape | undefined
+      if (!shape || shape.type !== 'card') return
+      editor.updateShape<CardShape>({
+        id: shape.id, type: 'card',
+        props: { comments: shape.props.comments.map((comment) =>
+          comment.id === target.commentId ? appendThreadMessage(comment, message) : comment) },
+      })
+      return
+    }
+    const shape = editor.getShape(target.feedbackId as TLShapeId) as FeedbackShape | undefined
+    if (!shape || shape.type !== 'feedback') return
+    editor.updateShape<FeedbackShape>({
+      id: shape.id, type: 'feedback',
+      props: { messages: appendThreadMessage({
+        id: shape.id, author: shape.props.authoredBy, text: shape.props.text, messages: shape.props.messages,
+      }, message).messages },
+    })
+  }
+
+  const startAnnotationRun = (target: AnnotationThreadTarget, messageId: string) => {
+    if (!currentProjectId) return
+    const key = annotationKey(target)
+    setAnnotationThreadState({ key, running: true, streamingText: '', error: null, messageId })
+    const run = runAnnotationThread(currentProjectId, target, messageId, (event) => {
+      if (event.type === 'text') setAnnotationThreadState((current) => current?.key === key
+        ? { ...current, streamingText: current.streamingText + event.text } : current)
+      if (event.type === 'error') setAnnotationThreadState((current) => current?.key === key
+        ? { ...current, error: event.message } : current)
+    })
+    void run.done.catch((error) => setAnnotationThreadState((current) => current?.key === key
+      ? { ...current, error: error instanceof Error ? error.message : 'the annotation run failed' } : current))
+      .finally(() => setAnnotationThreadState((current) => current?.key === key
+        ? { ...current, running: false, streamingText: '' } : current))
+  }
+
+  const replyToAnnotation = async (target: AnnotationThreadTarget, text: string) => {
+    if (!currentProjectId || canvasMutationsLocked) return
+    const message = { id: crypto.randomUUID(), author: 'user' as const, text, createdAt: new Date().toISOString() }
+    const key = annotationKey(target)
+    setAnnotationThreadState({ key, running: true, streamingText: '', error: null, messageId: message.id })
+    try {
+      await persistAnnotationReply(currentProjectId, target, message)
+      applyAnnotationMessage(target, message)
+      startAnnotationRun(target, message.id)
+    } catch (error) {
+      setAnnotationThreadState({ key, running: false, streamingText: '', messageId: message.id,
+        error: error instanceof Error ? error.message : 'could not save reply' })
+    }
+  }
+
+  const retryAnnotation = (target: AnnotationThreadTarget) => {
+    const key = annotationKey(target)
+    const messageId = annotationThreadState?.key === key ? annotationThreadState.messageId : null
+    if (!currentProjectId || !messageId) return
+    startAnnotationRun(target, messageId)
+  }
+
+  useEffect(() => subscribeAnnotationReply(replyToAnnotation), [currentProjectId, editor, canvasMutationsLocked])
 
   const restoreFeedback = (feedbackId: string) => {
     if (canvasMutationsLocked || !editor) return
@@ -1125,6 +1198,9 @@ export default function App() {
               onClose={closeAnnotation}
               onResolve={resolveAnnotation}
               onRestore={restoreFeedback}
+              threadState={annotationThreadState?.key === annotationKey(annotationTarget) ? annotationThreadState : undefined}
+              onReply={replyToAnnotation}
+              onRetry={retryAnnotation}
             />
           ) : <DraftPane editor={editor} readOnly={canvasMutationsLocked} onSelectCard={onSelectCard} />}
         </div>

@@ -41,6 +41,11 @@ const ALL_OPS: { [Kind in Op['kind']]: Extract<Op, { kind: Kind }> } = {
   create_question: { kind: 'create_question', text: 'Question?', x: 1, y: 2 },
   create_feedback: { kind: 'create_feedback', text: 'Feedback', x: 1, y: 2, feedback: { type: 'structure', reviewId: 'review-a', reviewer: 'architect' } },
   resolve_feedback: { kind: 'resolve_feedback', feedbackId: 'feedback-a' },
+  append_annotation_message: {
+    kind: 'append_annotation_message',
+    target: { kind: 'card', cardId: 'card-a', commentId: 'comment-a' },
+    message: { id: 'message-a', author: 'user', text: 'Reply', createdAt: 'T' },
+  },
   group_cards: { kind: 'group_cards', cardIds: ['card-a', 'card-b'] },
   ungroup_cards: { kind: 'ungroup_cards', groupId: 'group-a' },
   set_summary: {

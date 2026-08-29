@@ -303,6 +303,33 @@ test('POST then GET round-trips the snapshot within a project', async () => {
   expect((await request(app).get('/projects/essay/canvas')).body).toEqual(snap)
 })
 
+test('annotation reply changesets persist one user message before any Claude run', async () => {
+  const app = await appWithTmp()
+  await request(app).post('/projects').send({ name: 'Essay' })
+  await request(app).post('/projects/essay/canvas').send({
+    document: { store: {
+      'shape:card': mk('shape:card', 'prose', 0, 0, 'Draft', {
+        comments: [{
+          id: 'c1', type: null, text: 'Needs evidence', resolved: false, author: 'claude',
+          reviewId: null, summary: null, summaryOfHash: null, summaryBy: null, summaryAt: null,
+        }],
+      }),
+    } }, session: null,
+  })
+  const changeSet = {
+    id: 'reply-once', author: 'user', ops: [{
+      kind: 'append_annotation_message',
+      target: { kind: 'card', cardId: 'shape:card', commentId: 'c1' },
+      message: { id: 'm1', author: 'user', text: 'Which source?', createdAt: '2026-08-29T12:00:00.000Z' },
+    }],
+  }
+  await request(app).post('/projects/essay/changeset').send(changeSet).expect(200)
+  await request(app).post('/projects/essay/changeset').send(changeSet).expect(200)
+  const canvas = await request(app).get('/projects/essay/canvas')
+  const comment = canvas.body.document.store['shape:card'].props.comments[0]
+  expect(comment.messages.map((message: { author: string }) => message.author)).toEqual(['claude', 'user'])
+})
+
 test('two projects keep separate canvases', async () => {
   const app = await appWithTmp()
   await request(app).post('/projects').send({ name: 'One' })

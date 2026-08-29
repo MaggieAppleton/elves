@@ -19,6 +19,15 @@ export type CommentType =
   | 'unclear'
   | 'structure'
 
+/** One durable turn in a user ↔ agent annotation conversation. */
+export interface AnnotationMessage {
+  id: string
+  /** `user` is reserved for the person; agents retain their open registry id. */
+  author: 'user' | string
+  text: string
+  createdAt: string
+}
+
 // Re-exported so CardProps' attribution field and the model layer share one type.
 export type { Attribution, AttributionRun } from './attribution'
 import type { Attribution } from './attribution'
@@ -96,6 +105,11 @@ export interface Comment {
   summaryBy: string | null
   /** ISO timestamp of when the summary was generated. */
   summaryAt: string | null
+  /**
+   * Later conversation turns. Omitted on older canvases; `commentThread`
+   * projects the original comment text as the first Claude turn.
+   */
+  messages?: AnnotationMessage[]
 }
 
 export interface CardProps {

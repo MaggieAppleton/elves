@@ -1,10 +1,12 @@
-import type { CSSProperties, MouseEvent, PointerEvent } from 'react'
+import { useState, type CSSProperties, type FormEvent, type MouseEvent, type PointerEvent } from 'react'
 import { agentInfo } from '../shapes/agents'
 import { annotationPin, PIN_SIZE } from '../model/annotationPins'
+import { threadMessages } from '../model/comments'
 import type { Comment, CommentType } from '../model/types'
+import type { AnnotationTarget } from '../client/annotationSelection'
 import './annotationThread.css'
 
-export type AnnotationThreadComment = Pick<Comment, 'id' | 'type' | 'text' | 'resolved' | 'author'>
+export type AnnotationThreadComment = Pick<Comment, 'id' | 'type' | 'text' | 'resolved' | 'author' | 'messages'>
 
 export interface AnnotationThreadProps {
   comment: AnnotationThreadComment
@@ -14,6 +16,11 @@ export interface AnnotationThreadProps {
   attribution?: string
   actionLabel?: string
   onResolve?: () => void
+  running?: boolean
+  streamingText?: string
+  error?: string | null
+  onReply?: (text: string) => void
+  onRetry?: () => void
 }
 
 function annotationType(type: CommentType | null): string {
@@ -32,8 +39,22 @@ export function AnnotationThread({
   attribution,
   actionLabel = 'Resolve comment',
   onResolve,
+  running = false,
+  streamingText = '',
+  error = null,
+  onReply,
+  onRetry,
 }: AnnotationThreadProps) {
   const type = annotationType(comment.type)
+  const [reply, setReply] = useState('')
+  const messages = threadMessages(comment)
+  const send = (event: FormEvent) => {
+    event.preventDefault()
+    const text = reply.trim()
+    if (!text || running || !onReply) return
+    setReply('')
+    onReply(text)
+  }
   return (
     <article
       className={`elves-annotation-thread elves-annotation-thread--${mode}`}
@@ -45,7 +66,27 @@ export function AnnotationThread({
         <span>{agentName(comment.author)}</span>
         {attribution && <span>{attribution}</span>}
       </div>
-      <p className="elves-annotation-thread__text">{comment.text}</p>
+      <div className="elves-annotation-thread__messages">
+        {messages.map((message) => (
+          <p key={message.id} className="elves-annotation-thread__message" data-author={message.author}>
+            <span className="elves-annotation-thread__message-author">{agentName(message.author)}</span>
+            <span className="elves-annotation-thread__text">{message.text}</span>
+          </p>
+        ))}
+        {streamingText && <p className="elves-annotation-thread__message" data-author="claude">{streamingText}</p>}
+      </div>
+      {onReply && <form className="elves-annotation-thread__reply" onSubmit={send}>
+        <textarea
+          aria-label="Reply to annotation"
+          value={reply}
+          disabled={running}
+          onChange={(event) => setReply(event.target.value)}
+        />
+        <button type="submit" className="elves-annotation-thread__send" disabled={running || !reply.trim()}>
+          {running ? 'Replying…' : 'Send reply'}
+        </button>
+      </form>}
+      {error && <div className="elves-annotation-thread__error" role="alert">{error} {onRetry && <button type="button" onClick={onRetry}>Retry</button>}</div>}
       <button
         type="button"
         className="elves-annotation-thread__resolve"
@@ -72,11 +113,13 @@ export interface AnnotationPinProps {
   zoom?: number
   className?: string
   attribution?: string
+  target?: AnnotationTarget
   onOpen: () => void
+  onReply?: (target: AnnotationTarget, text: string) => void
 }
 
 /** A compact target whose adjacent popover shares the inspector's thread view. */
-export function AnnotationPin({ comment, offsetY = 0, zoom = 1, className, attribution, onOpen }: AnnotationPinProps) {
+export function AnnotationPin({ comment, offsetY = 0, zoom = 1, className, attribution, target, onOpen, onReply }: AnnotationPinProps) {
   const token = annotationPin(comment.type)
   const scale = 1 / zoom
   const style = {
@@ -103,7 +146,8 @@ export function AnnotationPin({ comment, offsetY = 0, zoom = 1, className, attri
         <span aria-hidden="true" className="elves-annotation-pin__icon">{pinGlyph(token.icon)}</span>
       </button>
       <div className="elves-annotation-popover" data-testid="annotation-popover">
-        <AnnotationThread comment={comment} mode="popover" attribution={attribution} />
+        <AnnotationThread comment={comment} mode="popover" attribution={attribution}
+          onReply={target && onReply ? (text) => onReply(target, text) : undefined} />
       </div>
     </div>
   )
