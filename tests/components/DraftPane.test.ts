@@ -7,6 +7,7 @@ import type { Editor } from 'tldraw'
 
 vi.mock('tldraw', () => ({
   useValue: (_name: string, getValue: () => unknown) => getValue(),
+  createShapeId: () => 'shape:split-card',
 }))
 
 vi.mock('../../src/client/assets', () => ({
@@ -105,6 +106,29 @@ const visualEditor = {
   },
 } as unknown as Editor
 
+const titleEditor = {
+  getCurrentPageShapes: () => [
+    {
+      id: 'shape:section-1',
+      type: 'section',
+      props: { text: 'Opening', authoredBy: 'user' },
+    },
+    {
+      id: 'shape:figure-1',
+      type: 'card',
+      props: {
+        kind: 'figure', noteKind: null, text: 'A diagram.', figureTitle: 'System map',
+        figureStatus: null, mergedInto: null, draftExcluded: false, comments: [],
+      },
+    },
+  ],
+  getShapePageBounds: (id: string) => ({
+    x: 0, y: id === 'shape:section-1' ? 0 : 100, w: 240, h: 120,
+  }),
+  updateShape: vi.fn(),
+  deleteShape: vi.fn(),
+} as unknown as Editor
+
 const markdownSource =
   'Read [Maggie](https://maggieappleton.com) and [unsafe](javascript:alert(1)).'
 
@@ -160,6 +184,12 @@ function copyButton(harness: Harness): HTMLButtonElement {
 
 function copyLabel(harness: Harness): string {
   return copyButton(harness).textContent ?? ''
+}
+
+function enterText(input: HTMLTextAreaElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+  setter?.call(input, value)
+  input.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
 beforeEach(() => {
@@ -315,6 +345,112 @@ test('renders figures and images between prose in draft order', () => {
   unmount(renderer)
 })
 
+test('edits section and figure titles through their canvas shapes', () => {
+  const renderer = render(createElement(DraftPane, {
+    editor: titleEditor,
+    onSelectCard: vi.fn(),
+  }))
+
+  const sectionTitle = renderer.container.querySelector<HTMLButtonElement>('[aria-label="Edit section heading"]')
+  act(() => { sectionTitle?.click() })
+  const sectionEditor = renderer.container.querySelector<HTMLTextAreaElement>('[data-testid="draft-section-editor"]')
+  expect(sectionEditor?.value).toBe('Opening')
+  act(() => {
+    if (!sectionEditor) return
+    enterText(sectionEditor, 'Introduction')
+    sectionEditor.blur()
+  })
+  expect(titleEditor.updateShape).toHaveBeenCalledWith({
+    id: 'shape:section-1', type: 'section', props: { text: 'Introduction', authoredBy: 'user' },
+  })
+
+  const figureTitle = renderer.container.querySelector<HTMLButtonElement>('[aria-label="Edit figure title"]')
+  act(() => { figureTitle?.click() })
+  const figureEditor = renderer.container.querySelector<HTMLTextAreaElement>('[data-testid="draft-figure-editor"]')
+  expect(figureEditor?.value).toBe('System map')
+  act(() => {
+    if (!figureEditor) return
+    enterText(figureEditor, 'Architecture map')
+    figureEditor.blur()
+  })
+  expect(titleEditor.updateShape).toHaveBeenCalledWith({
+    id: 'shape:figure-1', type: 'card', props: { figureTitle: 'Architecture map', authoredBy: null },
+  })
+
+  unmount(renderer)
+})
+
+test('deletes an empty section but retains an empty-titled figure', () => {
+  const renderer = render(createElement(DraftPane, {
+    editor: titleEditor,
+    onSelectCard: vi.fn(),
+  }))
+  const sectionTitle = renderer.container.querySelector<HTMLButtonElement>('[aria-label="Edit section heading"]')
+  act(() => { sectionTitle?.click() })
+  const sectionEditor = renderer.container.querySelector<HTMLTextAreaElement>('[data-testid="draft-section-editor"]')
+  act(() => {
+    if (!sectionEditor) return
+    enterText(sectionEditor, '')
+    sectionEditor.blur()
+  })
+  expect(titleEditor.deleteShape).toHaveBeenCalledWith('shape:section-1')
+
+  const figureTitle = renderer.container.querySelector<HTMLButtonElement>('[aria-label="Edit figure title"]')
+  act(() => { figureTitle?.click() })
+  const figureEditor = renderer.container.querySelector<HTMLTextAreaElement>('[data-testid="draft-figure-editor"]')
+  act(() => {
+    if (!figureEditor) return
+    enterText(figureEditor, '')
+    figureEditor.blur()
+  })
+  expect(titleEditor.deleteShape).toHaveBeenCalledTimes(1)
+  expect(titleEditor.updateShape).toHaveBeenCalledWith({
+    id: 'shape:figure-1', type: 'card', props: { figureTitle: '', authoredBy: null },
+  })
+
+  unmount(renderer)
+})
+
+test('does not open title editors in read-only mode', () => {
+  const renderer = render(createElement(DraftPane, {
+    editor: titleEditor,
+    readOnly: true,
+    onSelectCard: vi.fn(),
+  }))
+
+  act(() => {
+    renderer.container.querySelector<HTMLElement>('[data-testid="draft-heading"]')?.click()
+    renderer.container.querySelector<HTMLElement>('[data-testid="draft-figure-title"]')?.click()
+  })
+  expect(renderer.container.querySelector('[data-testid="draft-section-editor"]')).toBeNull()
+  expect(renderer.container.querySelector('[data-testid="draft-figure-editor"]')).toBeNull()
+
+  unmount(renderer)
+})
+
+test('uses title edit buttons only when the draft is editable', () => {
+  const editable = render(createElement(DraftPane, {
+    editor: titleEditor,
+    onSelectCard: vi.fn(),
+  }))
+  const sectionButton = editable.container.querySelector<HTMLButtonElement>('[aria-label="Edit section heading"]')
+  const figureButton = editable.container.querySelector<HTMLButtonElement>('[aria-label="Edit figure title"]')
+  expect(sectionButton?.textContent).toBe('Opening')
+  expect(figureButton?.textContent).toBe('System map')
+  act(() => { sectionButton?.click() })
+  expect(editable.container.querySelector('[data-testid="draft-section-editor"]')).not.toBeNull()
+  unmount(editable)
+
+  const readOnly = render(createElement(DraftPane, {
+    editor: titleEditor,
+    readOnly: true,
+    onSelectCard: vi.fn(),
+  }))
+  expect(readOnly.container.querySelector('[aria-label="Edit section heading"]')).toBeNull()
+  expect(readOnly.container.querySelector('[aria-label="Edit figure title"]')).toBeNull()
+  unmount(readOnly)
+})
+
 test('copy-as-Markdown includes figures and images in draft order', async () => {
   const writeText = vi.fn(async () => {})
   vi.stubGlobal('navigator', { clipboard: { writeText } })
@@ -360,6 +496,97 @@ test('renders safe Markdown links beside a separate prose edit control', () => {
   const textarea = renderer.container.querySelector<HTMLTextAreaElement>('[data-testid="draft-editor"]')
   expect(textarea?.value).toBe(markdownSource)
   expect(onSelectCard).toHaveBeenCalledWith('shape:linked-prose')
+
+  unmount(renderer)
+})
+
+test('Enter splits prose at the cursor and inserts its new card before later draft cards', () => {
+  const shapes = [
+    {
+      id: 'shape:source', type: 'card', x: 0, y: 0,
+      props: {
+        kind: 'prose', noteKind: null, text: 'Before after', attribution: [],
+        w: 240, h: 120, mergedInto: null, draftExcluded: false, comments: [],
+      },
+    },
+    {
+      id: 'shape:later', type: 'card', x: 0, y: 136,
+      props: {
+        kind: 'prose', noteKind: null, text: 'Later paragraph', attribution: [],
+        w: 240, h: 120, mergedInto: null, draftExcluded: false, comments: [],
+      },
+    },
+  ]
+  const splitEditor = {
+    getCurrentPageShapes: () => shapes,
+    getShapePageBounds: (id: string) => {
+      const shape = shapes.find((candidate) => candidate.id === id)
+      return shape && { x: shape.x, y: shape.y, w: shape.props.w, h: shape.props.h }
+    },
+    getShape: (id: string) => shapes.find((shape) => shape.id === id),
+    getPointInParentSpace: (_id: string, point: { x: number; y: number }) => point,
+    updateShape: vi.fn((update) => {
+      const shape = shapes.find((candidate) => candidate.id === update.id)
+      if (!shape) return
+      Object.assign(shape, update, { props: { ...shape.props, ...update.props } })
+    }),
+    createShape: vi.fn((shape) => { shapes.push(shape) }),
+    run: (fn: () => void) => fn(),
+  } as unknown as Editor
+  const renderer = render(createElement(DraftPane, { editor: splitEditor, onSelectCard: vi.fn() }))
+
+  const edit = renderer.container.querySelector<HTMLButtonElement>('button[aria-label="Edit paragraph"]')
+  act(() => { edit?.click() })
+  const textarea = renderer.container.querySelector<HTMLTextAreaElement>('[data-testid="draft-editor"]')
+  textarea?.setSelectionRange(7, 7)
+  act(() => { textarea?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+
+  expect(shapes.find((shape) => shape.id === 'shape:source')?.props.text).toBe('Before ')
+  expect(shapes.find((shape) => shape.id === 'shape:split-card')?.props.text).toBe('after')
+  expect(shapes.find((shape) => shape.id === 'shape:later')?.y).toBeGreaterThan(
+    shapes.find((shape) => shape.id === 'shape:split-card')?.y ?? Infinity,
+  )
+  const splitEditorElement = renderer.container.querySelector<HTMLTextAreaElement>('[data-testid="draft-editor"]')
+  expect(splitEditorElement?.value).toBe('after')
+  expect(document.activeElement).toBe(splitEditorElement)
+  expect(splitEditorElement?.selectionStart).toBe(0)
+
+  unmount(renderer)
+})
+
+test('Enter at the end of prose creates an empty following card', () => {
+  const shapes = [{
+    id: 'shape:source', type: 'card', x: 0, y: 0,
+    props: {
+      kind: 'prose', noteKind: null, text: 'Ending', attribution: [],
+      w: 240, h: 120, mergedInto: null, draftExcluded: false, comments: [],
+    },
+  }]
+  const splitEditor = {
+    getCurrentPageShapes: () => shapes,
+    getShapePageBounds: (id: string) => {
+      const shape = shapes.find((candidate) => candidate.id === id)
+      return shape && { x: shape.x, y: shape.y, w: shape.props.w, h: shape.props.h }
+    },
+    getShape: (id: string) => shapes.find((shape) => shape.id === id),
+    getPointInParentSpace: (_id: string, point: { x: number; y: number }) => point,
+    updateShape: vi.fn((update) => {
+      const shape = shapes.find((candidate) => candidate.id === update.id)
+      if (shape) Object.assign(shape, update, { props: { ...shape.props, ...update.props } })
+    }),
+    createShape: vi.fn((shape) => { shapes.push(shape) }),
+    run: (fn: () => void) => fn(),
+  } as unknown as Editor
+  const renderer = render(createElement(DraftPane, { editor: splitEditor, onSelectCard: vi.fn() }))
+
+  act(() => { renderer.container.querySelector<HTMLButtonElement>('button[aria-label="Edit paragraph"]')?.click() })
+  const textarea = renderer.container.querySelector<HTMLTextAreaElement>('[data-testid="draft-editor"]')
+  textarea?.setSelectionRange(6, 6)
+  act(() => { textarea?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+
+  expect(shapes.find((shape) => shape.id === 'shape:source')?.props.text).toBe('Ending')
+  expect(shapes.find((shape) => shape.id === 'shape:split-card')?.props.text).toBe('')
+  expect(renderer.container.querySelector<HTMLTextAreaElement>('[data-testid="draft-editor"]')?.selectionStart).toBe(0)
 
   unmount(renderer)
 })

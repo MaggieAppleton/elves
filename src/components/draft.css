@@ -189,6 +189,38 @@
   color: var(--elves-ink);
 }
 
+.elves-draft__title-edit-target {
+  display: block;
+  width: 100%;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: text;
+}
+.elves-draft__title-edit-target:focus-visible {
+  outline: 2px solid var(--elves-focus-ring);
+  outline-offset: 2px;
+}
+
+.elves-draft__title-editor {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 1.35em;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  background: transparent;
+  border: 0;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+}
+
 .elves-draft__figure-status {
   flex: 0 0 auto;
   padding: 2px 6px;
