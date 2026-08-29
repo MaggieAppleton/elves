@@ -21,11 +21,23 @@ async function addCardAndComment(page: any, request: any, comment: { type: strin
   })
 }
 
+async function addTwoComments(page: any, request: any) {
+  await addCardAndComment(page, request, { type: 'needs-evidence', text: 'The opening needs a source.' })
+  const [cardId] = await serverCardIds(request, projectId)
+  await request.post(`${BASE}/projects/${projectId}/changeset`, {
+    data: {
+      id: `cs-${Date.now()}-second`,
+      author: 'claude',
+      ops: [{ kind: 'add_comment', cardId, comment: { type: 'structure', text: 'The ending needs a clearer bridge.' } }],
+    },
+  })
+}
+
 test.beforeEach(async ({ request }) => {
   projectId = await resetProject(request)
 })
 
-test('comments reserve a full gap before the next card', async ({ page, request }) => {
+test('comments do not reserve a marker row before the next card', async ({ page, request }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
   for (let i = 0; i < 2; i++) {
@@ -58,47 +70,39 @@ test('comments reserve a full gap before the next card', async ({ page, request 
     },
   })
 
-  const marker = page.locator(`[data-shape-id="${firstCardId}"] [data-testid="annotation-marker"]`)
+  const card = page.locator(`[data-shape-id="${firstCardId}"] .elves-card`)
   const nextCard = page.locator(`[data-shape-id="${secondCardId}"] .elves-card`)
-  await expect(marker).toBeVisible()
+  await expect(card).toBeVisible()
   await expect.poll(async () => {
-    const markerBox = await marker.boundingBox()
+    const cardBox = await card.boundingBox()
     const nextCardBox = await nextCard.boundingBox()
-    if (!markerBox || !nextCardBox) return null
-    return Math.round(nextCardBox.y - (markerBox.y + markerBox.height))
+    if (!cardBox || !nextCardBox) return null
+    return Math.round(nextCardBox.y - (cardBox.y + cardBox.height))
   }).toBe(CANVAS_GAP)
 })
 
-test("Claude's injected comment renders as a marker and is one Ctrl-Z away from gone", async ({ page, request }) => {
+test("Claude's injected comment renders as a pin and is one Ctrl-Z away from gone", async ({ page, request }) => {
   await addCardAndComment(page, request, { type: 'needs-evidence', text: 'no source yet' })
 
-  const pin = page.getByTestId('annotation-marker')
+  const pin = page.getByTestId('annotation-pin')
   await expect(pin).toBeVisible()
-  await expect(pin).toContainText('no source yet')
+  await expect(pin).toHaveAttribute('data-type', 'needs-evidence')
 
   // A single Ctrl-Z reverts Claude's change.
   await page.keyboard.press('Control+z')
-  await expect(page.getByTestId('annotation-marker')).toHaveCount(0)
+  await expect(page.getByTestId('annotation-pin')).toHaveCount(0)
 })
 
-test('multiple freeform comments collapse into one marker with a count', async ({ page, request }) => {
-  await addCardAndComment(page, request, { type: null, text: 'freeform note' })
-  const [cardId] = await serverCardIds(request, projectId)
-  await request.post(`${BASE}/projects/${projectId}/changeset`, {
-    data: {
-      id: `cs-${Date.now()}-second`,
-      author: 'claude',
-      ops: [{ kind: 'add_comment', cardId, comment: { type: null, text: 'second note' } }],
-    },
-  })
+test('each open card comment renders an independent pin', async ({ page, request }) => {
+  await addTwoComments(page, request)
 
-  const marker = page.getByTestId('annotation-marker')
-  await expect(marker).toHaveCount(1)
-  await expect(marker).toContainText('+1')
-  await expect(page.locator('.elves-comment__resolve')).toHaveCount(0)
+  const pins = page.getByTestId('annotation-pin')
+  await expect(pins).toHaveCount(2)
+  const boxes = await pins.evaluateAll((elements) => elements.map((pin) => pin.getBoundingClientRect().y))
+  expect(new Set(boxes).size).toBe(2)
 })
 
-test('identical comments on different cards have distinct markers', async ({ page, request }) => {
+test('identical comments on different cards have distinct pins', async ({ page, request }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
   await page.getByTestId('new-prose').click()
@@ -119,19 +123,29 @@ test('identical comments on different cards have distinct markers', async ({ pag
     },
   })
 
-  const markers = page.getByTestId('annotation-marker')
-  await expect(markers).toHaveCount(2)
-  await expect(page.locator(`[data-shape-id="${firstCardId}"] [data-testid="annotation-marker"]`)).toHaveCount(1)
-  await expect(page.locator(`[data-shape-id="${secondCardId}"] [data-testid="annotation-marker"]`)).toHaveCount(1)
+  const pins = page.getByTestId('annotation-pin')
+  await expect(pins).toHaveCount(2)
+  await expect(page.locator(`[data-shape-id="${firstCardId}"] [data-testid="annotation-pin"]`)).toHaveCount(1)
+  await expect(page.locator(`[data-shape-id="${secondCardId}"] [data-testid="annotation-pin"]`)).toHaveCount(1)
 })
 
-test('attached comments collapse to one marker and do not expose full bodies at overview zoom', async ({ page, request }) => {
+test('focus exposes a complete thread without opening the rail', async ({ page, request }) => {
+  await addCardAndComment(page, request, { type: 'needs-evidence', text: 'A comment that must become a marker.' })
+
+  const pin = page.getByTestId('annotation-pin')
+  await pin.focus()
+  await expect(page.getByTestId('annotation-popover')).toBeVisible()
+  await expect(page.getByTestId('annotation-popover')).toContainText('A comment that must become a marker.')
+  await expect(page.getByTestId('annotation-rail')).toHaveCount(0)
+})
+
+test('attached comment pins remain compact at overview zoom', async ({ page, request }) => {
   await addCardAndComment(page, request, { type: 'needs-evidence', text: 'A comment that must become a marker.' })
   await page.getByRole('button', { name: /Zoom — 100%/ }).click()
   await page.getByRole('menuitem', { name: /Zoom out/ }).click()
 
-  await expect(page.getByTestId('annotation-marker')).toHaveCount(1)
-  await expect(page.locator('.elves-comment__text')).toHaveCount(0)
+  await expect(page.getByTestId('annotation-pin')).toHaveCount(1)
+  await expect(page.getByTestId('annotation-pin')).toHaveCSS('width', '28px')
 })
 
 test('closing an annotation rail restores split view', async ({ page, request }) => {
@@ -139,7 +153,7 @@ test('closing an annotation rail restores split view', async ({ page, request })
 
   await page.getByTestId('draft-open').click()
   await expect(page.getByTestId('draft-divider')).toBeVisible()
-  await page.getByTestId('annotation-marker').click()
+  await page.getByTestId('annotation-pin').click()
   await expect(page.getByTestId('annotation-rail')).toBeVisible()
   await expect(page.getByTestId('annotation-rail')).toContainText('This needs a source.')
   await page.getByRole('button', { name: 'Close annotation' }).click()

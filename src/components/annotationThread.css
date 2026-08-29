@@ -1,0 +1,75 @@
+.elves-annotation-thread {
+  display: grid;
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid var(--elves-border);
+  border-radius: 10px;
+  background: var(--elves-bg);
+}
+.elves-annotation-thread[data-selected="true"] { border-color: var(--elves-primary); box-shadow: 0 0 0 1px var(--elves-primary-tint-2); }
+.elves-annotation-thread__meta { display: flex; flex-wrap: wrap; gap: 5px 8px; color: var(--elves-ink-faint); font-size: 11px; font-weight: 550; text-transform: capitalize; }
+.elves-annotation-thread__type { color: var(--elves-primary-strong); }
+.elves-annotation-thread__text { margin: 0; color: var(--elves-ink); font-size: 14px; line-height: 1.52; white-space: pre-wrap; overflow-wrap: anywhere; }
+.elves-annotation-thread__resolve { justify-self: start; padding: 5px 8px; border: 1px solid var(--elves-border-strong); border-radius: 6px; background: transparent; color: var(--elves-ink-soft); font: 12px var(--elves-card-font); cursor: pointer; }
+.elves-annotation-thread__resolve:hover:not(:disabled) { background: var(--elves-tertiary); color: var(--elves-ink); }
+.elves-annotation-thread__resolve:disabled { opacity: .52; cursor: default; }
+.elves-annotation-thread__resolve:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring); }
+
+.elves-annotation-pin-wrap {
+  position: absolute;
+  z-index: 20;
+  width: 28px;
+  height: 28px;
+  pointer-events: all;
+  transform: scale(var(--annotation-pin-scale, 1));
+  transform-origin: top right;
+}
+.elves-annotation-pin {
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--elves-cc-freeform-border);
+  border-radius: 50%;
+  background: var(--elves-cc-freeform-bg);
+  box-shadow: var(--elves-shadow-sm);
+  color: var(--elves-cc-freeform-label);
+  cursor: pointer;
+  font: 700 15px/1 system-ui, sans-serif;
+}
+.elves-annotation-pin[data-type="needs-evidence"] { background: var(--elves-cc-evidence-bg); border-color: var(--elves-cc-evidence-border); color: var(--elves-cc-evidence-label); }
+.elves-annotation-pin[data-type="weak-argument"] { background: var(--elves-cc-weak-bg); border-color: var(--elves-cc-weak-border); color: var(--elves-cc-weak-label); }
+.elves-annotation-pin[data-type="needs-citation"] { background: var(--elves-cc-citation-bg); border-color: var(--elves-cc-citation-border); color: var(--elves-cc-citation-label); }
+.elves-annotation-pin[data-type="wants-figure"] { background: var(--elves-cc-figure-bg); border-color: var(--elves-cc-figure-border); color: var(--elves-cc-figure-label); }
+.elves-annotation-pin[data-type="counterpoint"] { background: var(--elves-cc-counter-bg); border-color: var(--elves-cc-counter-border); color: var(--elves-cc-counter-label); }
+.elves-annotation-pin[data-type="tighten"] { background: var(--elves-cc-tighten-bg); border-color: var(--elves-cc-tighten-border); color: var(--elves-cc-tighten-label); }
+.elves-annotation-pin[data-type="unclear"] { background: var(--elves-cc-unclear-bg); border-color: var(--elves-cc-unclear-border); color: var(--elves-cc-unclear-label); }
+.elves-annotation-pin[data-type="structure"] { background: var(--elves-cc-structure-bg); border-color: var(--elves-cc-structure-border); color: var(--elves-cc-structure-label); }
+.elves-annotation-pin:hover { box-shadow: var(--elves-shadow-md); }
+.elves-annotation-pin:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring); }
+.elves-annotation-pin__icon { transform: translateY(-.5px); }
+
+.elves-annotation-popover {
+  position: absolute;
+  top: -8px;
+  right: calc(100% + 10px);
+  width: min(300px, 72vw);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(4px);
+  transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
+}
+.elves-annotation-pin-wrap:hover .elves-annotation-popover,
+.elves-annotation-pin-wrap:focus-within .elves-annotation-popover {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: all;
+  transform: translateX(0);
+}
+.elves-annotation-thread--popover { box-shadow: var(--elves-shadow-md); }
+@media (prefers-reduced-motion: reduce) {
+  .elves-annotation-popover { transition: none; }
+}

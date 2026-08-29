@@ -13,8 +13,9 @@ import { BlameText, hasAgentRun } from './BlameText'
 import { nextFigureStatus } from '../model/figures'
 import { cardGist } from '../model/summary'
 import { visibleComments } from '../model/comments'
-import { annotationDisplayMode, attachedAnnotationMarker } from '../model/annotations'
+import { cardAnnotationPins } from '../model/annotationPins'
 import { requestAnnotationOpen } from '../client/annotationSelection'
+import { AnnotationPin } from '../components/AnnotationThread'
 import { assetUrl } from '../client/assets'
 import { fittedGistFontSize, measuredCardPropsHeight } from './autosize'
 import { shouldShowGist, gistFontSize } from './summaryView'
@@ -30,12 +31,6 @@ import { clearSnapHighlight, snapHighlight } from '../client/snapHighlight'
 // that the green reads as a field the pair is sitting on rather than a hairline
 // tracing their outline.
 const SNAP_HALO_PAD = 14
-// The marker is a fixed CSS row beneath a card. Card lanes are laid out in
-// canvas coordinates, while the DOM row is scaled with the editor zoom. Its
-// CSS height therefore becomes canvas height only after division by zoom; the
-// fixed lane gap retains the existing reflow contract.
-const ANNOTATION_MARKER_HEIGHT = 34
-const ANNOTATION_MARKER_GAP = 7
 import './card.css'
 
 export type CardShape = TLBaseShape<'card', {
@@ -469,18 +464,14 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     const zoom = this.editor.getZoomLevel()
     const showGist = !isEditing && shouldShowGist(zoom, shape.props)
     const comments = visibleComments(shape.props.comments)
-    const annotationMarker = attachedAnnotationMarker(shape.props.comments)
-    const firstUnresolvedComment = comments[0]
-    const annotationMode = annotationDisplayMode(zoom)
+    const pins = cardAnnotationPins(comments)
     useLayoutEffect(() => {
       let cancelled = false
       const reserveMarkerRow = () => {
         if (cancelled) return
         const current = this.editor.getShape<CardShape>(shape.id)
         if (!current) return
-        const nextCommentH = annotationMarker
-          ? ANNOTATION_MARKER_GAP + ANNOTATION_MARKER_HEIGHT / this.editor.getZoomLevel()
-          : 0
+        const nextCommentH = 0
         if (Math.abs(nextCommentH - (current.props.commentH ?? 0)) <= 1) return
 
         const previousHeight = current.props.h + (current.props.commentH ?? 0)
@@ -498,7 +489,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
         cancelled = true
         cancelAnimationFrame(frame)
       }
-    }, [this.editor, shape.id, annotationMarker, zoom])
+    }, [this.editor, shape.id])
     // Ephemeral agent presence: a soft orange glow when the agent is looking at
     // (read_cards) or has just acted on this card. Reading the atom here is
     // reactive (this component is tldraw-`track`ed, same as the zoom read above),
@@ -813,33 +804,18 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
               </>
             )}
           </div>
-          {annotationMarker && firstUnresolvedComment && (
-            <button
-              type="button"
-              className="elves-annotation-marker"
-              data-mode={annotationMode}
-              data-type={annotationMarker.type ?? 'freeform'}
-              data-testid="annotation-marker"
-              aria-label={`Open ${annotationMarker.count} annotation${annotationMarker.count === 1 ? '' : 's'}: ${annotationMarker.label}`}
-              onPointerDown={stopEventPropagation}
-              onClick={(event) => {
-                stopEventPropagation(event)
-                requestAnnotationOpen({
-                  kind: 'card',
-                  cardId: shape.id,
-                  commentId: firstUnresolvedComment.id,
-                })
-              }}
-            >
-              <span className="elves-annotation-marker__type">{annotationMarker.type ?? 'feedback'}</span>
-              {annotationMode === 'detail' && (
-                <span className="elves-annotation-marker__label">{annotationMarker.label}</span>
-              )}
-              {annotationMode === 'overview'
-                ? <span className="elves-annotation-marker__count">{annotationMarker.count}</span>
-                : annotationMarker.count > 1 && <span className="elves-annotation-marker__count">+{annotationMarker.count - 1}</span>}
-            </button>
-          )}
+          {pins.map(({ commentId, offsetY }) => {
+            const comment = comments.find((entry) => entry.id === commentId)
+            return comment ? (
+              <AnnotationPin
+                key={comment.id}
+                comment={comment}
+                offsetY={offsetY}
+                zoom={zoom}
+                onOpen={() => requestAnnotationOpen({ kind: 'card', cardId: shape.id, commentId: comment.id })}
+              />
+            ) : null
+          })}
           {/* The peek: the merged cards fanned out to the right, read-only, each
               showing its full text so you can see exactly what was collapsed.
               stopPropagation lets you click/select the text without the canvas

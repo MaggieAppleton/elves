@@ -34,5 +34,5 @@ test('card target lists its open comments and renders no reply input', () => {
 
   expect(tree.root.findAllByProps({ 'data-testid': 'annotation-rail' })).toHaveLength(1)
   expect(tree.root.findAllByType('textarea')).toHaveLength(0)
-  expect(tree.root.findAllByProps({ 'data-testid': 'annotation-item' })).toHaveLength(2)
+  expect(tree.root.findAllByProps({ 'data-testid': 'annotation-thread' })).toHaveLength(2)
 })

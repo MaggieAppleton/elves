@@ -1,10 +1,9 @@
 import { useValue, type Editor, type TLShapeId } from 'tldraw'
 import type { ReactNode } from 'react'
-import { agentInfo } from '../shapes/agents'
 import type { AnnotationTarget } from '../client/annotationSelection'
-import type { Comment } from '../model/types'
 import type { CardShape } from '../shapes/CardShapeUtil'
 import type { FeedbackShape } from '../shapes/FeedbackShapeUtil'
+import { AnnotationThread } from './AnnotationThread'
 import './annotationRail.css'
 
 export interface AnnotationRailProps {
@@ -14,39 +13,6 @@ export interface AnnotationRailProps {
   onClose: () => void
   onResolve: (target: AnnotationTarget, commentId?: string) => void
   onRestore: (feedbackId: string) => void
-}
-
-function annotationType(type: string | null): string {
-  return type ? type.replaceAll('-', ' ') : 'feedback'
-}
-
-function agentName(id: string): string {
-  return agentInfo(id)?.name ?? id
-}
-
-function CommentItem({
-  comment,
-  selected,
-  disabled,
-  onResolve,
-}: {
-  comment: Comment
-  selected: boolean
-  disabled: boolean
-  onResolve: () => void
-}) {
-  return (
-    <article className="elves-annotation-rail__item" data-selected={selected} data-testid="annotation-item">
-      <div className="elves-annotation-rail__meta">
-        <span className="elves-annotation-rail__type">{annotationType(comment.type)}</span>
-        <span>{agentName(comment.author)}</span>
-      </div>
-      <p className="elves-annotation-rail__text">{comment.text}</p>
-      <button type="button" className="elves-annotation-rail__resolve" disabled={disabled} onClick={onResolve}>
-        Resolve comment
-      </button>
-    </article>
-  )
 }
 
 export function AnnotationRail({ target, editor, disabled = false, onClose, onResolve, onRestore }: AnnotationRailProps) {
@@ -65,9 +31,10 @@ export function AnnotationRail({ target, editor, disabled = false, onClose, onRe
     content = comments.length ? (
       <div className="elves-annotation-rail__list">
         {comments.map((comment) => (
-          <CommentItem
+          <AnnotationThread
             key={comment.id}
             comment={comment}
+            mode="rail"
             selected={comment.id === target.commentId}
             disabled={disabled}
             onResolve={() => onResolve(target, comment.id)}
@@ -78,23 +45,15 @@ export function AnnotationRail({ target, editor, disabled = false, onClose, onRe
   } else if (target.kind === 'feedback' && shape.type === 'feedback') {
     const feedback = shape as FeedbackShape
     content = (
-      <article className="elves-annotation-rail__item" data-selected="true" data-testid="annotation-item">
-        <div className="elves-annotation-rail__meta">
-          <span className="elves-annotation-rail__type">{annotationType(feedback.props.type)}</span>
-          <span>{agentName(feedback.props.authoredBy)}</span>
-          {feedback.props.reviewer && <span>{feedback.props.reviewer.replaceAll('-', ' ')}</span>}
-        </div>
-        <p className="elves-annotation-rail__text">{feedback.props.text}</p>
-        {feedback.props.resolved ? (
-          <button type="button" className="elves-annotation-rail__resolve" disabled={disabled} onClick={() => onRestore(feedback.id)}>
-            Restore feedback
-          </button>
-        ) : (
-          <button type="button" className="elves-annotation-rail__resolve" disabled={disabled} onClick={() => onResolve(target)}>
-            Resolve feedback
-          </button>
-        )}
-      </article>
+      <AnnotationThread
+        comment={{ id: feedback.id, type: feedback.props.type, text: feedback.props.text, resolved: feedback.props.resolved, author: feedback.props.authoredBy }}
+        mode="rail"
+        selected
+        disabled={disabled}
+        attribution={feedback.props.reviewer?.replaceAll('-', ' ')}
+        actionLabel={feedback.props.resolved ? 'Restore feedback' : 'Resolve feedback'}
+        onResolve={feedback.props.resolved ? () => onRestore(feedback.id) : () => onResolve(target)}
+      />
     )
   } else {
     content = <p className="elves-annotation-rail__empty">This annotation is unavailable.</p>

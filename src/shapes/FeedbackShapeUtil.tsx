@@ -1,6 +1,6 @@
-import { ShapeUtil, TLBaseShape, HTMLContainer, Rectangle2d, T, stopEventPropagation, type Geometry2d } from 'tldraw'
+import { ShapeUtil, TLBaseShape, HTMLContainer, Rectangle2d, T, type Geometry2d } from 'tldraw'
 import { makeFeedbackProps } from '../model/feedback'
-import { annotationDisplayMode, feedbackAnnotationMarker } from '../model/annotations'
+import { AnnotationPin } from '../components/AnnotationThread'
 import { requestAnnotationOpen } from '../client/annotationSelection'
 import './feedback.css'
 
@@ -15,28 +15,16 @@ export class FeedbackShapeUtil extends ShapeUtil<FeedbackShape> {
   getDefaultProps(): FeedbackShape['props'] { return makeFeedbackProps() }
   getGeometry(shape: FeedbackShape): Geometry2d { return new Rectangle2d({ width: shape.props.w, height: shape.props.h, isFilled: true }) }
   component(shape: FeedbackShape) {
-    const marker = feedbackAnnotationMarker(shape.props)
-    if (!marker) return null
-    const mode = annotationDisplayMode(this.editor.getZoomLevel())
+    if (shape.props.resolved) return null
     return (
       <HTMLContainer style={{ overflow: 'visible' }}>
-        <button
-          type="button"
-          className="elves-annotation-marker elves-feedback-marker"
-          data-mode={mode}
-          data-type={marker.type ?? 'freeform'}
-          data-testid="annotation-marker"
-          aria-label={`Open ${marker.count} annotation${marker.count === 1 ? '' : 's'}: ${marker.label}`}
-          onPointerDown={stopEventPropagation}
-          onClick={(event) => {
-            stopEventPropagation(event)
-            requestAnnotationOpen({ kind: 'feedback', feedbackId: shape.id })
-          }}
-        >
-          <span className="elves-annotation-marker__type">{marker.type ?? 'feedback'}</span>
-          {mode === 'detail' && <span className="elves-annotation-marker__label">{marker.label}</span>}
-          {mode === 'overview' && <span className="elves-annotation-marker__count">{marker.count}</span>}
-        </button>
+        <AnnotationPin
+          className="elves-feedback-pin"
+          comment={{ id: shape.id, type: shape.props.type, text: shape.props.text, resolved: false, author: shape.props.authoredBy }}
+          zoom={this.editor.getZoomLevel()}
+          attribution={shape.props.reviewer?.replaceAll('-', ' ')}
+          onOpen={() => requestAnnotationOpen({ kind: 'feedback', feedbackId: shape.id })}
+        />
       </HTMLContainer>
     )
   }
