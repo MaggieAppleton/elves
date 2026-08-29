@@ -54,7 +54,7 @@ export function AnnotationRail({ target, editor, disabled = false, onClose, onRe
     const feedback = shape as FeedbackShape
     content = (
       <AnnotationThread
-        comment={{ id: feedback.id, type: feedback.props.type, text: feedback.props.text, resolved: feedback.props.resolved, author: feedback.props.authoredBy }}
+        comment={{ id: feedback.id, type: feedback.props.type, text: feedback.props.text, resolved: feedback.props.resolved, author: feedback.props.authoredBy, messages: feedback.props.messages }}
         mode="rail"
         selected
         disabled={disabled}

@@ -1,7 +1,7 @@
 import { ShapeUtil, TLBaseShape, HTMLContainer, Rectangle2d, T, type Geometry2d } from 'tldraw'
 import { makeFeedbackProps } from '../model/feedback'
 import { AnnotationPin } from '../components/AnnotationThread'
-import { requestAnnotationOpen, requestAnnotationReply } from '../client/annotationSelection'
+import { requestAnnotationOpen, requestAnnotationReply, requestAnnotationRetry } from '../client/annotationSelection'
 import './feedback.css'
 
 export type FeedbackShape = TLBaseShape<'feedback', ReturnType<typeof makeFeedbackProps>>
@@ -11,6 +11,7 @@ export class FeedbackShapeUtil extends ShapeUtil<FeedbackShape> {
   static override props = {
     w: T.number, h: T.number, text: T.string, authoredBy: T.string,
     type: T.nullable(T.string), reviewId: T.nullable(T.string), reviewer: T.nullable(T.string), resolved: T.boolean,
+    messages: T.arrayOf(T.object({ id: T.string, author: T.string, text: T.string, createdAt: T.string })).optional(),
   }
   getDefaultProps(): FeedbackShape['props'] { return makeFeedbackProps() }
   getGeometry(shape: FeedbackShape): Geometry2d { return new Rectangle2d({ width: shape.props.w, height: shape.props.h, isFilled: true }) }
@@ -20,12 +21,13 @@ export class FeedbackShapeUtil extends ShapeUtil<FeedbackShape> {
       <HTMLContainer style={{ overflow: 'visible' }}>
         <AnnotationPin
           className="elves-feedback-pin"
-          comment={{ id: shape.id, type: shape.props.type, text: shape.props.text, resolved: false, author: shape.props.authoredBy }}
+          comment={{ id: shape.id, type: shape.props.type, text: shape.props.text, resolved: false, author: shape.props.authoredBy, messages: shape.props.messages }}
           zoom={this.editor.getZoomLevel()}
           attribution={shape.props.reviewer?.replaceAll('-', ' ')}
           target={{ kind: 'feedback', feedbackId: shape.id }}
           onOpen={() => requestAnnotationOpen({ kind: 'feedback', feedbackId: shape.id })}
           onReply={requestAnnotationReply}
+          onRetry={requestAnnotationRetry}
         />
       </HTMLContainer>
     )

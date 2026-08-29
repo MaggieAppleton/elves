@@ -1,9 +1,12 @@
-import { useState, type CSSProperties, type FormEvent, type MouseEvent, type PointerEvent } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent, type PointerEvent } from 'react'
 import { agentInfo } from '../shapes/agents'
 import { annotationPin, PIN_SIZE } from '../model/annotationPins'
 import { threadMessages } from '../model/comments'
 import type { Comment, CommentType } from '../model/types'
-import type { AnnotationTarget } from '../client/annotationSelection'
+import {
+  annotationThreadPresentation, subscribeAnnotationThreadPresentation,
+  type AnnotationTarget,
+} from '../client/annotationSelection'
 import './annotationThread.css'
 
 export type AnnotationThreadComment = Pick<Comment, 'id' | 'type' | 'text' | 'resolved' | 'author' | 'messages'>
@@ -47,11 +50,16 @@ export function AnnotationThread({
 }: AnnotationThreadProps) {
   const type = annotationType(comment.type)
   const [reply, setReply] = useState('')
+  const sending = useRef(false)
   const messages = threadMessages(comment)
+  useEffect(() => {
+    if (!running) sending.current = false
+  }, [running])
   const send = (event: FormEvent) => {
     event.preventDefault()
     const text = reply.trim()
-    if (!text || running || !onReply) return
+    if (!text || running || sending.current || !onReply) return
+    sending.current = true
     setReply('')
     onReply(text)
   }
@@ -116,11 +124,19 @@ export interface AnnotationPinProps {
   target?: AnnotationTarget
   onOpen: () => void
   onReply?: (target: AnnotationTarget, text: string) => void
+  onRetry?: (target: AnnotationTarget) => void
 }
 
 /** A compact target whose adjacent popover shares the inspector's thread view. */
-export function AnnotationPin({ comment, offsetY = 0, zoom = 1, className, attribution, target, onOpen, onReply }: AnnotationPinProps) {
+export function AnnotationPin({ comment, offsetY = 0, zoom = 1, className, attribution, target, onOpen, onReply, onRetry }: AnnotationPinProps) {
   const token = annotationPin(comment.type)
+  const [presentation, setPresentation] = useState(() => target ? annotationThreadPresentation(target) : undefined)
+  useEffect(() => {
+    if (!target) return
+    const update = () => setPresentation(annotationThreadPresentation(target))
+    update()
+    return subscribeAnnotationThreadPresentation(update)
+  }, [target?.kind, target?.kind === 'card' ? target.cardId : target?.feedbackId, target?.kind === 'card' ? target.commentId : undefined])
   const scale = 1 / zoom
   const style = {
     top: offsetY * scale,
@@ -147,7 +163,11 @@ export function AnnotationPin({ comment, offsetY = 0, zoom = 1, className, attri
       </button>
       <div className="elves-annotation-popover" data-testid="annotation-popover">
         <AnnotationThread comment={comment} mode="popover" attribution={attribution}
-          onReply={target && onReply ? (text) => onReply(target, text) : undefined} />
+          running={presentation?.running}
+          streamingText={presentation?.streamingText}
+          error={presentation?.error}
+          onReply={target && onReply ? (text) => onReply(target, text) : undefined}
+          onRetry={target && onRetry ? () => onRetry(target) : undefined} />
       </div>
     </div>
   )

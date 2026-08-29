@@ -1,7 +1,8 @@
 import { createElement } from 'react'
 import { create } from 'react-test-renderer'
 import { expect, test, vi } from 'vitest'
-import { AnnotationThread } from '../../src/components/AnnotationThread'
+import { AnnotationPin, AnnotationThread } from '../../src/components/AnnotationThread'
+import { setAnnotationThreadPresentation } from '../../src/client/annotationSelection'
 
 test('popover exposes the complete read-only thread without a reply input', () => {
   const onResolve = vi.fn()
@@ -45,4 +46,27 @@ test('thread renders durable replies and only disables its own send control whil
   expect(tree.root.findAllByProps({ className: 'elves-annotation-thread__message' })).toHaveLength(2)
   expect(tree.root.findByProps({ className: 'elves-annotation-thread__send' }).props.disabled).toBe(true)
   expect(tree.root.findByProps({ className: 'elves-annotation-thread__resolve' }).props.disabled).toBe(false)
+})
+
+test('pin popover receives thread-local progress, error, and retry state', () => {
+  const retry = vi.fn()
+  const target = { kind: 'card' as const, cardId: 'shape:card', commentId: 'c1' }
+  setAnnotationThreadPresentation(target, {
+    running: true, streamingText: 'Looking for the source…', error: 'The run stopped.',
+  })
+  const tree = create(createElement(AnnotationPin, {
+    comment: { id: 'c1', type: null, text: 'Needs evidence', resolved: false, author: 'claude' },
+    target,
+    onOpen: vi.fn(),
+    onReply: vi.fn(),
+    onRetry: retry,
+  }))
+
+  const popover = tree.root.findByProps({ 'data-testid': 'annotation-popover' })
+  expect(JSON.stringify(tree.toJSON())).toContain('Looking for the source…')
+  expect(JSON.stringify(tree.toJSON())).toContain('The run stopped.')
+  expect(popover.findByProps({ className: 'elves-annotation-thread__send' }).props.disabled).toBe(true)
+  popover.findAllByType('button').find((button) => button.children.includes('Retry'))!.props.onClick()
+  expect(retry).toHaveBeenCalledWith(target)
+  setAnnotationThreadPresentation(target, null)
 })

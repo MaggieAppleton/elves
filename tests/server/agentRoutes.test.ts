@@ -19,11 +19,13 @@ function fakeAgent(
   cancelled: { key: string; runId: string }[]
   abandoned: { key: string; runId: string }[]
   claimed: AgentRunInput[]
+  runs: AgentRunInput[]
 } {
   const impl = {
     cancelled: [] as { key: string; runId: string }[],
     abandoned: [] as { key: string; runId: string }[],
     claimed: [] as AgentRunInput[],
+    runs: [] as AgentRunInput[],
     isRunning: (_key: string, runId?: string) => running && (!runId || runId === 'run-a'),
     isProjectRunning: (projectId: string) => running && projectId === 'essay',
     reserveProjectRun: (projectId: string) => ({ projectId }),
@@ -42,22 +44,52 @@ function fakeAgent(
       return impl.cancel(key, runId)
     },
     async runReserved(_reservation: unknown, key: string, input: unknown, onEvent: (e: AgentEvent) => void) {
-      return impl.run(key, input, onEvent)
+      return impl.run(key, input as AgentRunInput, onEvent)
     },
     runPrepared(key: string, input: unknown, onEvent: (e: AgentEvent) => void) {
-      return running ? null : impl.run(key, input, onEvent)
+      return running ? null : impl.run(key, input as AgentRunInput, onEvent)
     },
     tryLockProject: (_projectId: string) => running ? null : () => {},
     cancel(key: string, runId: string) {
       impl.cancelled.push({ key, runId })
       return cancelResult
     },
-    async run(_key: string, _input: unknown, onEvent: (e: AgentEvent) => void) {
+    async run(_key: string, input: AgentRunInput, onEvent: (e: AgentEvent) => void) {
+      impl.runs.push(input)
       for (const e of events) onEvent(e)
     },
   }
   return impl
 }
+
+test('annotation run uses the requested persisted user message rather than the transcript tail', async () => {
+  const agent = fakeAgent([{ type: 'done', reply: 'The precise answer.' }])
+  await request(app()).post('/projects/essay/canvas').send({ document: { store: {
+    'shape:card': {
+      id: 'shape:card', typeName: 'shape', type: 'card', x: 0, y: 0,
+      props: { text: 'Annotated draft', comments: [{
+        id: 'c1', text: 'Initial note', author: 'claude',
+        messages: [
+          { id: 'claude-1', author: 'claude', text: 'Initial note', createdAt: 'T0' },
+          { id: 'wanted', author: 'user', text: 'Answer this one', createdAt: 'T1' },
+          { id: 'claude-2', author: 'claude', text: 'A later answer', createdAt: 'T2' },
+          { id: 'tail', author: 'user', text: 'Do not answer this', createdAt: 'T3' },
+        ],
+      }] },
+    },
+  } }, session: null }).expect(200)
+  const port = await listen(agent)
+  const result = await postForStream(port, {
+    target: { kind: 'card', cardId: 'shape:card', commentId: 'c1' }, messageId: 'wanted', runId: 'annotation-a',
+  }, '/projects/essay/annotations/run')
+
+  expect(result.status).toBe(200)
+  expect(agent.runs).toEqual([expect.objectContaining({
+    history: [{ role: 'assistant', text: 'Initial note' }],
+    prompt: expect.stringContaining('User reply: Answer this one'),
+  })])
+  expect(agent.runs[0].prompt).not.toContain('Do not answer this')
+})
 
 let agentRoot: string
 beforeAll(async () => {
@@ -88,11 +120,11 @@ function listen(agent?: AgentRunner): Promise<number> {
   )
 }
 
-function postForStream(port: number, body: unknown): Promise<{ status: number; contentType: string; text: string }> {
+function postForStream(port: number, body: unknown, path = '/agent/run'): Promise<{ status: number; contentType: string; text: string }> {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(body)
     const req = http.request(
-      { host: '127.0.0.1', port, path: '/agent/run', method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } },
+      { host: '127.0.0.1', port, path, method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } },
       (res) => {
         let text = ''
         res.setEncoding('utf8')

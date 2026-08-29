@@ -1177,11 +1177,14 @@ export function createServer(
     const paths = await requireProject(req.params.id, res)
     if (!paths) return
     const thread = annotationThreadFromCanvas(await readCanvas(paths.canvasPath), target)
-    if (!thread || !thread.messages.some((message) => message.id === messageId && message.author === 'user')) {
+    const requestedMessageIndex = thread?.messages.findIndex((message) =>
+      message.id === messageId && message.author === 'user') ?? -1
+    if (!thread || requestedMessageIndex < 0) {
       res.status(409).json({ error: 'the persisted user reply is unavailable' })
       return
     }
-    const history: AgentConversationMessage[] = thread.messages.slice(0, -1).map((message) =>
+    const requestedMessage = thread.messages[requestedMessageIndex]
+    const history: AgentConversationMessage[] = thread.messages.slice(0, requestedMessageIndex).map((message) =>
       message.author === 'user'
         ? { role: 'user', text: message.text }
         : { role: 'assistant', text: message.text })
@@ -1189,7 +1192,7 @@ export function createServer(
       'Reply to the user in this annotation thread. Keep the reply focused on the annotation; do not edit the canvas.',
       `Annotation target: ${target.kind === 'card' ? `card ${target.cardId}, comment ${target.commentId}` : `feedback ${target.feedbackId}`}.`,
       `Annotated context: ${thread.text}`,
-      `User reply: ${thread.messages[thread.messages.length - 1].text}`,
+      `User reply: ${requestedMessage.text}`,
     ].join('\n')
     const key = annotationRunKey(target)
     const buffered: AgentEvent[] = []

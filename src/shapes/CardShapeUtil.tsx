@@ -14,7 +14,7 @@ import { nextFigureStatus } from '../model/figures'
 import { cardGist } from '../model/summary'
 import { visibleComments } from '../model/comments'
 import { cardAnnotationPins } from '../model/annotationPins'
-import { requestAnnotationOpen, requestAnnotationReply } from '../client/annotationSelection'
+import { requestAnnotationOpen, requestAnnotationReply, requestAnnotationRetry } from '../client/annotationSelection'
 import { AnnotationPin } from '../components/AnnotationThread'
 import { assetUrl } from '../client/assets'
 import { fittedGistFontSize, measuredCardPropsHeight } from './autosize'
@@ -815,6 +815,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
               onOpen={() => requestAnnotationOpen({ kind: 'card', cardId: shape.id, commentId: comment.id })}
               target={{ kind: 'card', cardId: shape.id, commentId: comment.id }}
               onReply={requestAnnotationReply}
+              onRetry={requestAnnotationRetry}
               />
             ) : null
           })}

@@ -33,6 +33,6 @@ export function makeFeedbackProps(
   return {
     w: FEEDBACK_DEFAULT_W, h: FEEDBACK_DEFAULT_H, text, authoredBy,
     type: metadata.type ?? null, reviewId: metadata.reviewId ?? null,
-    reviewer: metadata.reviewer ?? null, resolved: false,
+    reviewer: metadata.reviewer ?? null, resolved: false, messages: [],
   }
 }

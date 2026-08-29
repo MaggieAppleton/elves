@@ -20,3 +20,10 @@
 ## Concerns
 
 - The persisted reply protocol has focused model/server/component coverage, but the requested Playwright coverage remains blocked by the test harness setup above.
+
+## Fix round 1/5
+
+- Pin popovers now subscribe to the same target-keyed presentation state as the rail, including running, streamed text, error, and retry. The reply form has a local send latch as well as the running disablement, so double submits cannot append duplicate user messages.
+- Feedback now registers optional `messages` in its tldraw shape schema, initializes new feedback with an empty message list, and supplies persisted messages to both pin popovers and the rail.
+- `/annotations/run` now finds the specific persisted user message requested by id, derives history only from turns before it, and uses that exact text in Claude's prompt.
+- Verification: `npm test -- tests/model/comments.test.ts tests/server/api.test.ts tests/server/agentRoutes.test.ts tests/components/AnnotationThread.test.ts tests/components/AnnotationRail.test.ts` passed (77 tests); `npm run typecheck` passed.

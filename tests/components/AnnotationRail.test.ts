@@ -36,3 +36,24 @@ test('card target lists its open comments and renders no reply input', () => {
   expect(tree.root.findAllByType('textarea')).toHaveLength(0)
   expect(tree.root.findAllByProps({ 'data-testid': 'annotation-thread' })).toHaveLength(2)
 })
+
+test('feedback rail projects persisted messages instead of only its legacy text', () => {
+  const feedbackEditor = {
+    getShape: () => ({
+      id: 'shape:feedback', type: 'feedback', props: {
+        text: 'Initial feedback', authoredBy: 'claude', type: null, reviewer: null, resolved: false,
+        messages: [
+          { id: 'claude-1', author: 'claude', text: 'Initial feedback', createdAt: 'T0' },
+          { id: 'user-1', author: 'user', text: 'Can you clarify?', createdAt: 'T1' },
+        ],
+      },
+    }),
+  } as unknown as Editor
+  const tree = create(createElement(AnnotationRail, {
+    target: { kind: 'feedback', feedbackId: 'shape:feedback' }, editor: feedbackEditor,
+    onClose: vi.fn(), onResolve: vi.fn(), onRestore: vi.fn(),
+  }))
+
+  expect(tree.root.findAllByProps({ className: 'elves-annotation-thread__message' })).toHaveLength(2)
+  expect(JSON.stringify(tree.toJSON())).toContain('Can you clarify?')
+})
