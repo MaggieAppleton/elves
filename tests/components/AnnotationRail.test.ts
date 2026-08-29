@@ -23,7 +23,7 @@ const editor = {
   }),
 } as unknown as Editor
 
-test('card target lists its open comments and renders no reply input', () => {
+test('card target lists its open comments and renders no reply input without a reply callback', () => {
   const tree = create(createElement(AnnotationRail, {
     target: { kind: 'card', cardId: 'shape:card', commentId: 'c1' },
     editor,
@@ -35,6 +35,18 @@ test('card target lists its open comments and renders no reply input', () => {
   expect(tree.root.findAllByProps({ 'data-testid': 'annotation-rail' })).toHaveLength(1)
   expect(tree.root.findAllByType('textarea')).toHaveLength(0)
   expect(tree.root.findAllByProps({ 'data-testid': 'annotation-thread' })).toHaveLength(2)
+})
+
+test('a resolved selected card comment remains available for restore', () => {
+  const onResolve = vi.fn()
+  const tree = create(createElement(AnnotationRail, {
+    target: { kind: 'card', cardId: 'shape:card', commentId: 'c3' }, editor,
+    onClose: vi.fn(), onResolve, onRestore: vi.fn(),
+  }))
+  const restore = tree.root.findAllByProps({ className: 'elves-annotation-thread__resolve' })
+    .find((button) => button.children.includes('Restore comment'))!
+  restore.props.onClick()
+  expect(onResolve).toHaveBeenCalledWith({ kind: 'card', cardId: 'shape:card', commentId: 'c3' }, 'c3')
 })
 
 test('feedback rail projects persisted messages instead of only its legacy text', () => {

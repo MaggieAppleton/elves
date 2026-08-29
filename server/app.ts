@@ -1101,6 +1101,7 @@ export function createServer(
   // --- Annotation reply runs -----------------------------------------------
   // Annotation conversations are deliberately separate from the generic chat
   // key: each target is single-flight, while unrelated pins remain replyable.
+  const activeAnnotationReplies = new Map<string, Promise<void>>()
   type AnnotationTarget =
     | { kind: 'card'; cardId: string; commentId: string }
     | { kind: 'feedback'; feedbackId: string }
@@ -1114,9 +1115,9 @@ export function createServer(
     }
     return null
   }
-  const annotationRunKey = (target: AnnotationTarget) => target.kind === 'card'
-    ? `annotation:card:${target.cardId}:${target.commentId}`
-    : `annotation:feedback:${target.feedbackId}`
+  const annotationRunKey = (projectId: string, target: AnnotationTarget, messageId: string) => target.kind === 'card'
+    ? `annotation:${projectId}:card:${target.cardId}:${target.commentId}:${messageId}`
+    : `annotation:${projectId}:feedback:${target.feedbackId}:${messageId}`
   const annotationThreadFromCanvas = (canvas: CanvasSnapshot, target: AnnotationTarget) => {
     const store = (canvas as any)?.document?.store as Record<string, any> | undefined
     if (!store) return null
@@ -1145,21 +1146,22 @@ export function createServer(
       ops: [{ kind: 'append_annotation_message', target, message }],
     }
     const digest = changeSetDigest(changeSet)
-    let applied = false
+    let persisted = false
     const mutation = await withProjectMutation(projectId, response, async (paths) => {
       await withCanvasLock(paths.canvasPath, (canvas) => {
         const result = admitLegacyChangeSet(canvas, changeSet, digest)
         if (result.kind === 'applied') {
-          applied = true
+          persisted = true
           return result.snapshot
         }
+        if (result.kind === 'duplicate') persisted = true
         return null
       })
       return true
     })
     if (mutation === null) return false
-    if (applied) onChangeSet?.(projectId, changeSet)
-    return true
+    if (persisted) onChangeSet?.(projectId, changeSet)
+    return persisted
   }
 
   app.post('/projects/:id/annotations/run', wrap(async (req, res) => {
@@ -1184,6 +1186,21 @@ export function createServer(
       return
     }
     const requestedMessage = thread.messages[requestedMessageIndex]
+    // A Claude turn belongs to the user turn immediately before it. Do not
+    // accidentally replay a later turn's answer when another user reply was
+    // saved while this transport was disconnected.
+    let completedReply: typeof thread.messages[number] | undefined
+    for (const message of thread.messages.slice(requestedMessageIndex + 1)) {
+      if (message.author === 'user') break
+      completedReply = message
+      break
+    }
+    if (completedReply) {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform' })
+      res.write(`data: ${JSON.stringify({ type: 'done', reply: completedReply.text })}\n\n`)
+      res.end('event: end\ndata: {}\n\n')
+      return
+    }
     const history: AgentConversationMessage[] = thread.messages.slice(0, requestedMessageIndex).map((message) =>
       message.author === 'user'
         ? { role: 'user', text: message.text }
@@ -1194,7 +1211,11 @@ export function createServer(
       `Annotated context: ${thread.text}`,
       `User reply: ${requestedMessage.text}`,
     ].join('\n')
-    const key = annotationRunKey(target)
+    const key = annotationRunKey(req.params.id, target, messageId)
+    if (activeAnnotationReplies.has(key)) {
+      res.status(409).json({ code: 'annotation-reply-active', error: 'a reply for this message is already running', retryable: true })
+      return
+    }
     const buffered: AgentEvent[] = []
     let streamReady = false
     const send = (event: AgentEvent) => {
@@ -1204,7 +1225,7 @@ export function createServer(
     let streamed = ''
     let finalReply = ''
     const run = agent.run(key, {
-      runId, projectId: req.params.id, hasSelection: target.kind === 'card', prompt, history,
+      runId, projectId: req.params.id, hasSelection: false, prompt, history, profile: 'annotation-reply',
     }, (event) => {
       if (event.type === 'text') streamed += event.text
       if (event.type === 'done') finalReply = event.reply || streamed
@@ -1217,19 +1238,23 @@ export function createServer(
     res.flushHeaders?.()
     streamReady = true
     for (const event of buffered) send(event)
-    run.catch((error) => {
+    const settled = run.catch((error) => {
       console.error('[elves] annotation run failed:', error)
       send({ type: 'error', message: 'the annotation run failed unexpectedly' })
     }).then(async () => {
       if (finalReply.trim()) {
-        const message = { id: `${runId}:claude`, author: 'claude', text: finalReply, createdAt: new Date().toISOString() }
-        if (!await appendAnnotationMessage(req.params.id, res, target, message, `annotation-run:${runId}:claude`)) {
+        const message = { id: `${messageId}:claude`, author: 'claude', text: finalReply, createdAt: new Date().toISOString() }
+        if (!await appendAnnotationMessage(req.params.id, res, target, message, `annotation-reply:${messageId}:claude`)) {
           send({ type: 'error', message: 'Claude replied, but the annotation reply could not be saved.' })
         }
       }
     }).finally(() => {
       if (res.writable && !res.writableEnded) res.write('event: end\ndata: {}\n\n')
       res.end()
+    })
+    activeAnnotationReplies.set(key, settled)
+    void settled.finally(() => {
+      if (activeAnnotationReplies.get(key) === settled) activeAnnotationReplies.delete(key)
     })
   }))
 

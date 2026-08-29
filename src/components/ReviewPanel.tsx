@@ -8,6 +8,7 @@ import {
 } from '../model/reviews'
 import { mechanicalGist } from '../model/summary'
 import type { CommentType } from '../model/types'
+import type { AnnotationTarget } from '../client/annotationSelection'
 import './reviewPanel.css'
 
 interface Props {
@@ -18,7 +19,7 @@ interface Props {
   onSummon: (personality: PersonalityId, focus: string | null) => void
   onDismiss: (reviewId: string) => void
   onRetry: (reviewId: string) => void
-  onOpenAnnotation: (feedbackId: string) => void
+  onOpenAnnotation: (target: AnnotationTarget) => void
 }
 
 // Each personality's swatch borrows the label colour of its signature comment
@@ -75,12 +76,18 @@ function passTally(editor: Editor | null, review: Review): { open: number; total
   return { open, total: Math.max(total, review.commentCount) }
 }
 
-function resolvedFeedback(editor: Editor | null): FeedbackShape[] {
+function resolvedAnnotations(editor: Editor | null): Array<{ target: AnnotationTarget; text: string; author: string; type: CommentType | null }> {
   if (!editor) return []
-  return editor.getCurrentPageShapes()
+  const feedback = editor.getCurrentPageShapes()
     .filter((shape): shape is FeedbackShape => shape.type === 'feedback')
     .filter((shape) => shape.props.resolved)
-    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((shape) => ({ target: { kind: 'feedback' as const, feedbackId: shape.id }, text: shape.props.text, author: shape.props.authoredBy, type: shape.props.type }))
+  const comments = editor.getCurrentPageShapes()
+    .filter((shape): shape is CardShape => shape.type === 'card')
+    .flatMap((shape) => shape.props.comments.filter((comment) => comment.resolved).map((comment) => ({
+      target: { kind: 'card' as const, cardId: shape.id, commentId: comment.id }, text: comment.text, author: comment.author, type: comment.type,
+    })))
+  return [...feedback, ...comments].sort((a, b) => a.text.localeCompare(b.text))
 }
 
 function EyeglassesIcon() {
@@ -145,8 +152,8 @@ export function ReviewPanel({
     [editor, reviews],
   )
   const resolved = useValue(
-    'resolved feedback stack',
-    () => resolvedFeedback(editor),
+    'resolved annotation stack',
+    () => resolvedAnnotations(editor),
     [editor],
   )
 
@@ -195,26 +202,25 @@ export function ReviewPanel({
         )}
       </button>
       {resolved.length > 0 && (
-        <div className="elves-review__resolved-stack" data-feedback-stack aria-label="Resolved feedback">
-          <div className="elves-review__resolved-heading">Resolved feedback · {resolved.length}</div>
-          {[...resolved].reverse().map((feedback) => {
-            const persona = feedback.props.reviewer ? PERSONALITIES[feedback.props.reviewer] : null
-            const agent = agentInfo(feedback.props.authoredBy)
+        <div className="elves-review__resolved-stack" data-feedback-stack aria-label="Resolved annotations">
+          <div className="elves-review__resolved-heading">Resolved annotations · {resolved.length}</div>
+          {[...resolved].reverse().map((annotation) => {
+            const agent = agentInfo(annotation.author)
             return <button
               type="button"
               className="elves-review__resolved-item"
-              key={feedback.id}
-              aria-label={`Restore feedback: ${mechanicalGist(feedback.props.text, 80)}`}
+              key={annotation.target.kind === 'card' ? annotation.target.commentId : annotation.target.feedbackId}
+              aria-label={`Restore annotation: ${mechanicalGist(annotation.text, 80)}`}
               onClick={() => {
-                onOpenAnnotation(feedback.id)
+                onOpenAnnotation(annotation.target)
                 setOpen(false)
               }}
             >
-              <span className="elves-review__resolved-meta" style={persona ? { color: personalityTone(persona.id) } : undefined}>
-                {persona?.name ?? 'Agent feedback'}{persona && agent ? ` · ${agent.name}` : !persona ? ` · ${agent?.name ?? feedback.props.authoredBy}` : ''}
-                {feedback.props.type ? ` · ${feedback.props.type.replaceAll('-', ' ')}` : ''}
+              <span className="elves-review__resolved-meta">
+                {annotation.target.kind === 'feedback' ? 'Feedback' : 'Comment'} · {agent?.name ?? annotation.author}
+                {annotation.type ? ` · ${annotation.type.replaceAll('-', ' ')}` : ''}
               </span>
-              <span>{mechanicalGist(feedback.props.text, 80)}</span>
+              <span>{mechanicalGist(annotation.text, 80)}</span>
             </button>
           })}
         </div>

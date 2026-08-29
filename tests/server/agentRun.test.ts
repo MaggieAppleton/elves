@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import {
   parseClaudeLine,
   buildPreamble,
@@ -209,6 +209,21 @@ test('a run streams started, then parsed events, then done', async () => {
     { type: 'done', reply: 'Merged 2 notes.' },
   ])
   expect(runner.isRunning('chat')).toBe(false)
+})
+
+test('an annotation reply runs with no canvas MCP tools', async () => {
+  const child = new FakeChild()
+  const spawn = vi.fn(() => child)
+  const runner = createAgentRunner(deps(spawn))
+  const done = runner.run('annotation:p:card:c1:user-1', {
+    ...input('annotation:user-1'), profile: 'annotation-reply',
+  }, () => {})
+
+  const args = (spawn.mock.calls as unknown as Array<[string, string[]]>)[0]![1]
+  expect(args[args.indexOf('--allowedTools') + 1]).toBe('')
+  expect(args[args.indexOf('--disallowedTools') + 1]).toContain('mcp__elves__*')
+  child.emitClose(0)
+  await done
 })
 
 test('a second run under the SAME key while one is active is refused', async () => {

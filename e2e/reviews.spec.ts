@@ -140,9 +140,9 @@ test('summoning runs a full pass in-app', async ({ page, request }) => {
 
   // The tagged comment renders as the shared compact marker, retaining its
   // review type while the immutable body lives in the annotation rail.
-  const pin = page.locator('[data-testid="annotation-marker"][data-type="tighten"]')
+  const pin = page.locator('[data-testid="annotation-pin"][data-type="tighten"]')
   await expect(pin).toBeVisible()
-  await expect(pin).toContainText('stub note')
+  await expect(pin).toHaveAccessibleName(/stub note/)
 
   await expect(
     page.getByRole('button', {
@@ -168,7 +168,7 @@ test('resolved floating feedback leaves the canvas and can be restored from revi
     reviewer: 'architect',
   })
 
-  const marker = page.locator('.elves-feedback-marker')
+  const marker = page.getByTestId('annotation-pin')
   await expect(marker).toBeVisible()
   await expect(page.locator('.elves-feedback')).toHaveCount(0)
   await marker.click()
@@ -178,7 +178,7 @@ test('resolved floating feedback leaves the canvas and can be restored from revi
   await rail.getByRole('button', { name: 'Resolve feedback' }).click()
   await expect(marker).toHaveCount(0)
 
-  const restore = page.getByRole('button', { name: 'Restore feedback: The middle needs a bridge' })
+  const restore = page.getByRole('button', { name: 'Restore annotation: The middle needs a bridge' })
   await expect(restore).toBeVisible()
   await restore.click()
   await expect(rail).toBeVisible()
@@ -226,14 +226,14 @@ test('floating feedback stays a bounded marker while the full annotation is immu
     reviewer: 'architect',
   })
 
-  const marker = page.locator('.elves-feedback-marker')
+  const marker = page.getByTestId('annotation-pin')
   await expect(marker).toBeVisible()
   expect((await marker.boundingBox())!.height).toBe(34)
   await expect(page.locator('.elves-feedback__text')).toHaveCount(0)
   await marker.click()
   const rail = page.getByTestId('annotation-rail')
   await expect(rail).toContainText(text)
-  await expect(rail.locator('textarea')).toHaveCount(0)
+  await expect(rail.locator('textarea')).toHaveCount(1)
 })
 
 test('a failing run marks the pass failed, with Retry', async ({ page }) => {

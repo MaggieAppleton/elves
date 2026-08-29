@@ -1,5 +1,4 @@
 import type { AnnotationMessage, CommentType } from './types'
-import { CARD_DEFAULT_W } from './types'
 import type { PersonalityId } from './reviews'
 
 export interface FeedbackProps {
@@ -15,8 +14,9 @@ export interface FeedbackProps {
   messages?: AnnotationMessage[]
 }
 
-export const FEEDBACK_DEFAULT_W = CARD_DEFAULT_W
-export const FEEDBACK_DEFAULT_H = 96
+/** Feedback is now a compact point annotation, not an invisible card. */
+export const FEEDBACK_DEFAULT_W = 28
+export const FEEDBACK_DEFAULT_H = 28
 
 /** Resolved feedback stays in the document for history, but leaves the active
  * canvas entirely — both rendering and hit-testing. */

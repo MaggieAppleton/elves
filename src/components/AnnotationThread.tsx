@@ -2,9 +2,10 @@ import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type M
 import { agentInfo } from '../shapes/agents'
 import { annotationPin, PIN_SIZE } from '../model/annotationPins'
 import { threadMessages } from '../model/comments'
+import { commentGist } from '../model/summary'
 import type { Comment, CommentType } from '../model/types'
 import {
-  annotationThreadPresentation, subscribeAnnotationThreadPresentation,
+  annotationRepliesLocked, annotationThreadPresentation, subscribeAnnotationThreadPresentation,
   type AnnotationTarget,
 } from '../client/annotationSelection'
 import './annotationThread.css'
@@ -58,7 +59,7 @@ export function AnnotationThread({
   const send = (event: FormEvent) => {
     event.preventDefault()
     const text = reply.trim()
-    if (!text || running || sending.current || !onReply) return
+    if (!text || disabled || running || sending.current || !onReply) return
     sending.current = true
     setReply('')
     onReply(text)
@@ -87,10 +88,10 @@ export function AnnotationThread({
         <textarea
           aria-label="Reply to annotation"
           value={reply}
-          disabled={running}
+          disabled={disabled || running}
           onChange={(event) => setReply(event.target.value)}
         />
-        <button type="submit" className="elves-annotation-thread__send" disabled={running || !reply.trim()}>
+        <button type="submit" className="elves-annotation-thread__send" disabled={disabled || running || !reply.trim()}>
           {running ? 'Replying…' : 'Send reply'}
         </button>
       </form>}
@@ -131,16 +132,21 @@ export interface AnnotationPinProps {
 export function AnnotationPin({ comment, offsetY = 0, zoom = 1, className, attribution, target, onOpen, onReply, onRetry }: AnnotationPinProps) {
   const token = annotationPin(comment.type)
   const [presentation, setPresentation] = useState(() => target ? annotationThreadPresentation(target) : undefined)
+  const [locked, setLocked] = useState(annotationRepliesLocked)
   useEffect(() => {
     if (!target) return
-    const update = () => setPresentation(annotationThreadPresentation(target))
+    const update = () => {
+      setPresentation(annotationThreadPresentation(target))
+      setLocked(annotationRepliesLocked())
+    }
     update()
     return subscribeAnnotationThreadPresentation(update)
   }, [target?.kind, target?.kind === 'card' ? target.cardId : target?.feedbackId, target?.kind === 'card' ? target.commentId : undefined])
   const scale = 1 / zoom
   const style = {
     top: offsetY * scale,
-    right: -36 * scale,
+    right: className?.includes('elves-feedback-pin') ? undefined : -36 * scale,
+    left: className?.includes('elves-feedback-pin') ? 0 : undefined,
     '--annotation-pin-scale': scale,
   } as CSSProperties
   const stopPointer = (event: PointerEvent) => stopEvent(event)
@@ -156,7 +162,7 @@ export function AnnotationPin({ comment, offsetY = 0, zoom = 1, className, attri
         className="elves-annotation-pin"
         data-type={token.tone}
         data-testid="annotation-pin"
-        aria-label={`Open ${token.label} comment from ${agentName(comment.author)}`}
+        aria-label={`Open ${token.label} comment from ${agentName(comment.author)}: ${commentGist(comment as Comment)}`}
         onClick={open}
       >
         <span aria-hidden="true" className="elves-annotation-pin__icon">{pinGlyph(token.icon)}</span>
@@ -166,6 +172,7 @@ export function AnnotationPin({ comment, offsetY = 0, zoom = 1, className, attri
           running={presentation?.running}
           streamingText={presentation?.streamingText}
           error={presentation?.error}
+          disabled={locked}
           onReply={target && onReply ? (text) => onReply(target, text) : undefined}
           onRetry={target && onRetry ? () => onRetry(target) : undefined} />
       </div>

@@ -17,6 +17,7 @@ const replyListeners = new Set<AnnotationReplyListener>()
 const retryListeners = new Set<AnnotationRetryListener>()
 const presentationListeners = new Set<() => void>()
 const presentations = new Map<string, AnnotationThreadPresentation>()
+let annotationReplyLocked = false
 
 export function annotationTargetKey(target: AnnotationTarget): string {
   return target.kind === 'card'
@@ -65,7 +66,21 @@ export function setAnnotationThreadPresentation(
   presentationListeners.forEach((listener) => listener())
 }
 
+/** Project changes invalidate every shape-local presentation immediately. */
+export function clearAnnotationThreadPresentations(): void {
+  if (!presentations.size) return
+  presentations.clear()
+  presentationListeners.forEach((listener) => listener())
+}
+
 export function subscribeAnnotationThreadPresentation(listener: () => void): () => void {
   presentationListeners.add(listener)
   return () => presentationListeners.delete(listener)
+}
+
+export function annotationRepliesLocked(): boolean { return annotationReplyLocked }
+export function setAnnotationRepliesLocked(locked: boolean): void {
+  if (annotationReplyLocked === locked) return
+  annotationReplyLocked = locked
+  presentationListeners.forEach((listener) => listener())
 }

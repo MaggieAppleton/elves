@@ -34,3 +34,19 @@
 - Presentation publication now reconciles map entries independently, so starting target B cannot clear target A's running popover state.
 - Added a two-target component regression: when A is active and B starts, both popover send controls remain disabled.
 - Verification: `npm test -- tests/model/comments.test.ts tests/server/api.test.ts tests/server/agentRoutes.test.ts tests/components/AnnotationThread.test.ts tests/components/AnnotationRail.test.ts` passed (78 tests); `npm run typecheck` passed.
+
+## Final review consolidation
+
+- Card-comment tldraw schema and migration now accept/preserve `messages`, including legacy-to-threaded snapshot projection.
+- Annotation retries use the durable user-message id as their run/reply identity. The server returns an already-persisted response for that exact turn, prevents a concurrent duplicate, and derives history only before the requested user message.
+- Client SSE handling requires an explicit terminal frame; a dropped stream becomes a retryable error instead of a silent success. Server admission failures now surface a retryable stream error rather than claiming persistence.
+- Reply-only runs carry an empty tool allowlist plus an explicit elves MCP deny rule. Canvas locks disable reply forms without clearing a typed draft.
+- Feedback is a 28 × 28 saved-coordinate pin/hitbox with its own scale origin. Resolved card comments are indexed in Review home, open in the shared rail, and can be restored. Pin names include a bounded annotation-text gist.
+- Updated stale browser selectors and added the resolved-card recovery scenario. Target state/run keys are project-scoped in App/server; project transitions synchronously clear the published pin state.
+
+### Verification
+
+- `npm run typecheck` — passed.
+- Focused Task 3 coverage: `npm test -- tests/client/annotationThread.test.ts tests/client/annotationSelection.test.ts tests/model/feedback.test.ts tests/shapes/migration.test.ts tests/components/AnnotationThread.test.ts tests/components/AnnotationRail.test.ts tests/server/agentRun.test.ts tests/server/agentRoutes.test.ts tests/server/api.test.ts` — 9 files, 147 tests passed.
+- Full suite (outside sandbox because server-route tests bind localhost): `npm test` — 94 files, 1,389 tests passed.
+- Browser attempt on isolated ports: `ELVES_E2E_SERVER_PORT=5299 ELVES_E2E_WEB_PORT=5298 ELVES_E2E_BASE=http://localhost:5299 npm run e2e -- e2e/comments.spec.ts e2e/reviews.spec.ts`. The web/server processes started, but the first canvas tests stopped at `No projects yet` after `resetProject`, before any annotation assertion. This remains an E2E bootstrap issue; the source scenarios are updated but cannot be claimed as browser-verified.

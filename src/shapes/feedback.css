@@ -1,2 +1,3 @@
-/* Feedback uses the same compact pin and popover as attached comments. */
-.elves-feedback-pin { top: 0; }
+/* Feedback is anchored at its own saved x/y, unlike a card pin that hangs off
+   the card's right edge. Keep its scale origin at that point too. */
+.elves-feedback-pin { top: 0; transform-origin: top left; }

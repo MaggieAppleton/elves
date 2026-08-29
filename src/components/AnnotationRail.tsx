@@ -30,7 +30,7 @@ export function AnnotationRail({ target, editor, disabled = false, onClose, onRe
     content = <p className="elves-annotation-rail__empty">This annotation is no longer on the canvas.</p>
   } else if (target.kind === 'card' && shape.type === 'card') {
     const card = shape as CardShape
-    const comments = card.props.comments.filter((comment) => !comment.resolved)
+    const comments = card.props.comments.filter((comment) => !comment.resolved || comment.id === target.commentId)
     content = comments.length ? (
       <div className="elves-annotation-rail__list">
         {comments.map((comment) => (
@@ -40,6 +40,7 @@ export function AnnotationRail({ target, editor, disabled = false, onClose, onRe
             mode="rail"
             selected={comment.id === target.commentId}
             disabled={disabled}
+            actionLabel={comment.resolved ? 'Restore comment' : 'Resolve comment'}
             onResolve={() => onResolve(target, comment.id)}
             running={threadState?.running && comment.id === target.commentId}
             streamingText={comment.id === target.commentId ? threadState?.streamingText : undefined}

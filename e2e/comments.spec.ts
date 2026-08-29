@@ -139,6 +139,22 @@ test('focus exposes a complete thread without opening the rail', async ({ page, 
   await expect(page.getByTestId('annotation-rail')).toHaveCount(0)
 })
 
+test('a resolved card thread can be reopened from Review and restored', async ({ page, request }) => {
+  await addCardAndComment(page, request, { type: 'needs-evidence', text: 'Keep this thread recoverable.' })
+
+  await page.getByTestId('annotation-pin').click()
+  const rail = page.getByTestId('annotation-rail')
+  await rail.getByRole('button', { name: 'Resolve comment' }).click()
+  await expect(page.getByTestId('annotation-pin')).toHaveCount(0)
+
+  const restoreFromReview = page.getByRole('button', { name: 'Restore annotation: Keep this thread recoverable.' })
+  await expect(restoreFromReview).toBeVisible()
+  await restoreFromReview.click()
+  await expect(rail.getByRole('button', { name: 'Restore comment' })).toBeVisible()
+  await rail.getByRole('button', { name: 'Restore comment' }).click()
+  await expect(page.getByTestId('annotation-pin')).toBeVisible()
+})
+
 test('attached comment pins remain compact at overview zoom', async ({ page, request }) => {
   await addCardAndComment(page, request, { type: 'needs-evidence', text: 'A comment that must become a marker.' })
   await page.getByRole('button', { name: /Zoom — 100%/ }).click()

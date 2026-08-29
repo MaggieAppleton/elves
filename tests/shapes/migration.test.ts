@@ -3,7 +3,7 @@ import {
   addCommentsUp, addAssetIdUp, addReferenceUp, addSummaryUp,
   renameSourceToNoteUp, renameSourceToNoteDown, addAuthoredByUp, addDraftExcludedUp, addFigureUp,
   addAttributionUp, addCommentSummaryUp, addCommentReviewIdUp,
-  addCommentHeightUp,
+  addCommentHeightUp, addCommentMessagesUp,
 } from '../../src/shapes/CardShapeUtil'
 import { addQuestionSummaryUp, removeQuestionSummaryDown } from '../../src/shapes/QuestionShapeUtil'
 
@@ -141,6 +141,18 @@ test('AddCommentReviewId migration preserves an existing reviewId rather than cl
   }
   addCommentReviewIdUp(props)
   expect((props.comments as any[])[0].reviewId).toBe('rev-1')
+})
+
+test('AddCommentMessages migration preserves threaded snapshots and initializes legacy comments', () => {
+  const props: Record<string, unknown> = { comments: [
+    { id: 'legacy' },
+    { id: 'threaded', messages: [{ id: 'm1', author: 'user', text: 'Which source?', createdAt: 'T' }] },
+  ] }
+  addCommentMessagesUp(props)
+  expect(props.comments).toEqual([
+    { id: 'legacy', messages: [] },
+    { id: 'threaded', messages: [{ id: 'm1', author: 'user', text: 'Which source?', createdAt: 'T' }] },
+  ])
 })
 
 test('AddCommentReviewId migration is a no-op when comments is missing or not an array', () => {

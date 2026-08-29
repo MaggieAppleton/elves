@@ -40,7 +40,10 @@ export function runAnnotationThread(
   messageId: string,
   onEvent: (event: AgentEvent) => void,
 ): AnnotationThreadRun {
-  const runId = crypto.randomUUID()
+  // One reply run is owned by the durable user turn, not by an individual
+  // transport attempt. Retrying an ambiguous stream therefore cannot mint a
+  // second Claude answer for the same message.
+  const runId = `annotation:${messageId}`
   const done = (async () => {
     const response = await fetch(`${BASE}/projects/${encodeURIComponent(projectId)}/annotations/run`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
@@ -53,6 +56,7 @@ export function runAnnotationThread(
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
+    let sawEnd = false
     for (;;) {
       const { done: ended, value } = await reader.read()
       if (ended) break
@@ -61,7 +65,10 @@ export function runAnnotationThread(
       while ((separator = buffer.indexOf('\n\n')) >= 0) {
         const frame = buffer.slice(0, separator)
         buffer = buffer.slice(separator + 2)
-        if (frame.includes('event: end')) return
+        if (frame.includes('event: end')) {
+          sawEnd = true
+          return
+        }
         const line = frame.split('\n').find((candidate) => candidate.startsWith('data:'))
         if (!line) continue
         try {
@@ -70,6 +77,7 @@ export function runAnnotationThread(
         } catch { /* malformed progress never breaks a durable thread */ }
       }
     }
+    if (!sawEnd) throw new Error('the annotation stream was interrupted; retry will reuse your saved reply')
   })()
   return { runId, done }
 }

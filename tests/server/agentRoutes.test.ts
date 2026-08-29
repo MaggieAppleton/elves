@@ -72,8 +72,7 @@ test('annotation run uses the requested persisted user message rather than the t
         messages: [
           { id: 'claude-1', author: 'claude', text: 'Initial note', createdAt: 'T0' },
           { id: 'wanted', author: 'user', text: 'Answer this one', createdAt: 'T1' },
-          { id: 'claude-2', author: 'claude', text: 'A later answer', createdAt: 'T2' },
-          { id: 'tail', author: 'user', text: 'Do not answer this', createdAt: 'T3' },
+          { id: 'tail', author: 'user', text: 'Do not answer this', createdAt: 'T2' },
         ],
       }] },
     },
@@ -87,8 +86,34 @@ test('annotation run uses the requested persisted user message rather than the t
   expect(agent.runs).toEqual([expect.objectContaining({
     history: [{ role: 'assistant', text: 'Initial note' }],
     prompt: expect.stringContaining('User reply: Answer this one'),
+    profile: 'annotation-reply',
   })])
   expect(agent.runs[0].prompt).not.toContain('Do not answer this')
+})
+
+test('annotation retry returns the saved response for its user turn without another agent run', async () => {
+  const agent = fakeAgent([{ type: 'done', reply: 'This must not run.' }])
+  await request(app()).post('/projects/essay/canvas').send({ document: { store: {
+    'shape:card': {
+      id: 'shape:card', typeName: 'shape', type: 'card', x: 0, y: 0,
+      props: { text: 'Annotated draft', comments: [{
+        id: 'c1', text: 'Initial note', author: 'claude',
+        messages: [
+          { id: 'claude-1', author: 'claude', text: 'Initial note', createdAt: 'T0' },
+          { id: 'user-1', author: 'user', text: 'Clarify this', createdAt: 'T1' },
+          { id: 'user-1:claude', author: 'claude', text: 'Already saved.', createdAt: 'T2' },
+        ],
+      }] },
+    },
+  } }, session: null }).expect(200)
+  const port = await listen(agent)
+  const result = await postForStream(port, {
+    target: { kind: 'card', cardId: 'shape:card', commentId: 'c1' }, messageId: 'user-1', runId: 'annotation:user-1',
+  }, '/projects/essay/annotations/run')
+
+  expect(result.text).toContain('Already saved.')
+  expect(result.text).toContain('event: end')
+  expect(agent.runs).toEqual([])
 })
 
 let agentRoot: string

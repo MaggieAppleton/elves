@@ -143,6 +143,13 @@ export function addCommentSummaryUp(props: Record<string, unknown>): void {
   }
 }
 
+/** Threads postdate legacy comments; preserve their original annotation as the
+ * implicit first Claude turn by defaulting only the durable suffix to []. */
+export function addCommentMessagesUp(props: Record<string, unknown>): void {
+  if (!Array.isArray(props.comments)) return
+  props.comments = props.comments.map((comment) => ({ messages: [], ...(comment as Record<string, unknown>) }))
+}
+
 // Seeds per-character authorship from a card's last-writer + text. An existing
 // card has one author for its whole body — the human (authoredBy null → 'user')
 // or the agent that wrote it — so its attribution is one run of that author over
@@ -180,6 +187,7 @@ const cardVersions = createShapePropsMigrationIds('card', {
   AddAuthoredBy: 6, AddDraftExcluded: 7, AddFigure: 8, AddAttribution: 9, AddCommentSummary: 10,
   AddCommentReviewId: 11,
   AddCommentHeight: 12,
+  AddCommentMessages: 13,
 })
 
 export const cardMigrations = createShapePropsMigrationSequence({
@@ -288,6 +296,14 @@ export const cardMigrations = createShapePropsMigrationSequence({
         delete (props as Record<string, unknown>).commentH
       },
     },
+    {
+      id: cardVersions.AddCommentMessages,
+      up: (props) => addCommentMessagesUp(props as Record<string, unknown>),
+      down: (props) => {
+        const comments = (props as Record<string, unknown>).comments
+        if (Array.isArray(comments)) for (const comment of comments as Record<string, unknown>[]) delete comment.messages
+      },
+    },
   ],
 })
 
@@ -377,6 +393,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
         summaryOfHash: T.nullable(T.string),
         summaryBy: T.nullable(T.string),
         summaryAt: T.nullable(T.string),
+        messages: T.arrayOf(T.object({ id: T.string, author: T.string, text: T.string, createdAt: T.string })).optional(),
       }),
     ),
     commentH: T.number,

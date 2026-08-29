@@ -12,7 +12,7 @@ import { SectionShapeUtil, SectionShape } from './shapes/SectionShapeUtil'
 import { QuestionShapeUtil } from './shapes/QuestionShapeUtil'
 import { FeedbackShapeUtil, type FeedbackShape } from './shapes/FeedbackShapeUtil'
 import { feedbackIsHidden } from './model/feedback'
-import { appendThreadMessage, resolveComment } from './model/comments'
+import { appendThreadMessage } from './model/comments'
 import type { AnnotationMessage } from './model/types'
 import {
   makeProseCardProps, makeNoteCardProps, makeImageNoteCardProps, makeReferenceCardProps,
@@ -43,7 +43,7 @@ import { AgentBox } from './components/AgentBox'
 import { DraftPane } from './components/DraftPane'
 import { AnnotationRail } from './components/AnnotationRail'
 import {
-  setAnnotationThreadPresentation, subscribeAnnotationOpen, subscribeAnnotationReply, subscribeAnnotationRetry,
+  clearAnnotationThreadPresentations, setAnnotationRepliesLocked, setAnnotationThreadPresentation, subscribeAnnotationOpen, subscribeAnnotationReply, subscribeAnnotationRetry,
   type AnnotationTarget,
 } from './client/annotationSelection'
 import {
@@ -447,6 +447,7 @@ export default function App() {
   const closeAnnotation = () => {
     const previous = viewBeforeAnnotation.current
     setAnnotationTarget(null)
+    setAnnotationThreadStates({})
     // A project transition discards annotation state before mounting the new
     // canvas. This guard also makes a delayed close harmless: never write the
     // old project's saved view into the incoming project's localStorage key.
@@ -463,7 +464,8 @@ export default function App() {
       editor.updateShape<CardShape>({
         id: shape.id,
         type: 'card',
-        props: { comments: resolveComment(shape.props.comments, commentId) },
+        props: { comments: shape.props.comments.map((comment) => comment.id === commentId
+          ? { ...comment, resolved: !comment.resolved } : comment) },
       })
       return
     }
@@ -478,8 +480,12 @@ export default function App() {
     }
   }
 
+  // Shape ids are only project-local. Keep transient reply presentation scoped
+  // to the mounted project as well, so copied/imported ids cannot inherit an
+  // unrelated stream, error, or disabled reply control.
   const annotationKey = (target: AnnotationThreadTarget) => target.kind === 'card'
-    ? `card:${target.cardId}:${target.commentId}` : `feedback:${target.feedbackId}`
+    ? `annotation:${currentProjectId ?? 'none'}:card:${target.cardId}:${target.commentId}`
+    : `annotation:${currentProjectId ?? 'none'}:feedback:${target.feedbackId}`
 
   const updateAnnotationThreadState = (
     target: AnnotationThreadTarget,
@@ -563,6 +569,10 @@ export default function App() {
   }
 
   useEffect(() => subscribeAnnotationReply(replyToAnnotation), [currentProjectId, editor, canvasMutationsLocked])
+  useEffect(() => {
+    setAnnotationRepliesLocked(canvasMutationsLocked)
+    return () => setAnnotationRepliesLocked(false)
+  }, [canvasMutationsLocked])
   useEffect(() => subscribeAnnotationRetry(retryAnnotation), [currentProjectId, annotationThreadStates])
   useEffect(() => {
     const previous = publishedAnnotationThreadStates.current
@@ -938,6 +948,8 @@ export default function App() {
     // retained target and pre-rail view before `currentProjectId` changes so
     // neither can leak into the next project's persisted view state.
     setAnnotationTarget(null)
+    setAnnotationThreadStates({})
+    clearAnnotationThreadPresentations()
     viewBeforeAnnotation.current = null
     annotationProjectId.current = null
     localStorage.setItem(LAST_PROJECT_KEY, id)
@@ -1134,7 +1146,7 @@ export default function App() {
           onSummon={handleSummonReview}
           onDismiss={handleDismissReview}
           onRetry={handleRetryReview}
-          onOpenAnnotation={(feedbackId) => openAnnotation({ kind: 'feedback', feedbackId })}
+          onOpenAnnotation={openAnnotation}
         />
         <ProjectSwitcher
           projects={projects}

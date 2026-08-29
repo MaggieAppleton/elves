@@ -95,3 +95,26 @@ test('two active targets keep the first popover disabled when the second starts'
   setAnnotationThreadPresentation(a, null)
   setAnnotationThreadPresentation(b, null)
 })
+
+test('a canvas lock disables a populated reply form without discarding its draft', () => {
+  const tree = create(createElement(AnnotationThread, {
+    comment: { id: 'c1', type: null, text: 'Needs evidence', resolved: false, author: 'claude' },
+    mode: 'rail', onResolve: vi.fn(), onReply: vi.fn(),
+  }))
+  const textarea = tree.root.findByType('textarea')
+  act(() => textarea.props.onChange({ target: { value: 'My saved draft' } }))
+  act(() => tree.update(createElement(AnnotationThread, {
+    comment: { id: 'c1', type: null, text: 'Needs evidence', resolved: false, author: 'claude' },
+    mode: 'rail', disabled: true, onResolve: vi.fn(), onReply: vi.fn(),
+  })))
+  expect(tree.root.findByType('textarea').props).toMatchObject({ value: 'My saved draft', disabled: true })
+  expect(tree.root.findByProps({ className: 'elves-annotation-thread__send' }).props.disabled).toBe(true)
+})
+
+test('a pin name includes a bounded gist of the annotation text', () => {
+  const tree = create(createElement(AnnotationPin, {
+    comment: { id: 'c1', type: null, text: 'Name the causal bridge explicitly.', resolved: false, author: 'claude' },
+    onOpen: vi.fn(),
+  }))
+  expect(tree.root.findByProps({ 'data-testid': 'annotation-pin' }).props['aria-label']).toContain('Name the causal bridge explicitly.')
+})
