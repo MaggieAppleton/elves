@@ -18,7 +18,8 @@ Status: implemented; focused component and type checks passed.
 
 ## Commit
 
-- Commit hash: `7d82eb2` (amended once to include this final report hash).
+- Implementation commit: `f6bee2c` (`feat(annotations): render threaded comment pins`).
+- This final report is recorded in the follow-up documentation commit.
 
 ## Concerns
 
