@@ -1,5 +1,5 @@
 import { createElement } from 'react'
-import { create } from 'react-test-renderer'
+import { act, create } from 'react-test-renderer'
 import { expect, test, vi } from 'vitest'
 import { AnnotationPin, AnnotationThread } from '../../src/components/AnnotationThread'
 import { setAnnotationThreadPresentation } from '../../src/client/annotationSelection'
@@ -69,4 +69,29 @@ test('pin popover receives thread-local progress, error, and retry state', () =>
   popover.findAllByType('button').find((button) => button.children.includes('Retry'))!.props.onClick()
   expect(retry).toHaveBeenCalledWith(target)
   setAnnotationThreadPresentation(target, null)
+})
+
+test('two active targets keep the first popover disabled when the second starts', () => {
+  const a = { kind: 'card' as const, cardId: 'shape:card-a', commentId: 'a' }
+  const b = { kind: 'card' as const, cardId: 'shape:card-b', commentId: 'b' }
+  act(() => {
+    setAnnotationThreadPresentation(a, { running: true })
+    setAnnotationThreadPresentation(b, { running: true })
+  })
+  const tree = create(createElement('div', {},
+    createElement(AnnotationPin, {
+      comment: { id: 'a', type: null, text: 'A', resolved: false, author: 'claude' }, target: a,
+      onOpen: vi.fn(), onReply: vi.fn(),
+    }),
+    createElement(AnnotationPin, {
+      comment: { id: 'b', type: null, text: 'B', resolved: false, author: 'claude' }, target: b,
+      onOpen: vi.fn(), onReply: vi.fn(),
+    }),
+  ))
+
+  const sends = tree.root.findAllByProps({ className: 'elves-annotation-thread__send' })
+  expect(sends).toHaveLength(2)
+  expect(sends.every((send) => send.props.disabled)).toBe(true)
+  setAnnotationThreadPresentation(a, null)
+  setAnnotationThreadPresentation(b, null)
 })

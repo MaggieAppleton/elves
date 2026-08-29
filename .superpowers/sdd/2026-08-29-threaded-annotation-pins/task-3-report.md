@@ -27,3 +27,10 @@
 - Feedback now registers optional `messages` in its tldraw shape schema, initializes new feedback with an empty message list, and supplies persisted messages to both pin popovers and the rail.
 - `/annotations/run` now finds the specific persisted user message requested by id, derives history only from turns before it, and uses that exact text in Claude's prompt.
 - Verification: `npm test -- tests/model/comments.test.ts tests/server/api.test.ts tests/server/agentRoutes.test.ts tests/components/AnnotationThread.test.ts tests/components/AnnotationRail.test.ts` passed (77 tests); `npm run typecheck` passed.
+
+## Fix round 2/5
+
+- Replaced the singleton App thread state with a stable target-keyed state map. Target updates, completion cleanup, streaming, errors, and retries now affect only the matching card-comment or feedback key.
+- Presentation publication now reconciles map entries independently, so starting target B cannot clear target A's running popover state.
+- Added a two-target component regression: when A is active and B starts, both popover send controls remain disabled.
+- Verification: `npm test -- tests/model/comments.test.ts tests/server/api.test.ts tests/server/agentRoutes.test.ts tests/components/AnnotationThread.test.ts tests/components/AnnotationRail.test.ts` passed (78 tests); `npm run typecheck` passed.
