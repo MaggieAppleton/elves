@@ -180,3 +180,33 @@ test('closing an annotation rail restores split view', async ({ page, request })
   await page.getByRole('button', { name: 'Close annotation' }).click()
   await expect(page.getByTestId('draft-divider')).toBeVisible()
 })
+
+test('an annotation reply streams then persists Claude’s answer', async ({ page, request }) => {
+  await addCardAndComment(page, request, { type: 'needs-evidence', text: 'This claim needs a source.' })
+
+  await page.getByTestId('annotation-pin').click()
+  const rail = page.getByTestId('annotation-rail')
+  const reply = 'Which source should support this claim?'
+  await rail.getByLabel('Reply to annotation').fill(reply)
+  await rail.getByRole('button', { name: 'Send reply' }).click()
+
+  await expect(rail).toContainText(reply)
+  await expect(rail).toContainText('Stub is checking likely sources…')
+  await expect(rail.getByRole('button', { name: 'Replying…' })).toBeDisabled()
+  await expect(rail).toContainText('Stub annotation reply: Which source should support this claim?')
+  const nextReply = rail.getByLabel('Reply to annotation')
+  await expect(nextReply).toBeEnabled()
+  await nextReply.fill('Please suggest the strongest source.')
+  await expect(rail.getByRole('button', { name: 'Send reply' })).toBeEnabled()
+
+  const [cardId] = await serverCardIds(request, projectId)
+  await expect.poll(async () => {
+    const snapshot = await (await request.get(`${BASE}/projects/${projectId}/canvas`)).json()
+    const card = (snapshot.document?.store ?? snapshot.document?.records ?? {})[cardId]
+    return card?.props?.comments?.[0]?.messages?.map((message: { author: string; text: string }) => `${message.author}:${message.text}`)
+  }).toEqual([
+    'claude:This claim needs a source.',
+    'user:Which source should support this claim?',
+    'claude:Stub annotation reply: Which source should support this claim?',
+  ])
+})
