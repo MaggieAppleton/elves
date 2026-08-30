@@ -28,19 +28,22 @@
 .elves-annotation-thread__message[data-author="user"] { padding-left: 10px; border-left: 2px solid var(--elves-primary); }
 .elves-annotation-thread__message-author { display: block; margin-bottom: 2px; color: var(--elves-ink-faint); font-size: 11px; font-weight: 600; }
 .elves-annotation-thread__reply { position: relative; }
-.elves-annotation-thread__reply textarea { box-sizing: border-box; width: 100%; min-height: 76px; padding: 9px 43px 9px 10px; border: 1px solid var(--elves-border-strong); border-radius: 8px; resize: vertical; background: var(--elves-surface); color: var(--elves-ink); font: 13px/1.45 var(--elves-card-font); }
+.elves-annotation-thread__reply-trigger { align-self: flex-end; display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--elves-border-strong); border-radius: 50%; background: var(--elves-surface); color: var(--elves-ink-soft); cursor: pointer; }
+.elves-annotation-thread__reply textarea { box-sizing: border-box; width: 100%; min-height: 76px; padding: 9px 43px 9px 10px; border: 1px solid var(--elves-border-strong); border-radius: 8px; resize: none; background: var(--elves-surface); color: var(--elves-ink); font: 13px/1.45 var(--elves-card-font); }
 .elves-annotation-thread__reply textarea:focus-visible { outline: none; border-color: var(--elves-primary); box-shadow: 0 0 0 3px var(--elves-primary-tint); }
 .elves-annotation-thread__send { position: absolute; right: 8px; bottom: 8px; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: var(--elves-primary); color: var(--elves-on-primary, #fff); cursor: pointer; }
+.elves-annotation-thread__reply-resize { position: absolute; right: -4px; bottom: -4px; width: 14px; height: 14px; padding: 0; border: 0; background: repeating-linear-gradient(135deg, transparent 0 3px, var(--elves-ink-faint) 3px 4px); cursor: ns-resize; }
 .elves-annotation-thread__error { color: var(--elves-danger, #b42318); font-size: 12px; }
 .elves-annotation-thread__close { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--elves-ink-faint); cursor: pointer; }
 .elves-annotation-thread__resolve { display: inline-flex; align-items: center; gap: 4px; min-height: 26px; padding: 4px 7px; border: 1px solid var(--elves-border-strong); border-radius: 6px; background: transparent; color: var(--elves-ink-soft); font: 600 12px var(--elves-card-font); cursor: pointer; }
 .elves-annotation-thread__retry { display: inline-flex; align-items: center; gap: 4px; min-height: 26px; padding: 4px 7px; border: 1px solid var(--elves-border-strong); border-radius: 6px; background: transparent; color: var(--elves-ink-soft); font: 600 12px var(--elves-card-font); cursor: pointer; }
 .elves-annotation-thread__resolve:hover:not(:disabled), .elves-annotation-thread__retry:hover:not(:disabled) { background: var(--elves-tertiary); color: var(--elves-ink); }
 .elves-annotation-thread__resolve:disabled, .elves-annotation-thread__retry:disabled { opacity: .52; cursor: default; }
-.elves-annotation-thread__close:hover:not(:disabled) { background: var(--elves-tertiary); color: var(--elves-ink); }
+.elves-annotation-thread__close:hover:not(:disabled), .elves-annotation-thread__reply-trigger:hover:not(:disabled) { background: var(--elves-tertiary); color: var(--elves-ink); }
+.elves-annotation-thread__reply-resize:hover:not(:disabled) { opacity: .75; }
 .elves-annotation-thread__send:hover:not(:disabled) { background: var(--elves-primary-strong); }
-.elves-annotation-thread__send:disabled { opacity: .52; cursor: default; }
-.elves-annotation-thread__resolve:focus-visible, .elves-annotation-thread__retry:focus-visible, .elves-annotation-thread__close:focus-visible, .elves-annotation-thread__send:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring); }
+.elves-annotation-thread__send:disabled, .elves-annotation-thread__reply-trigger:disabled, .elves-annotation-thread__reply-resize:disabled { opacity: .52; cursor: default; }
+.elves-annotation-thread__resolve:focus-visible, .elves-annotation-thread__retry:focus-visible, .elves-annotation-thread__close:focus-visible, .elves-annotation-thread__send:focus-visible, .elves-annotation-thread__reply-trigger:focus-visible, .elves-annotation-thread__reply-resize:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring); }
 
 .elves-annotation-pin-wrap {
   position: absolute;
