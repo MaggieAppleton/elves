@@ -640,6 +640,86 @@ Rules:
 Corrected sentence:`
 }
 
+/**
+ * The instruction for repairing a CHAT REPLY, as opposed to a margin note.
+ *
+ * Different job, different prompt. A note is one sentence and the repair is
+ * nearly always a deletion; a reply is several sentences of prose that has to
+ * survive intact while a few phrases come out of it. The overriding risk here
+ * is a small model "helpfully" summarising, so the instruction leans hard on
+ * keeping everything and the acceptance check enforces a length floor.
+ */
+export function buildReplyRepairPrompt(text: string, hits: StyleHit[]): string {
+  const offences = [...new Set(hits.map((h) => `"${h.text.trim()}"`))].join(', ')
+  return `You are copy-editing a message someone wrote. Remove the cliché phrases and change nothing else.
+
+The message:
+${text}
+
+Remove these phrases: ${offences}
+
+Rules:
+- Keep EVERY point, fact, number, name, file path and quotation. This is not a summary.
+- Keep roughly the same length. Do not condense. Do not drop sentences.
+- Delete only the listed phrases, and repair the grammar where deleting one leaves a gap.
+- Keep the same voice and point of view: it is a message written TO the reader.
+- Do not add new ideas, opinions, or a preamble. Do not comment on your edits.
+- Reply with ONLY the edited message.
+
+Edited message:`
+}
+
+/**
+ * The leash on a chat-reply repair.
+ *
+ * Looser than acceptRepair in one way and stricter in another. Looser: a reply
+ * may legitimately still break a rule after editing — several sentences can
+ * carry several offences and a small model rarely gets all of them — so the
+ * bar is that it must be BETTER, not perfect. Stricter: there is a length
+ * floor, because the failure mode that actually shows up is the model quietly
+ * summarising four paragraphs into one and losing what the user asked for.
+ *
+ * Nothing here rejects into an error. This path is fail-open: a repair that
+ * misses the bar is discarded and the agent's original words are saved, which
+ * is exactly what happens today.
+ */
+export function acceptReplyRepair(original: string, repaired: string): RepairVerdict {
+  const clean = repaired.trim()
+  if (!clean) return { ok: false, reason: 'empty' }
+
+  const before = words(original).length
+  const after = words(clean).length
+  // The floor is derived, not guessed. We know exactly how many words we asked
+  // the model to delete, so what should survive is everything else — minus a
+  // little slack for the rewording that closing a gap needs. A flat percentage
+  // cannot do this job: on a long reply the clichés are a rounding error, while
+  // on a two-sentence one they can be a quarter of the words, and any single
+  // threshold is wrong at one end or the other.
+  const deletable = lintProse(original).reduce((n, h) => n + words(h.text).length, 0)
+  if (after < (before - deletable) * 0.85) return { ok: false, reason: 'too-short' }
+  if (after > before * 1.05) return { ok: false, reason: 'longer' }
+
+  for (const n of original.match(/\d[\d.,:%]*/g) ?? []) {
+    if (!clean.includes(n)) return { ok: false, reason: 'lost-a-number' }
+  }
+  for (const q of original.match(/"[^"]*"|“[^”]*”/g) ?? []) {
+    if (!clean.includes(q)) return { ok: false, reason: 'lost-a-quote' }
+  }
+
+  const beforeWords = contentWords(original)
+  const afterWords = contentWords(clean)
+  const invented = [...afterWords].filter((w) => !beforeWords.has(w)).length
+  if (afterWords.size > 0 && invented / afterWords.size > 0.15) {
+    return { ok: false, reason: 'invented-content' }
+  }
+
+  // The whole point: it has to be an improvement, even if not a clean sweep.
+  const wasHits = lintProse(original).length
+  const nowHits = lintProse(clean).length
+  if (nowHits >= wasHits) return { ok: false, reason: 'still-breaks-the-rules' }
+  return { ok: true }
+}
+
 /** Why a repair was thrown away. Surfaced in logs so a bad model is visible. */
 export type RepairRejection =
   | 'empty'
@@ -650,11 +730,25 @@ export type RepairRejection =
   | 'lost-a-quote'
   | 'invented-content'
   | 'broken-seam'
+  | 'title-cased'
   | 'still-breaks-the-rules'
 
 export type RepairVerdict = { ok: true } | { ok: false; reason: RepairRejection }
 
 const words = (s: string) => s.match(/\S+/g) ?? []
+
+/**
+ * Three or more capitalised words past the first, none of which look like a
+ * proper noun's neighbours. Crude on purpose: it only has to separate ordinary
+ * prose from Title Case, and a note that really is mostly proper nouns is rare
+ * enough that falling back to a rejection there costs nothing.
+ */
+function titleCased(s: string): boolean {
+  const w = words(s).slice(1).filter((x) => /^[A-Za-z]/.test(x))
+  if (w.length < 3) return false
+  const caps = w.filter((x) => /^[A-Z]/.test(x)).length
+  return caps >= 3 && caps / w.length > 0.6
+}
 // Curly and straight apostrophes must compare equal, or "that's" and "that’s"
 // read as two different words and an honest repair looks like an invented one.
 const contentWords = (s: string) =>
@@ -710,6 +804,11 @@ export function acceptRepair(original: string, repaired: string): RepairVerdict 
   if (/[;,]\s+(?:The|This|That|These|Those|A|An|It|We|You|They|There)\b/.test(clean)) {
     return { ok: false, reason: 'broken-seam' }
   }
+
+  // Some models answer a copy-editing request by Title Casing The Whole Thing.
+  // Observed from qwen2.5:7b: "The Third Card Repeats The First." Every word is
+  // the original's and it passes every other check, so catch it on the shape.
+  if (titleCased(clean) && !titleCased(original)) return { ok: false, reason: 'title-cased' }
 
   if (lintProse(clean).length) return { ok: false, reason: 'still-breaks-the-rules' }
   return { ok: true }

@@ -4,6 +4,7 @@ import {
   type RepairRejection,
   type StyleHit,
 } from '../src/model/houseStyle'
+import { DEFAULT_OLLAMA_HOST, DEFAULT_OLLAMA_MODEL, ollamaGenerate } from '../server/ollamaClient'
 
 /**
  * Local repair of a note that breaks house style.
@@ -68,8 +69,8 @@ export class OllamaRepairer implements Repairer {
   private breakerUntil = 0
 
   constructor(
-    private readonly host = process.env.OLLAMA_HOST ?? 'http://localhost:11434',
-    private readonly model = process.env.OLLAMA_MODEL ?? 'llama3.2',
+    private readonly host = DEFAULT_OLLAMA_HOST,
+    private readonly model = DEFAULT_OLLAMA_MODEL,
     // Shorter than the summarizer's 20s: a gist is written in the background,
     // but a repair sits in the write path with the agent waiting on the tool
     // result. Past a few seconds, rejecting is the faster answer.
@@ -120,28 +121,7 @@ export class OllamaRepairer implements Repairer {
 
   /** The one network call. Protected so a test can stand in for the host. */
   protected async generate(prompt: string): Promise<string | null> {
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), this.timeoutMs)
-    try {
-      const res = await fetch(`${this.host}/api/generate`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        signal: ctrl.signal,
-        body: JSON.stringify({
-          model: this.model,
-          prompt,
-          stream: false,
-          options: { temperature: 0 },
-        }),
-      })
-      if (!res.ok) return null
-      const body = (await res.json()) as { response?: unknown }
-      return typeof body.response === 'string' ? body.response : null
-    } catch {
-      return null
-    } finally {
-      clearTimeout(timer)
-    }
+    return ollamaGenerate({ host: this.host, model: this.model, prompt, timeoutMs: this.timeoutMs })
   }
 }
 
