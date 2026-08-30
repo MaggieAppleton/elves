@@ -16,18 +16,6 @@ const openComposer = (tree: ReactTestRenderer, index = 0) => {
     .props.onClick())
 }
 
-const composerNodeMock = (element: { type: unknown }) => {
-  if (element.type === 'textarea') {
-    return {
-      scrollHeight: 76,
-      style: {},
-      getBoundingClientRect: () => ({ height: 76 }),
-    }
-  }
-  if (element.type === 'div') return { setPointerCapture: vi.fn() }
-  return null
-}
-
 test('preview has no reply, retry, resolve, or close controls', () => {
   const tree = create(createElement(AnnotationThread, {
     comment: {
@@ -125,68 +113,30 @@ test('thread header shows its typed icon and actions while messages retain autho
   expect(close.props['aria-label']).toBe('Close annotation thread')
 })
 
-test('reply sends and resets the composer, with an accessible resize grip', () => {
+test('reply composer has no resize grip and autosizes from its draft content', () => {
   const onReply = vi.fn()
+  const input = { scrollHeight: 104, style: {} as CSSStyleDeclaration }
   const tree = create(createElement(AnnotationThread, {
     comment: { id: 'c1', type: null, text: 'Needs evidence', resolved: false, author: 'claude' },
     mode: 'open', onReply,
-  }), { createNodeMock: composerNodeMock })
+  }), {
+    createNodeMock: (element) => element.type === 'textarea' ? input : null,
+  })
 
   openComposer(tree)
+  expect(tree.root.findAllByProps({
+    className: 'elves-annotation-thread__reply-resize',
+  })).toHaveLength(0)
+  expect(input.style.height).toBe('104px')
   const textarea = tree.root.findByType('textarea')
   act(() => textarea.props.onChange({ target: { value: 'A considered reply' } }))
-
-  const grip = tree.root.findByProps({ className: 'elves-annotation-thread__reply-resize' })
-  expect(grip.type).toBe('div')
-  expect(grip.props.role).toBe('separator')
-  expect(grip.props['aria-label']).toBe('Resize reply editor')
-  expect(grip.props['aria-orientation']).toBe('horizontal')
-  expect(grip.props['aria-valuemin']).toBe(76)
-  expect(grip.props['aria-valuenow']).toBe(76)
-  expect(grip.props['aria-valuetext']).toBe('76 pixels')
-  expect(grip.props['aria-disabled']).toBe(false)
-  expect(grip.props.tabIndex).toBe(0)
-  expect(grip.props.onPointerDown).toEqual(expect.any(Function))
-  expect(grip.props.onPointerMove).toEqual(expect.any(Function))
-  expect(grip.props.onPointerUp).toEqual(expect.any(Function))
-  expect(textarea.props.style).toMatchObject({ minHeight: '76px' })
-  const preventDefault = vi.fn()
-  act(() => grip.props.onKeyDown({ key: 'ArrowDown', preventDefault }))
-  expect(preventDefault).toHaveBeenCalledOnce()
-  expect(tree.root.findByType('textarea').props.style).toMatchObject({ minHeight: '84px' })
+  act(() => textarea.props.onChange({ target: { value: '' } }))
+  expect(input.style.height).toBe('76px')
 
   act(() => tree.root.findByProps({ className: 'elves-annotation-thread__reply' })
     .props.onSubmit({ preventDefault: vi.fn() }))
   expect(onReply).toHaveBeenCalledWith('A considered reply')
   expect(tree.root.findAllByType('textarea')).toHaveLength(0)
-})
-
-test('the resize separator changes the reply minimum through pointer dragging', () => {
-  const pointerCapture = vi.fn()
-  const tree = create(createElement(AnnotationThread, {
-    comment: { id: 'c1', type: null, text: 'Needs evidence', resolved: false, author: 'claude' },
-    mode: 'open', onReply: vi.fn(),
-  }), {
-    createNodeMock: (element) => {
-      if (element.type === 'textarea') {
-        return {
-          scrollHeight: 76,
-          style: {},
-          getBoundingClientRect: () => ({ height: 76 }),
-        }
-      }
-      if (element.type === 'div') return { setPointerCapture: pointerCapture }
-      return null
-    },
-  })
-
-  openComposer(tree)
-  const grip = tree.root.findByProps({ className: 'elves-annotation-thread__reply-resize' })
-  act(() => grip.props.onPointerDown({ pointerId: 1, clientY: 100, currentTarget: { setPointerCapture: pointerCapture } }))
-  expect(pointerCapture).toHaveBeenCalledWith(1)
-  act(() => grip.props.onPointerMove({ pointerId: 1, clientY: 124 }))
-  expect(tree.root.findByType('textarea').props.style).toMatchObject({ minHeight: '100px' })
-  act(() => grip.props.onPointerUp({ pointerId: 1 }))
 })
 
 test('thread renders durable replies and only disables its own send control while running', () => {
@@ -334,16 +284,6 @@ test('a canvas lock disables a populated reply form without discarding its draft
   })))
   expect(tree.root.findByType('textarea').props).toMatchObject({ value: 'My saved draft', disabled: true })
   expect(tree.root.findByProps({ className: 'elves-annotation-thread__send' }).props.disabled).toBe(true)
-  expect(tree.root.findByProps({ className: 'elves-annotation-thread__reply-resize' }).props).toMatchObject({
-    'aria-disabled': true, tabIndex: -1,
-  })
-  const disabledGrip = tree.root.findByProps({ className: 'elves-annotation-thread__reply-resize' })
-  const disabledPreventDefault = vi.fn()
-  act(() => disabledGrip.props.onKeyDown({ key: 'ArrowDown', preventDefault: disabledPreventDefault }))
-  act(() => disabledGrip.props.onPointerDown({ pointerId: 1, clientY: 100, currentTarget: { setPointerCapture: vi.fn() } }))
-  act(() => disabledGrip.props.onPointerMove({ pointerId: 1, clientY: 124 }))
-  expect(disabledPreventDefault).not.toHaveBeenCalled()
-  expect(tree.root.findByType('textarea').props.style).toMatchObject({ minHeight: '76px' })
 })
 
 test('retry is unavailable while its thread is running or canvas mutations are locked', () => {
@@ -443,9 +383,7 @@ test('thread controls use the embedded composer and typed header layout', () => 
   expect(css).toMatch(/\.elves-annotation-thread__send\s*\{[^}]*right:\s*8px[^}]*bottom:\s*8px/s)
   expect(css).toMatch(/\.elves-annotation-thread__reply\s+textarea\s*\{[^}]*padding:\s*9px 43px 9px 10px/s)
   expect(css).toMatch(/\.elves-annotation-thread__reply\s+textarea\s*\{[^}]*resize:\s*none/s)
-  expect(css).toMatch(/\.elves-annotation-thread__reply-resize\s*\{[^}]*right:\s*-6px[^}]*bottom:\s*-6px/s)
-  expect(css).toMatch(/\.elves-annotation-thread__reply-resize\s*\{[^}]*width:\s*12px[^}]*height:\s*12px/s)
-  expect(css).toMatch(/\.elves-annotation-thread__reply-resize\s*\{[^}]*touch-action:\s*none/s)
+  expect(css).not.toContain('.elves-annotation-thread__reply-resize')
   expect(css).toMatch(/\.elves-annotation-thread__reply\s+textarea:focus-visible\s*\{[^}]*outline:\s*none/s)
   expect(css).toMatch(/\.elves-annotation-thread__reply\s+textarea:focus-visible\s*\{[^}]*border-color:\s*var\(--elves-primary\)/s)
   expect(css).toMatch(/\.elves-annotation-thread__reply\s+textarea:focus-visible\s*\{[^}]*box-shadow:\s*0 0 0 3px var\(--elves-primary-tint\)/s)
