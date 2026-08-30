@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent, type PointerEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react'
 import {
-  ArrowsLeftRight, Buildings, ChartLineDown, ChatCircleDots, Checks, ImageSquare,
+  ArrowBendUpLeft, ArrowsLeftRight, Buildings, ChartLineDown, ChatCircleDots, Checks, ImageSquare,
   Link, PaperPlaneRight, Question, Scissors, Warning, X,
 } from '@phosphor-icons/react'
 import { authorInfo } from '../shapes/agents'
@@ -32,6 +32,8 @@ export interface AnnotationThreadProps {
   maxHeight?: number
 }
 
+const REPLY_MIN_HEIGHT = 76
+
 function agentName(id: string): string {
   return authorInfo(id)?.name ?? id
 }
@@ -54,17 +56,55 @@ export function AnnotationThread({
   const token = annotationPin(comment.type)
   const TypeIcon = PIN_ICONS[token.icon]
   const [reply, setReply] = useState('')
+  const [composerOpen, setComposerOpen] = useState(false)
+  const [replyMinimumHeight, setReplyMinimumHeight] = useState(REPLY_MIN_HEIGHT)
   const sending = useRef(false)
+  const replyInputRef = useRef<HTMLTextAreaElement>(null)
+  const replyResize = useRef<{ pointerId: number, startY: number, startHeight: number } | null>(null)
   const messages = threadMessages(comment)
   useEffect(() => {
     if (!running) sending.current = false
   }, [running])
+  useLayoutEffect(() => {
+    const input = replyInputRef.current
+    if (!composerOpen || !input) return
+    input.style.height = 'auto'
+    input.style.height = `${Math.max(input.scrollHeight, replyMinimumHeight)}px`
+  }, [composerOpen, reply, replyMinimumHeight])
+
+  const beginReplyResize = (event: PointerEvent<HTMLButtonElement>) => {
+    if (disabled || running) return
+    const inputHeight = replyInputRef.current?.getBoundingClientRect().height ?? replyMinimumHeight
+    replyResize.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startHeight: Math.max(REPLY_MIN_HEIGHT, inputHeight),
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+  const resizeReply = (event: PointerEvent<HTMLButtonElement>) => {
+    if (disabled || running) return
+    const resize = replyResize.current
+    if (!resize || resize.pointerId !== event.pointerId) return
+    setReplyMinimumHeight(Math.max(REPLY_MIN_HEIGHT, resize.startHeight + event.clientY - resize.startY))
+  }
+  const endReplyResize = (event: PointerEvent<HTMLButtonElement>) => {
+    if (replyResize.current?.pointerId === event.pointerId) replyResize.current = null
+  }
+  const resizeReplyWithKeyboard = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+    event.preventDefault()
+    if (disabled || running) return
+    setReplyMinimumHeight((height) => Math.max(REPLY_MIN_HEIGHT, height + (event.key === 'ArrowDown' ? 8 : -8)))
+  }
   const send = (event: FormEvent) => {
     event.preventDefault()
     const text = reply.trim()
     if (!text || disabled || running || sending.current || !onReply) return
     sending.current = true
     setReply('')
+    setReplyMinimumHeight(REPLY_MIN_HEIGHT)
+    setComposerOpen(false)
     onReply(text)
   }
   return (
@@ -100,12 +140,37 @@ export function AnnotationThread({
         ))}
         {streamingText && <p className="elves-annotation-thread__message" data-author="claude"><span className="elves-annotation-thread__message-author">{agentName('claude')}</span><span className="elves-annotation-thread__text">{streamingText}</span></p>}
       </div>
-      {!preview && onReply && <form className="elves-annotation-thread__reply" onSubmit={send}>
+      {!preview && onReply && <button
+        type="button"
+        className="elves-annotation-thread__reply-trigger"
+        aria-label="Reply to annotation"
+        hidden={composerOpen}
+        disabled={disabled || running}
+        onClick={() => setComposerOpen(true)}
+      >
+        <ArrowBendUpLeft aria-hidden="true" size={15} weight="bold" />
+      </button>}
+      {!preview && onReply && composerOpen && <form className="elves-annotation-thread__reply" onSubmit={send}>
         <textarea
           aria-label="Reply to annotation"
+          autoFocus
+          ref={replyInputRef}
           value={reply}
           disabled={disabled || running}
           onChange={(event) => setReply(event.target.value)}
+          style={{ minHeight: `${replyMinimumHeight}px` }}
+        />
+        <button
+          type="button"
+          className="elves-annotation-thread__reply-resize"
+          aria-label="Resize reply editor"
+          aria-orientation="horizontal"
+          disabled={disabled || running}
+          onPointerDown={beginReplyResize}
+          onPointerMove={resizeReply}
+          onPointerUp={endReplyResize}
+          onPointerCancel={endReplyResize}
+          onKeyDown={resizeReplyWithKeyboard}
         />
         <button
           type="submit"
