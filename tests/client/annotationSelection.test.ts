@@ -50,3 +50,11 @@ test('hover target is temporary and separate from open targets', () => {
   setAnnotationHover(null)
   expect(annotationHoverTarget()).toBeNull()
 })
+
+test('opening a hovered target clears its hover state', () => {
+  clearAnnotationPresentations()
+  setAnnotationHover(a)
+  requestAnnotationOpen(a)
+  expect(annotationOpenTargets()).toEqual([a])
+  expect(annotationHoverTarget()).toBeNull()
+})

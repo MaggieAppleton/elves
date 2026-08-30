@@ -65,6 +65,7 @@ export function openAnnotationThread(target: AnnotationTarget): void {
   const key = annotationTargetKey(target)
   if (openTargets.has(key)) return
   openTargets.set(key, target)
+  if (hoverTarget && annotationTargetKey(hoverTarget) === key) hoverTarget = null
   emitTargets()
 }
 
@@ -74,6 +75,7 @@ export function promoteAnnotationThread(target: AnnotationTarget): void {
   if (!current) return
   openTargets.delete(key)
   openTargets.set(key, current)
+  if (hoverTarget && annotationTargetKey(hoverTarget) === key) hoverTarget = null
   emitTargets()
 }
 
