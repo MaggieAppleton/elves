@@ -72,7 +72,7 @@ export function AnnotationThread({
     input.style.height = `${Math.max(input.scrollHeight, replyMinimumHeight)}px`
   }, [composerOpen, reply, replyMinimumHeight])
 
-  const beginReplyResize = (event: PointerEvent<HTMLButtonElement>) => {
+  const beginReplyResize = (event: PointerEvent<HTMLDivElement>) => {
     if (disabled || running) return
     const inputHeight = replyInputRef.current?.getBoundingClientRect().height ?? replyMinimumHeight
     replyResize.current = {
@@ -82,19 +82,20 @@ export function AnnotationThread({
     }
     event.currentTarget.setPointerCapture(event.pointerId)
   }
-  const resizeReply = (event: PointerEvent<HTMLButtonElement>) => {
+  const resizeReply = (event: PointerEvent<HTMLDivElement>) => {
     if (disabled || running) return
     const resize = replyResize.current
     if (!resize || resize.pointerId !== event.pointerId) return
     setReplyMinimumHeight(Math.max(REPLY_MIN_HEIGHT, resize.startHeight + event.clientY - resize.startY))
   }
-  const endReplyResize = (event: PointerEvent<HTMLButtonElement>) => {
+  const endReplyResize = (event: PointerEvent<HTMLDivElement>) => {
+    if (disabled || running) return
     if (replyResize.current?.pointerId === event.pointerId) replyResize.current = null
   }
-  const resizeReplyWithKeyboard = (event: KeyboardEvent<HTMLButtonElement>) => {
+  const resizeReplyWithKeyboard = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (disabled || running) return
     if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
     event.preventDefault()
-    if (disabled || running) return
     setReplyMinimumHeight((height) => Math.max(REPLY_MIN_HEIGHT, height + (event.key === 'ArrowDown' ? 8 : -8)))
   }
   const send = (event: FormEvent) => {
@@ -140,11 +141,10 @@ export function AnnotationThread({
         ))}
         {streamingText && <p className="elves-annotation-thread__message" data-author="claude"><span className="elves-annotation-thread__message-author">{agentName('claude')}</span><span className="elves-annotation-thread__text">{streamingText}</span></p>}
       </div>
-      {!preview && onReply && <button
+      {!preview && onReply && !composerOpen && <button
         type="button"
         className="elves-annotation-thread__reply-trigger"
         aria-label="Reply to annotation"
-        hidden={composerOpen}
         disabled={disabled || running}
         onClick={() => setComposerOpen(true)}
       >
@@ -160,12 +160,16 @@ export function AnnotationThread({
           onChange={(event) => setReply(event.target.value)}
           style={{ minHeight: `${replyMinimumHeight}px` }}
         />
-        <button
-          type="button"
+        <div
+          role="separator"
           className="elves-annotation-thread__reply-resize"
           aria-label="Resize reply editor"
           aria-orientation="horizontal"
-          disabled={disabled || running}
+          aria-valuemin={REPLY_MIN_HEIGHT}
+          aria-valuenow={replyMinimumHeight}
+          aria-valuetext={`${replyMinimumHeight} pixels`}
+          aria-disabled={disabled || running}
+          tabIndex={disabled || running ? -1 : 0}
           onPointerDown={beginReplyResize}
           onPointerMove={resizeReply}
           onPointerUp={endReplyResize}
