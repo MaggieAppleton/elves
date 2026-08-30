@@ -1,13 +1,13 @@
-import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent, type PointerEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent } from 'react'
 import {
-  ArrowsLeftRight, Buildings, ChartLineDown, ChatCircleDots, ImageSquare,
-  Link, Question, Scissors, Warning,
+  ArrowBendUpLeft, ArrowsLeftRight, Buildings, ChartLineDown, ChatCircleDots, Checks, ImageSquare,
+  Link, PaperPlaneRight, Question, Scissors, Warning, X,
 } from '@phosphor-icons/react'
-import { agentInfo } from '../shapes/agents'
+import { authorInfo } from '../shapes/agents'
 import { annotationPin, PIN_SIZE, type AnnotationPinIcon } from '../model/annotationPins'
 import { threadMessages } from '../model/comments'
 import { commentGist } from '../model/summary'
-import type { Comment, CommentType } from '../model/types'
+import type { Comment } from '../model/types'
 import {
   annotationTargetKey, dismissAnnotationPopoverSoon, requestAnnotationOpen,
   setAnnotationHover, type AnnotationTarget,
@@ -32,12 +32,10 @@ export interface AnnotationThreadProps {
   maxHeight?: number
 }
 
-function annotationType(type: CommentType | null): string {
-  return annotationPin(type).label
-}
+const REPLY_MIN_HEIGHT = 76
 
 function agentName(id: string): string {
-  return agentInfo(id)?.name ?? id
+  return authorInfo(id)?.name ?? id
 }
 
 export function AnnotationThread({
@@ -55,19 +53,29 @@ export function AnnotationThread({
   maxHeight,
 }: AnnotationThreadProps) {
   const preview = mode === 'preview'
-  const type = annotationType(comment.type)
+  const token = annotationPin(comment.type)
+  const TypeIcon = PIN_ICONS[token.icon]
   const [reply, setReply] = useState('')
+  const [composerOpen, setComposerOpen] = useState(false)
   const sending = useRef(false)
+  const replyInputRef = useRef<HTMLTextAreaElement>(null)
   const messages = threadMessages(comment)
   useEffect(() => {
     if (!running) sending.current = false
   }, [running])
+  useLayoutEffect(() => {
+    const input = replyInputRef.current
+    if (!composerOpen || !input) return
+    input.style.height = 'auto'
+    input.style.height = `${Math.max(input.scrollHeight, REPLY_MIN_HEIGHT)}px`
+  }, [composerOpen, reply])
   const send = (event: FormEvent) => {
     event.preventDefault()
     const text = reply.trim()
     if (!text || disabled || running || sending.current || !onReply) return
     sending.current = true
     setReply('')
+    setComposerOpen(false)
     onReply(text)
   }
   return (
@@ -76,11 +84,24 @@ export function AnnotationThread({
       data-testid="annotation-thread"
       style={maxHeight === undefined ? undefined : { maxHeight }}
     >
-      <div className="elves-annotation-thread__meta">
-        <span className="elves-annotation-thread__type">{type}</span>
-        <span>{agentName(comment.author)}</span>
-        {attribution && <span>{attribution}</span>}
-      </div>
+      <header className="elves-annotation-thread__header">
+        <div className="elves-annotation-thread__meta">
+          <span className="elves-annotation-thread__type" data-type={token.tone}>
+            <TypeIcon aria-hidden="true" size={14} weight="bold" />
+            {token.label}
+          </span>
+          {attribution && <span>{attribution}</span>}
+        </div>
+        {!preview && (onResolve || onClose) && <div className="elves-annotation-thread__actions">
+          {onResolve && <button type="button" className="elves-annotation-thread__resolve" aria-label={`Resolve ${token.label} comment`} disabled={disabled} onClick={onResolve}>
+            <Checks aria-hidden="true" size={14} weight="bold" />
+            Resolve
+          </button>}
+          {onClose && <button type="button" className="elves-annotation-thread__close" aria-label="Close annotation thread" onClick={onClose}>
+            <X aria-hidden="true" size={15} weight="bold" />
+          </button>}
+        </div>}
+      </header>
       <div className="elves-annotation-thread__messages">
         {messages.map((message) => (
           <p key={message.id} className="elves-annotation-thread__message" data-author={message.author}>
@@ -88,38 +109,52 @@ export function AnnotationThread({
             <span className="elves-annotation-thread__text">{message.text}</span>
           </p>
         ))}
-        {streamingText && <p className="elves-annotation-thread__message" data-author="claude"><span className="elves-annotation-thread__text">{streamingText}</span></p>}
+        {streamingText && <p className="elves-annotation-thread__message" data-author="claude"><span className="elves-annotation-thread__message-author">{agentName('claude')}</span><span className="elves-annotation-thread__text">{streamingText}</span></p>}
       </div>
-      {!preview && onReply && <form className="elves-annotation-thread__reply" onSubmit={send}>
+      {!preview && onReply && !composerOpen && <button
+        type="button"
+        className="elves-annotation-thread__reply-trigger"
+        aria-label="Reply to annotation"
+        disabled={disabled || running}
+        onClick={() => setComposerOpen(true)}
+      >
+        <ArrowBendUpLeft aria-hidden="true" size={15} weight="bold" />
+      </button>}
+      {!preview && onReply && composerOpen && <form className="elves-annotation-thread__reply" onSubmit={send}>
         <textarea
           aria-label="Reply to annotation"
+          autoFocus
+          ref={replyInputRef}
           value={reply}
           disabled={disabled || running}
           onChange={(event) => setReply(event.target.value)}
+          style={{}}
         />
-        <button type="submit" className="elves-annotation-thread__send" disabled={disabled || running || !reply.trim()}>
-          {running ? 'Replying…' : 'Send reply'}
+        <button
+          type="submit"
+          className="elves-annotation-thread__send"
+          aria-label={running ? 'Replying to annotation' : 'Send reply'}
+          disabled={disabled || running || !reply.trim()}
+        >
+          <PaperPlaneRight aria-hidden="true" size={15} weight="bold" />
         </button>
       </form>}
-      {!preview && error && <div className="elves-annotation-thread__error" role="alert">{error} {onRetry && <button
-        type="button"
-        disabled={disabled || running}
-        onClick={() => {
-          if (!disabled && !running) onRetry()
-        }}
-      >
-        Retry
-      </button>}</div>}
-      {!preview && onResolve && <button
-        type="button"
-        className="elves-annotation-thread__resolve"
-        aria-label={`Resolve ${type} comment`}
-        disabled={disabled || !onResolve}
-        onClick={onResolve}
-      >
-        Resolve comment
-      </button>}
-      {!preview && onClose && <button type="button" className="elves-annotation-thread__close" aria-label="Close annotation thread" onClick={onClose}>×</button>}
+      {!preview && error && <div className="elves-annotation-thread__error" role="alert">
+        <div className="elves-annotation-thread__error-message">
+          <Warning aria-hidden="true" size={16} weight="fill" />
+          {error}
+        </div>
+        {onRetry && <button
+          type="button"
+          className="elves-annotation-thread__retry"
+          disabled={disabled || running}
+          onClick={() => {
+            if (!disabled && !running) onRetry()
+          }}
+        >
+          Retry
+        </button>}
+      </div>}
     </article>
   )
 }
@@ -155,7 +190,7 @@ export function AnnotationPin({ comment, offsetY = 0, zoom = 1, className, targe
     left: className?.includes('elves-feedback-pin') ? 0 : undefined,
     '--annotation-pin-scale': scale,
   } as CSSProperties
-  const stopPointer = (event: PointerEvent) => stopEvent(event)
+  const stopPointer = (event: PropagationEvent) => stopEvent(event)
   const open = (event: MouseEvent) => {
     stopEvent(event)
     if (target) requestAnnotationOpen(target)
@@ -194,7 +229,9 @@ export function AnnotationPin({ comment, offsetY = 0, zoom = 1, className, targe
   )
 }
 
-function stopEvent(event: PointerEvent | MouseEvent) {
+type PropagationEvent = { stopPropagation: () => void }
+
+function stopEvent(event: PropagationEvent | MouseEvent) {
   event.stopPropagation()
 }
 
