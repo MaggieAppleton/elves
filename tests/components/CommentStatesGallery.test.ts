@@ -8,6 +8,7 @@ import {
   CommentStatesGallery,
   isCommentStatesRoute,
 } from '../../src/components/CommentStatesGallery'
+import { AnnotationThread } from '../../src/components/AnnotationThread'
 
 test('recognises only the isolated comment states route', () => {
   expect(isCommentStatesRoute('/comment-states')).toBe(true)
@@ -50,6 +51,7 @@ test('gallery exposes streaming, retry and reply-locked examples without an API'
   expect(tree.root.findAllByProps({ 'data-state': 'streaming' })).toHaveLength(1)
   expect(tree.root.findAllByProps({ 'data-state': 'failed' })).toHaveLength(1)
   expect(tree.root.findAllByProps({ 'data-state': 'locked' })).toHaveLength(1)
+  expect(tree.root.findAllByType(AnnotationThread).length).toBeGreaterThan(0)
   const reply = tree.root.findAllByProps({ className: 'elves-annotation-thread__reply-trigger' })[0]
   expect(reply).toBeTruthy()
   act(() => reply.props.onClick())
