@@ -1,6 +1,6 @@
 import { createElement } from 'react'
 import { readFileSync } from 'node:fs'
-import { act, create } from 'react-test-renderer'
+import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { expect, test, vi } from 'vitest'
 import { AnnotationPin, AnnotationThread } from '../../src/components/AnnotationThread'
 import {
@@ -9,6 +9,12 @@ import {
 } from '../../src/client/annotationSelection'
 import { foregroundThreadProps } from '../../src/components/AnnotationPopoverLayer'
 import { annotationPin } from '../../src/model/annotationPins'
+
+const openComposer = (tree: ReactTestRenderer, index = 0) => {
+  act(() => tree.root
+    .findAllByProps({ className: 'elves-annotation-thread__reply-trigger' })[index]
+    .props.onClick())
+}
 
 test('preview has no reply, retry, resolve, or close controls', () => {
   const tree = create(createElement(AnnotationThread, {
@@ -41,7 +47,12 @@ test('open mode exposes reply, retry, resolve, and close actions', () => {
     error: 'The reply stopped.', onRetry: vi.fn(),
   }))
 
-  expect(tree.root.findByType('textarea')).toBeTruthy()
+  expect(tree.root.findAllByType('textarea')).toHaveLength(0)
+  const reply = tree.root.findByProps({ className: 'elves-annotation-thread__reply-trigger' })
+  expect(reply.props['aria-label']).toBe('Reply to annotation')
+  expect(reply.findAllByType('svg')).toHaveLength(1)
+  act(() => reply.props.onClick())
+  expect(tree.root.findByType('textarea').props.autoFocus).toBe(true)
   expect(tree.root.findByProps({ className: 'elves-annotation-thread__close' }).props['aria-label'])
     .toBe('Close annotation thread')
   const resolve = tree.root.findByProps({ className: 'elves-annotation-thread__resolve' })
@@ -66,6 +77,8 @@ test('thread header shows its typed icon and actions while messages retain autho
     },
     mode: 'open', onReply: vi.fn(), onResolve: vi.fn(), onClose: vi.fn(),
   }))
+
+  openComposer(tree)
 
   const header = tree.root.findByProps({ className: 'elves-annotation-thread__header' })
   const type = header.findByProps({ className: 'elves-annotation-thread__type' })
@@ -99,6 +112,27 @@ test('thread header shows its typed icon and actions while messages retain autho
   expect(close.props['aria-label']).toBe('Close annotation thread')
 })
 
+test('reply sends and resets the composer, with an accessible resize grip', () => {
+  const onReply = vi.fn()
+  const tree = create(createElement(AnnotationThread, {
+    comment: { id: 'c1', type: null, text: 'Needs evidence', resolved: false, author: 'claude' },
+    mode: 'open', onReply,
+  }))
+
+  openComposer(tree)
+  const textarea = tree.root.findByType('textarea')
+  act(() => textarea.props.onChange({ target: { value: 'A considered reply' } }))
+
+  const grip = tree.root.findByProps({ className: 'elves-annotation-thread__reply-resize' })
+  expect(grip.props['aria-label']).toBe('Resize reply editor')
+  expect(grip.props['aria-orientation']).toBe('horizontal')
+
+  act(() => tree.root.findByProps({ className: 'elves-annotation-thread__reply' })
+    .props.onSubmit({ preventDefault: vi.fn() }))
+  expect(onReply).toHaveBeenCalledWith('A considered reply')
+  expect(tree.root.findAllByType('textarea')).toHaveLength(0)
+})
+
 test('thread renders durable replies and only disables its own send control while running', () => {
   const tree = create(createElement(AnnotationThread, {
     comment: {
@@ -114,6 +148,9 @@ test('thread renders durable replies and only disables its own send control whil
     onReply: vi.fn(),
   }))
 
+  expect(tree.root.findAllByType('textarea')).toHaveLength(0)
+  expect(tree.root.findByProps({ className: 'elves-annotation-thread__reply-trigger' }).props.disabled).toBe(true)
+  openComposer(tree)
   expect(tree.root.findAllByType('textarea')).toHaveLength(1)
   expect(tree.root.findAllByProps({ className: 'elves-annotation-thread__message' })).toHaveLength(2)
   expect(tree.root.findByProps({ className: 'elves-annotation-thread__send' }).props.disabled).toBe(true)
@@ -143,6 +180,8 @@ test('simultaneous threads keep reply state isolated', () => {
     }),
   ))
 
+  openComposer(tree, 0)
+  openComposer(tree, 1)
   const sends = tree.root.findAllByProps({ className: 'elves-annotation-thread__send' })
   act(() => tree.root.findAllByType('textarea')[1].props.onChange({ target: { value: 'A reply' } }))
   expect(sends).toHaveLength(2)
@@ -223,10 +262,17 @@ test('a targeted pin clears its temporary preview after pointer or focus leaves'
 })
 
 test('a canvas lock disables a populated reply form without discarding its draft', () => {
+  const lockedTree = create(createElement(AnnotationThread, {
+    comment: { id: 'locked', type: null, text: 'Needs evidence', resolved: false, author: 'claude' },
+    mode: 'open', disabled: true, onReply: vi.fn(),
+  }))
+  expect(lockedTree.root.findByProps({ className: 'elves-annotation-thread__reply-trigger' }).props.disabled).toBe(true)
+
   const tree = create(createElement(AnnotationThread, {
     comment: { id: 'c1', type: null, text: 'Needs evidence', resolved: false, author: 'claude' },
     mode: 'open', onResolve: vi.fn(), onReply: vi.fn(),
   }))
+  openComposer(tree)
   const textarea = tree.root.findByType('textarea')
   act(() => textarea.props.onChange({ target: { value: 'My saved draft' } }))
   act(() => tree.update(createElement(AnnotationThread, {
@@ -331,8 +377,9 @@ test('thread controls use the embedded composer and typed header layout', () => 
   expect(css).toMatch(/\.elves-annotation-thread__type\[data-type="needs-evidence"\]\s*\{[^}]*color:\s*var\(--elves-cc-evidence-label\)/s)
   expect(css).toMatch(/\.elves-annotation-thread__send\s*\{[^}]*position:\s*absolute/s)
   expect(css).toMatch(/\.elves-annotation-thread__send\s*\{[^}]*border-radius:\s*50%/s)
-  expect(css).toMatch(/\.elves-annotation-thread__reply\s+textarea\s*\{[^}]*padding:\s*[^;]*43px/s)
-  expect(css).toMatch(/\.elves-annotation-thread__reply\s+textarea\s*\{[^}]*resize:\s*vertical/s)
+  expect(css).toMatch(/\.elves-annotation-thread__reply\s+textarea\s*\{[^}]*padding:\s*9px 43px 9px 10px/s)
+  expect(css).toMatch(/\.elves-annotation-thread__reply\s+textarea\s*\{[^}]*resize:\s*none/s)
+  expect(css).toMatch(/\.elves-annotation-thread__reply-resize\s*\{[^}]*right:\s*8px[^}]*bottom:\s*8px/s)
   expect(css).toMatch(/\.elves-annotation-thread__reply\s+textarea:focus-visible\s*\{[^}]*outline:\s*none/s)
   expect(css).toMatch(/\.elves-annotation-thread__reply\s+textarea:focus-visible\s*\{[^}]*border-color:\s*var\(--elves-primary\)/s)
   expect(css).toMatch(/\.elves-annotation-thread__reply\s+textarea:focus-visible\s*\{[^}]*box-shadow:\s*0 0 0 3px var\(--elves-primary-tint\)/s)

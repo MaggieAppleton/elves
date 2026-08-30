@@ -114,6 +114,8 @@ test('foreground panels stop canvas pointer, click, and keyboard events while re
     expect(stopPropagation).toHaveBeenCalledOnce()
   }
 
+  const trigger = tree.root.findByProps({ className: 'elves-annotation-thread__reply-trigger' })
+  act(() => trigger.props.onClick())
   const reply = tree.root.findByType('textarea')
   act(() => reply.props.onChange({ target: { value: 'Keep this draft editable.' } }))
   expect(tree.root.findByType('textarea').props.value).toBe('Keep this draft editable.')
