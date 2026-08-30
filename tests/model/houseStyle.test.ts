@@ -166,10 +166,41 @@ test('the exemption does not leak past the closing quote', () => {
 })
 
 test('an apostrophe does not open a quoted run', () => {
-  // Single quotes are left alone on purpose; treating them as delimiters would
-  // swallow half of any note containing a contraction.
+  // The dangerous case for single quotes: an apostrophe is the same character
+  // as a closing quote, so "It's ... doesn't" must not read as a quoted span
+  // and mask the didactic hedge sitting between them.
   expect(lintProse("It's worth noting that the card doesn't say this.").map((h) => h.ruleId))
     .toContain('didactic-hedge')
+  expect(lintProse("Don't delve into it; the reader won't follow.").map((h) => h.ruleId))
+    .toContain('ai-vocab')
+})
+
+test('a cliché is exempt inside every delimiter a reviewer would reach for', () => {
+  // Critiquing a cliché means writing it down. Whichever way the agent marks
+  // the quotation, the note it most needs to leave must be writable.
+  for (const note of [
+    'The phrase "the ever-evolving landscape" is doing no work here.',
+    'The phrase “the ever-evolving landscape” is doing no work here.',
+    'The phrase `the ever-evolving landscape` is doing no work here.',
+    "The phrase 'the ever-evolving landscape' is doing no work here.",
+    'The phrase ‘the ever-evolving landscape’ is doing no work here.',
+  ]) {
+    expect(lintProse(note)).toEqual([])
+  }
+})
+
+test('a quoted delimiter still lets a cliché OUTSIDE it be caught', () => {
+  // The exemption is a span, not a switch: quoting one phrase must not smuggle
+  // a second one through in the surrounding sentence.
+  const hits = lintProse('The phrase `delve` is fine, but this claim plays a crucial role.')
+  expect(hits.map((h) => h.ruleId)).toEqual(['inflated-role'])
+})
+
+test("a mention with no delimiter at all is still caught, on purpose", () => {
+  // When you mention a phrase you quote it. Leaving this uncaught would need a
+  // use/mention judgement no regex can make, and any "the phrase X" escape
+  // would become the way around the whole check.
+  expect(lintProse('Card 4 leans on ever-evolving landscape framing.').length).toBeGreaterThan(0)
 })
 
 // --- the rejection message -------------------------------------------------
@@ -219,7 +250,7 @@ test('HOUSE_STYLE names each rule an agent is most likely to reach for', () => {
     'No fluff, no filler',
     'experts argue',
     'as an AI language model',
-    'double quotes',
+    'backticks',
   ]) {
     expect(HOUSE_STYLE.toLowerCase()).toContain(phrase.toLowerCase())
   }
@@ -247,7 +278,7 @@ test('every review brief carries the style rules and the fact that they are enfo
     const brief = composeBrief(PERSONALITIES[id], null)
     expect(brief).toContain('House style applies to every word')
     expect(brief).toContain('a small local model strips what it can')
-    expect(brief).toContain('double quotes')
+    expect(brief).toContain('backticks')
   }
 })
 

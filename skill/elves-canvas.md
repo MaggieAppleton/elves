@@ -27,7 +27,7 @@ throat-clearing, no flattery, no model vocabulary (*delve*, *intricate*,
 *seamless*, *crucial*), no "not just X but Y", no staged reveals, no tidy
 closers. Say the specific thing in the plainest words that carry it. The full
 rules, the worked rewrites, and what is exempt (transcription, reference facts,
-and anything you put in `"double quotes"`) are in
+and anything you put in "quotes" or `backticks`) are in
 **[elves-house-style](./elves-house-style.md)** — read it before you write your
 first note.
 

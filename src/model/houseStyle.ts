@@ -475,16 +475,45 @@ export const RULE_IDS: string[] = RULES.map((r) => r.id)
 /**
  * Blank out quoted spans, preserving offsets.
  *
- * An agent quoting the user's own prose back to them is doing its job — the
- * Trimmer is explicitly told it may quote a shorter phrasing, and any comment
- * may quote the line it is about. Those words are the user's, and the check
- * has no business grading them. So double-quoted runs (straight or curly) are
- * masked with spaces before matching: the offsets of everything else stay
- * exact, and nothing inside the quotes can match. Single quotes are left alone
- * because apostrophes would swallow half the note.
+ * This is the use/mention line. An agent quoting the user's prose back to them
+ * is doing its job — the Trimmer is told it may quote a shorter phrasing, and
+ * any comment may quote the line it is about. Those words are the user's, and
+ * the check has no business grading them. Critiquing a cliché in the draft
+ * necessarily means writing the cliché down, so without this the gate would
+ * forbid exactly the note a reviewer most needs to leave:
+ *
+ *   The phrase "the ever-evolving landscape" is doing no work here.
+ *
+ * Masking with spaces rather than deleting keeps every offset exact, so the
+ * carets in a rejection still line up under the real text.
+ *
+ * FOUR delimiters, chosen for being unambiguous:
+ *   "straight"   “curly”   `backticks`   ‘curly singles’
+ * plus 'straight singles', which need care — an apostrophe is the same
+ * character as a closing single quote, so "It's ... doesn't" would otherwise
+ * read as a quoted span and mask the text between. Requiring a non-letter on
+ * the outside of each mark separates a real quotation from a contraction.
+ *
+ * A cliché mentioned with NO delimiter at all ("leans on ever-evolving
+ * landscape framing") is still caught, and deliberately: when you mention a
+ * phrase you quote it, so the constraint pushes toward the better sentence.
  */
+const QUOTED = /"[^"]*"|“[^”]*”|`[^`]*`|‘[^’]*’|(?<![A-Za-z])'[^']*'(?![A-Za-z])/g
+
 export function maskQuotes(text: string): string {
-  return text.replace(/"[^"]*"|“[^”]*”/g, (m) => ' '.repeat(m.length))
+  return text.replace(QUOTED, (m) => ' '.repeat(m.length))
+}
+
+/**
+ * Every quoted run in a string, marks included.
+ *
+ * The same set the check exempts, so the two cannot drift: a repair is not
+ * allowed to drop a span the check was not allowed to grade. Both are the
+ * user's words, or a phrase the note is explicitly pointing at, and neither is
+ * a local model's to edit away.
+ */
+export function quotedSpans(text: string): string[] {
+  return text.match(QUOTED) ?? []
 }
 
 function sentenceCount(text: string): number {
@@ -550,7 +579,7 @@ export function formatStyleRejection(field: string, text: string, hits: StyleHit
     lines.push(`  · ${h.ruleId} — "${h.text.trim()}"`)
     lines.push(`      ${h.why}`)
   }
-  lines.push('', 'Rewrite it plainly and call the tool again. Text inside "double quotes" is')
+  lines.push('', 'Rewrite it plainly and call the tool again. Text inside quotes or `backticks` is')
   lines.push('exempt, so quote the user\'s own words rather than paraphrasing them into slop.')
   return lines.join('\n')
 }
@@ -589,7 +618,7 @@ Across more than one sentence, also rejected: two questions fired in a row, thre
 
 Instead: name the specific thing in the specific card, in the plainest words that carry it. "The 73% figure has no source" beats "It's worth noting that this statistic would benefit from a citation." Vary your sentence lengths, trust the reader to get a metaphor without you explaining it, and never end on a line that sounds like a pull-quote.
 
-Quoting the user is exempt: anything inside "double quotes" is skipped by the check, so quote their own words rather than paraphrasing them.`
+Quoting the user is exempt: anything inside "quotes", 'single quotes' or \`backticks\` is skipped by the check. Critiquing a cliché means writing it down, so mark it as a quotation and the note goes through — that is also the better sentence.`
 
 /**
  * The short version, for prompts that are backed by the repair pass.
@@ -604,7 +633,7 @@ Quoting the user is exempt: anything inside "double quotes" is skipped by the ch
  * surface nothing can catch: an annotation reply, which reaches the user as
  * chat prose without passing through any tool.
  */
-export const HOUSE_STYLE_BRIEF = `HOUSE STYLE: write like an editor's pencil note — the thing itself, nothing around it. No throat-clearing ("I noticed that", "it's worth noting"), no flattery ("great question"), no model vocabulary (delve, intricate, interplay, seamless, crucial, nuanced, robust, leverage, myriad), no "not just X but Y", no staged reveals ("here's the thing", "turns out"), no tidy closers ("in short", "ultimately", "overall"), no stacked hedges ("perhaps somewhat"), no vague authority ("experts argue", "studies show"). Name the specific thing in the plainest words that carry it. Every note you write is checked: a small local model strips what it can, and anything left is handed back for you to rewrite. Quoting the user in "double quotes" is exempt from the check.`
+export const HOUSE_STYLE_BRIEF = `HOUSE STYLE: write like an editor's pencil note — the thing itself, nothing around it. No throat-clearing ("I noticed that", "it's worth noting"), no flattery ("great question"), no model vocabulary (delve, intricate, interplay, seamless, crucial, nuanced, robust, leverage, myriad), no "not just X but Y", no staged reveals ("here's the thing", "turns out"), no tidy closers ("in short", "ultimately", "overall"), no stacked hedges ("perhaps somewhat"), no vague authority ("experts argue", "studies show"). Name the specific thing in the plainest words that carry it. Every note you write is checked: a small local model strips what it can, and anything left is handed back for you to rewrite. Quoting is exempt: anything in "quotes" or \`backticks\` is skipped, so mark a phrase you are critiquing as a quotation.`
 
 // ---------------------------------------------------------------------------
 // Repair
@@ -632,7 +661,7 @@ ${offences}
 Rules:
 - Delete the listed phrases. Keep every other word exactly as it is.
 - Fix only what deletion breaks: capitalise the new first word, keep the final full stop.
-- Keep every number, name, and anything in "double quotes" exactly as written.
+- Keep every number, name, and anything in "quotes" or \`backticks\` exactly as written.
 - Do NOT add new ideas, opinions, explanations, or preambles.
 - Do NOT make it longer. One sentence.
 - Reply with ONLY the corrected sentence. No quotes around it, no commentary.
@@ -702,7 +731,7 @@ export function acceptReplyRepair(original: string, repaired: string): RepairVer
   for (const n of original.match(/\d[\d.,:%]*/g) ?? []) {
     if (!clean.includes(n)) return { ok: false, reason: 'lost-a-number' }
   }
-  for (const q of original.match(/"[^"]*"|“[^”]*”/g) ?? []) {
+  for (const q of quotedSpans(original)) {
     if (!clean.includes(q)) return { ok: false, reason: 'lost-a-quote' }
   }
 
@@ -798,7 +827,7 @@ export function acceptRepair(original: string, repaired: string): RepairVerdict 
   for (const n of original.match(/\d[\d.,:%]*/g) ?? []) {
     if (!clean.includes(n)) return { ok: false, reason: 'lost-a-number' }
   }
-  for (const q of original.match(/"[^"]*"|“[^”]*”/g) ?? []) {
+  for (const q of quotedSpans(original)) {
     if (!clean.includes(q)) return { ok: false, reason: 'lost-a-quote' }
   }
 

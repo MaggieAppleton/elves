@@ -82,7 +82,7 @@ Across more than one sentence, also rejected: two questions fired in a row, thre
 
 Instead: name the specific thing in the specific card, in the plainest words that carry it. "The 73% figure has no source" beats "It's worth noting that this statistic would benefit from a citation." Vary your sentence lengths, trust the reader to get a metaphor without you explaining it, and never end on a line that sounds like a pull-quote.
 
-Quoting the user is exempt: anything inside "double quotes" is skipped by the check, so quote their own words rather than paraphrasing them.
+Quoting the user is exempt: anything inside "quotes", 'single quotes' or `backticks` is skipped by the check. Critiquing a cliché means writing it down, so mark it as a quotation and the note goes through — that is also the better sentence.
 
 ## Not enforced, still true
 
@@ -110,10 +110,12 @@ Two kinds of text are never checked, because neither is yours:
   always yours. Write new figure descriptions through `create_figure_card`,
   which is gated.
 
-Inside a note you *are* writing, `"double-quoted"` spans are skipped too. This is
-what lets the Trimmer quote a suggested phrasing and any comment quote the line
-it is about. Use it: quoting the user's actual words is always better than
-paraphrasing them, and the paraphrase is where slop creeps in.
+Inside a note you *are* writing, quoted spans are skipped too — "straight",
+“curly”, `backticks`, 'singles' and ‘curly singles'. This is what lets the
+Trimmer quote a suggested phrasing, any comment quote the line it is about, and
+any reviewer name a cliché in the draft without tripping the check on it. Use
+it: quoting the actual words beats paraphrasing them, and the paraphrase is
+where slop creeps in.
 
 ## Worked rewrites
 

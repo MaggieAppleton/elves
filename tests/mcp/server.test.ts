@@ -112,7 +112,7 @@ test('the initialize handshake hands every agent the house style', async () => {
   const instructions = client.getInstructions() ?? ''
   expect(instructions).toContain('HOUSE STYLE')
   expect(instructions).toContain("it's worth noting")
-  expect(instructions).toContain('double quotes')
+  expect(instructions).toContain('backticks')
   await client.close()
 })
 
