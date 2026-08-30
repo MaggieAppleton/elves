@@ -3,6 +3,9 @@ import { BASE, resetProject, serverCardIds } from './helpers'
 import { createFeedbackTool, createReferenceTool, readMapTool } from '../mcp/tools'
 
 let projectId: string
+const STAGE_EDGE_TOLERANCE_PX = 96
+
+type ScreenBox = { x: number; y: number; width: number; height: number }
 
 // reviews.json is project metadata, so resetProject's canvas clear doesn't touch
 // it. Dismiss whatever earlier tests left behind — dismissed passes are hidden
@@ -21,6 +24,39 @@ async function openCanvas(page: Page): Promise<void> {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
   await expect(page.getByTestId('new-prose')).toBeEnabled()
+}
+
+function expectBoxWithinStage(box: ScreenBox, stage: ScreenBox) {
+  expect(box.x).toBeGreaterThanOrEqual(stage.x)
+  expect(box.y).toBeGreaterThanOrEqual(stage.y)
+  expect(box.x + box.width).toBeLessThanOrEqual(stage.x + stage.width)
+  expect(box.y + box.height).toBeLessThanOrEqual(stage.y + stage.height)
+}
+
+function expectAtStageEdge(
+  pin: ScreenBox,
+  thread: ScreenBox,
+  stage: ScreenBox,
+  horizontal: 'left' | 'right',
+  vertical: 'top' | 'bottom',
+) {
+  const horizontalInset = horizontal === 'left'
+    ? pin.x - stage.x
+    : stage.x + stage.width - (pin.x + pin.width)
+  const verticalInset = vertical === 'top'
+    ? pin.y - stage.y
+    : stage.y + stage.height - (pin.y + pin.height)
+  const threadHorizontalInset = horizontal === 'left'
+    ? thread.x - stage.x
+    : stage.x + stage.width - (thread.x + thread.width)
+  const threadVerticalInset = vertical === 'top'
+    ? thread.y - stage.y
+    : stage.y + stage.height - (thread.y + thread.height)
+
+  expect(horizontalInset).toBeLessThanOrEqual(STAGE_EDGE_TOLERANCE_PX)
+  expect(verticalInset).toBeLessThanOrEqual(STAGE_EDGE_TOLERANCE_PX)
+  expect(threadHorizontalInset).toBeLessThanOrEqual(STAGE_EDGE_TOLERANCE_PX)
+  expect(threadVerticalInset).toBeLessThanOrEqual(STAGE_EDGE_TOLERANCE_PX)
 }
 
 test.beforeEach(async ({ request }) => {
@@ -219,10 +255,10 @@ test('foreground threads stay operable at every canvas edge above cards, feedbac
   expect(commentResponse.ok()).toBe(true)
 
   const edgeFeedback = [
-    { text: 'Top-left feedback.', x: 8, y: 8 },
-    { text: 'Top-right feedback.', x: viewport.width - 64, y: 8 },
-    { text: 'Bottom-left feedback.', x: 8, y: viewport.height - 64 },
-    { text: 'Bottom-right feedback.', x: viewport.width - 64, y: viewport.height - 64 },
+    { text: 'Top-left feedback.', x: 8, y: 8, horizontal: 'left' as const, vertical: 'top' as const },
+    { text: 'Top-right feedback.', x: viewport.width - 64, y: 8, horizontal: 'right' as const, vertical: 'top' as const },
+    { text: 'Bottom-left feedback.', x: 8, y: viewport.height - 64, horizontal: 'left' as const, vertical: 'bottom' as const },
+    { text: 'Bottom-right feedback.', x: viewport.width - 64, y: viewport.height - 64, horizontal: 'right' as const, vertical: 'bottom' as const },
   ]
   for (const item of edgeFeedback) {
     await createFeedbackTool(BASE, projectId, { ...item, type: 'weak-argument', reviewer: 'architect' })
@@ -232,35 +268,40 @@ test('foreground threads stay operable at every canvas edge above cards, feedbac
   const referencePin = page.locator(`[data-shape-id="${referenceCardId}"] [data-testid="annotation-pin"]`)
   await expect(page.getByTestId('annotation-pin')).toHaveCount(6)
   const { feedback } = await readMapTool(BASE, projectId)
+  const edgePins = edgeFeedback.map((item) => ({
+    ...item,
+    pin: page.locator(`[data-annotation-target="feedback:${feedback.find((entry) => entry.text === item.text)!.id}"]`),
+  }))
   const pins = [
-    prosePin,
-    referencePin,
-    ...edgeFeedback.map((item) => page.locator(
-      `[data-annotation-target="feedback:${feedback.find((entry) => entry.text === item.text)!.id}"]`,
-    )),
+    { pin: prosePin },
+    { pin: referencePin },
+    ...edgePins,
   ]
   const stage = page.locator('.tl-container').first()
   const stageBox = await stage.boundingBox()
   expect(stageBox).not.toBeNull()
 
-  for (const pin of pins) {
+  for (const { pin, ...edge } of pins) {
     await expect(pin).toBeVisible()
     await pin.click()
     const popover = page.getByTestId('annotation-popover')
     const thread = popover.getByTestId('annotation-thread')
     await expect(thread).toBeVisible()
-    const [threadBox, textareaBox, sendBox, resolveBox, closeBox] = await Promise.all([
+    const [pinBox, threadBox, textareaBox, sendBox, resolveBox, closeBox] = await Promise.all([
+      pin.boundingBox(),
       thread.boundingBox(),
       thread.getByLabel('Reply to annotation').boundingBox(),
       thread.getByRole('button', { name: 'Send reply' }).boundingBox(),
       thread.getByRole('button', { name: /^Resolve .* comment$/ }).boundingBox(),
       thread.getByLabel('Close annotation thread').boundingBox(),
     ])
+    expect(pinBox).not.toBeNull()
     expect(threadBox).not.toBeNull()
-    expect(threadBox!.x).toBeGreaterThanOrEqual(stageBox!.x)
-    expect(threadBox!.y).toBeGreaterThanOrEqual(stageBox!.y)
-    expect(threadBox!.x + threadBox!.width).toBeLessThanOrEqual(stageBox!.x + stageBox!.width)
-    expect(threadBox!.y + threadBox!.height).toBeLessThanOrEqual(stageBox!.y + stageBox!.height)
+    expectBoxWithinStage(pinBox!, stageBox!)
+    expectBoxWithinStage(threadBox!, stageBox!)
+    if (edge.horizontal && edge.vertical) {
+      expectAtStageEdge(pinBox!, threadBox!, stageBox!, edge.horizontal, edge.vertical)
+    }
     for (const control of [textareaBox, sendBox, resolveBox, closeBox]) {
       expect(control).not.toBeNull()
       const foregroundTarget = await page.evaluate(({ x, y }) => Boolean(
@@ -273,6 +314,47 @@ test('foreground threads stay operable at every canvas edge above cards, feedbac
     await thread.getByLabel('Close annotation thread').click()
     await expect(thread).toHaveCount(0)
   }
+
+  // The bottom-right panel must keep the same foreground affordances after a
+  // stream error: Retry is visible, receives the actual pointer click, and
+  // starts the saved user turn again.
+  const failedEdge = edgePins[3]
+  let releaseFailedRun!: () => void
+  const failedRun = new Promise<void>((resolve) => { releaseFailedRun = resolve })
+  let interceptedRuns = 0
+  const routePattern = `**/projects/${projectId}/annotations/run`
+  await page.route(routePattern, async (route) => {
+    interceptedRuns += 1
+    await failedRun
+    await route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {"type":"text","text":"Interim edge reply."}\n\n' })
+  })
+  await failedEdge.pin.click()
+  const failedThread = page.getByTestId('annotation-thread')
+  await expect(failedThread).toBeVisible()
+  const [failedPinBox, failedThreadBox] = await Promise.all([failedEdge.pin.boundingBox(), failedThread.boundingBox()])
+  expect(failedPinBox).not.toBeNull()
+  expect(failedThreadBox).not.toBeNull()
+  expectBoxWithinStage(failedPinBox!, stageBox!)
+  expectBoxWithinStage(failedThreadBox!, stageBox!)
+  expectAtStageEdge(failedPinBox!, failedThreadBox!, stageBox!, failedEdge.horizontal, failedEdge.vertical)
+  await failedThread.getByLabel('Reply to annotation').fill('Retry from the bottom-right edge.')
+  await failedThread.getByRole('button', { name: 'Send reply' }).click()
+  await expect(failedThread.getByRole('button', { name: 'Replying…' })).toBeDisabled()
+  await expect.poll(() => interceptedRuns).toBe(1)
+  releaseFailedRun()
+  await expect(failedThread.getByRole('alert')).toContainText('stream was interrupted')
+  const retry = failedThread.getByRole('button', { name: 'Retry' })
+  await expect(retry).toBeVisible()
+  const retryBox = await retry.boundingBox()
+  expect(retryBox).not.toBeNull()
+  expect(await page.evaluate(({ x, y }) => Boolean(
+    document.elementFromPoint(x, y)?.closest('[data-testid="annotation-thread"]'),
+  ), { x: retryBox!.x + retryBox!.width / 2, y: retryBox!.y + retryBox!.height / 2 })).toBe(true)
+  await page.unroute(routePattern)
+  await retry.click()
+  await expect(failedThread.getByRole('button', { name: 'Replying…' })).toBeDisabled()
+  await expect(failedThread).toContainText('Stub annotation reply: Retry from the bottom-right edge.')
+  await failedThread.getByLabel('Close annotation thread').click()
 
   // Promotion puts the repeated target at the top of the foreground stack.
   // These are real simultaneous foreground panels, rather than per-shape z-indexes.

@@ -3,6 +3,9 @@ import { BASE, resetProject, serverCardIds } from './helpers'
 import { createFeedbackTool, createNoteCardTool, deleteCardTool, moveCardsTool, readMapTool } from '../mcp/tools'
 
 let projectId: string
+const THREAD_TRACK_TOLERANCE_PX = 8
+
+type ScreenBox = { x: number; y: number; width: number; height: number }
 
 async function addCardAndComment(page: any, request: any, comment: { type: string | null; text: string }): Promise<string> {
   await page.goto('/')
@@ -45,6 +48,22 @@ async function expectThreadWithinCanvas(page: any, thread: any) {
   expect(threadBox!.y).toBeGreaterThanOrEqual(stageBox!.y)
   expect(threadBox!.x + threadBox!.width).toBeLessThanOrEqual(stageBox!.x + stageBox!.width)
   expect(threadBox!.y + threadBox!.height).toBeLessThanOrEqual(stageBox!.y + stageBox!.height)
+}
+
+async function annotationGeometry(pin: any, thread: any): Promise<{ pin: ScreenBox; thread: ScreenBox }> {
+  const [pinBox, threadBox] = await Promise.all([pin.boundingBox(), thread.boundingBox()])
+  if (!pinBox || !threadBox) throw new Error('annotation pin or foreground thread is not rendered')
+  return { pin: pinBox, thread: threadBox }
+}
+
+function expectThreadTracksPin(
+  before: { pin: ScreenBox; thread: ScreenBox },
+  after: { pin: ScreenBox; thread: ScreenBox },
+) {
+  const beforeOffset = { x: before.thread.x - before.pin.x, y: before.thread.y - before.pin.y }
+  const afterOffset = { x: after.thread.x - after.pin.x, y: after.thread.y - after.pin.y }
+  expect(Math.abs(afterOffset.x - beforeOffset.x)).toBeLessThanOrEqual(THREAD_TRACK_TOLERANCE_PX)
+  expect(Math.abs(afterOffset.y - beforeOffset.y)).toBeLessThanOrEqual(THREAD_TRACK_TOLERANCE_PX)
 }
 
 async function addTwoComments(page: any, request: any) {
@@ -204,6 +223,12 @@ test('hover and keyboard focus show a complete read-only preview', async ({ page
   await expect(preview.getByRole('button')).toHaveCount(0)
   await expect(preview.locator('textarea')).toHaveCount(0)
   expect(await preview.evaluate((element) => element.closest('.tl-shape'))).toBeNull()
+
+  // Focus is its own entry route, not an artefact of the pointer hover. Leave
+  // the pin, allow the short production hand-off timer to dismiss the preview,
+  // then focus the button from outside the canvas annotation surface.
+  await page.mouse.move(1, 1)
+  await expect(preview).toHaveCount(0)
   await pin.focus()
   await expect(preview).toBeVisible()
 })
@@ -378,31 +403,38 @@ test('a foreground thread follows its pin through pan, zoom, and card movement',
   const stage = page.locator('.tl-container').first()
   const stageBox = await stage.boundingBox()
   expect(stageBox).not.toBeNull()
-  const beforePanPin = await pin.boundingBox()
-  const beforePanThread = await thread.boundingBox()
+  const beforePan = await annotationGeometry(pin, thread)
   await page.mouse.move(stageBox!.x + stageBox!.width * 0.2, stageBox!.y + stageBox!.height * 0.2)
   await page.keyboard.down('Space')
   await page.mouse.down()
   await page.mouse.move(stageBox!.x + stageBox!.width * 0.2 + 90, stageBox!.y + stageBox!.height * 0.2 + 60)
   await page.mouse.up()
   await page.keyboard.up('Space')
-  await expect.poll(async () => (await pin.boundingBox())?.x ?? null).not.toBe(beforePanPin?.x ?? null)
-  await expect.poll(async () => (await thread.boundingBox())?.x ?? null).not.toBe(beforePanThread?.x ?? null)
+  await expect.poll(async () => (await pin.boundingBox())?.x ?? null).not.toBe(beforePan.pin.x)
+  await expect.poll(async () => (await thread.boundingBox())?.x ?? null).not.toBe(beforePan.thread.x)
+  const afterPan = await annotationGeometry(pin, thread)
+  expectThreadTracksPin(beforePan, afterPan)
   await expectThreadWithinCanvas(page, thread)
 
+  const beforeZoom = await annotationGeometry(pin, thread)
   await page.getByRole('button', { name: /Zoom —/ }).click()
   await page.getByRole('menuitem', { name: /Zoom out/ }).click()
+  await expect.poll(async () => {
+    const next = await annotationGeometry(pin, thread)
+    return Math.hypot(next.pin.x - beforeZoom.pin.x, next.pin.y - beforeZoom.pin.y)
+  }).toBeGreaterThan(0.5)
+  const afterZoom = await annotationGeometry(pin, thread)
+  expectThreadTracksPin(beforeZoom, afterZoom)
   await expectThreadWithinCanvas(page, thread)
 
-  const beforeMovePin = await pin.boundingBox()
-  const beforeMoveThread = await thread.boundingBox()
+  const beforeMove = await annotationGeometry(pin, thread)
   const card = await cardRecord(request, cardId)
   await moveCardsTool(BASE, projectId, { moves: [{ cardId, x: card.x + 160, y: card.y + 110 }] })
-  await expect.poll(async () => (await pin.boundingBox())?.x ?? null).not.toBe(beforeMovePin?.x ?? null)
-  await expect.poll(async () => (await thread.boundingBox())?.x ?? null).not.toBe(beforeMoveThread?.x ?? null)
-  const afterMovePin = await pin.boundingBox()
-  const afterMoveThread = await thread.boundingBox()
-  expect(afterMovePin!.x).toBeGreaterThan(beforeMovePin!.x + 40)
-  expect(afterMoveThread!.x).toBeGreaterThan(beforeMoveThread!.x + 40)
+  await expect.poll(async () => (await pin.boundingBox())?.x ?? null).not.toBe(beforeMove.pin.x)
+  await expect.poll(async () => (await thread.boundingBox())?.x ?? null).not.toBe(beforeMove.thread.x)
+  const afterMove = await annotationGeometry(pin, thread)
+  expect(afterMove.pin.x).toBeGreaterThan(beforeMove.pin.x + 40)
+  expect(afterMove.thread.x).toBeGreaterThan(beforeMove.thread.x + 40)
+  expectThreadTracksPin(beforeMove, afterMove)
   await expectThreadWithinCanvas(page, thread)
 })
