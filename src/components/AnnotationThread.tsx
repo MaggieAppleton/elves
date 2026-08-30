@@ -15,10 +15,8 @@ export type AnnotationThreadComment = Pick<Comment, 'id' | 'type' | 'text' | 're
 export interface AnnotationThreadProps {
   comment: AnnotationThreadComment
   mode: 'preview' | 'open'
-  selected?: boolean
   disabled?: boolean
   attribution?: string
-  actionLabel?: string
   onResolve?: () => void
   running?: boolean
   streamingText?: string
@@ -39,10 +37,8 @@ function agentName(id: string): string {
 export function AnnotationThread({
   comment,
   mode,
-  selected = false,
   disabled = false,
   attribution,
-  actionLabel = 'Resolve comment',
   onResolve,
   running = false,
   streamingText = '',
@@ -70,7 +66,6 @@ export function AnnotationThread({
   return (
     <article
       className={`elves-annotation-thread elves-annotation-thread--${mode}`}
-      data-selected={selected}
       data-testid="annotation-thread"
     >
       <div className="elves-annotation-thread__meta">
@@ -102,11 +97,11 @@ export function AnnotationThread({
       {!preview && onResolve && <button
         type="button"
         className="elves-annotation-thread__resolve"
-        aria-label={`${actionLabel.replace(/ comment$| feedback$/, '')} ${type} ${actionLabel.endsWith('feedback') ? 'feedback' : 'comment'}`}
+        aria-label={`Resolve ${type} comment`}
         disabled={disabled || !onResolve}
         onClick={onResolve}
       >
-        {actionLabel}
+        Resolve comment
       </button>}
       {!preview && onClose && <button type="button" className="elves-annotation-thread__close" aria-label="Close annotation thread" onClick={onClose}>×</button>}
     </article>
