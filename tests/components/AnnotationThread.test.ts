@@ -1,4 +1,5 @@
 import { createElement } from 'react'
+import { readFileSync } from 'node:fs'
 import { act, create } from 'react-test-renderer'
 import { expect, test, vi } from 'vitest'
 import { AnnotationPin, AnnotationThread } from '../../src/components/AnnotationThread'
@@ -7,6 +8,7 @@ import {
   subscribeAnnotationReply, subscribeAnnotationRetry,
 } from '../../src/client/annotationSelection'
 import { foregroundThreadProps } from '../../src/components/AnnotationPopoverLayer'
+import { annotationPin } from '../../src/model/annotationPins'
 
 test('preview has no reply, retry, resolve, or close controls', () => {
   const tree = create(createElement(AnnotationThread, {
@@ -212,4 +214,54 @@ test('a pin name includes a bounded gist of the annotation text', () => {
     comment: { id: 'c1', type: null, text: 'Name the causal bridge explicitly.', resolved: false, author: 'claude' },
   }))
   expect(tree.root.findByProps({ 'data-testid': 'annotation-pin' }).props['aria-label']).toContain('Name the causal bridge explicitly.')
+})
+
+test('each annotation pin renders one decorative SVG icon', () => {
+  const types = [null, 'needs-evidence', 'weak-argument', 'needs-citation', 'wants-figure', 'counterpoint', 'tighten', 'unclear', 'structure'] as const
+
+  for (const type of types) {
+    const tree = create(createElement(AnnotationPin, {
+      comment: { id: `pin-${type ?? 'comment'}`, type, text: 'A comment.', resolved: false, author: 'claude' },
+    }))
+    const icons = tree.root.findAllByType('svg')
+    expect(icons).toHaveLength(1)
+    expect(icons[0].props['aria-hidden']).toBe('true')
+    expect(tree.root.findByProps({ 'data-testid': 'annotation-pin' }).props['aria-label'])
+      .toContain(`Open ${annotationPin(type).label} comment`)
+  }
+})
+
+test('annotation pin icons use a centred fixed wrapper without a transform nudge', () => {
+  const css = readFileSync('src/components/annotationThread.css', 'utf8')
+  const wrapperRule = css.match(/\.elves-annotation-pin__icon\s*\{([^}]*)\}/)?.[1] ?? ''
+
+  expect(wrapperRule).toMatch(/width:\s*15px/)
+  expect(wrapperRule).toMatch(/height:\s*15px/)
+  expect(wrapperRule).toMatch(/display:\s*grid/)
+  expect(wrapperRule).toMatch(/place-items:\s*center/)
+  expect(wrapperRule).toMatch(/line-height:\s*0/)
+  expect(wrapperRule).not.toMatch(/transform\s*:/)
+  expect(css).toMatch(/\.elves-annotation-pin__icon\s+svg\s*\{[^}]*display:\s*block/)
+
+  const ruleFor = (selector: string) => css.match(new RegExp(`${selector}\\s*\\{([^}]*)\\}`))?.[1] ?? ''
+  const baseRule = ruleFor('\\.elves-annotation-pin(?![-:])')
+  expect(baseRule).toMatch(/color:\s*#fff/)
+  expect(baseRule).toMatch(/background:\s*var\(--elves-cc-freeform-label\)/)
+  expect(baseRule).toMatch(/border-color:\s*var\(--elves-cc-freeform-label\)/)
+
+  const strongColourTypes = {
+    'needs-evidence': 'evidence',
+    'weak-argument': 'weak',
+    'needs-citation': 'citation',
+    'wants-figure': 'figure',
+    counterpoint: 'counter',
+    tighten: 'tighten',
+    unclear: 'unclear',
+    structure: 'structure',
+  } as const
+  for (const [type, token] of Object.entries(strongColourTypes)) {
+    const typeRule = ruleFor(`\\.elves-annotation-pin\\[data-type="${type}"\\]`)
+    expect(typeRule).toMatch(new RegExp(`background:\\s*var\\(--elves-cc-${token}-label\\)`))
+    expect(typeRule).toMatch(new RegExp(`border-color:\\s*var\\(--elves-cc-${token}-label\\)`))
+  }
 })
