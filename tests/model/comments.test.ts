@@ -5,6 +5,8 @@ import {
   resolveComment,
   visibleComments,
   estimateCommentHeight,
+  appendThreadMessage,
+  commentThread,
 } from '../../src/model/comments'
 
 describe('comment helpers', () => {
@@ -32,6 +34,38 @@ describe('comment helpers', () => {
     const a = makeComment('c1', 'a')
     const out = addComment([], a)
     expect(out).toEqual([a])
+  })
+
+  test('legacy comments become a single Claude message', () => {
+    expect(commentThread(makeComment('c1', 'Needs evidence'))).toMatchObject({
+      messages: [{ author: 'claude', text: 'Needs evidence' }],
+    })
+  })
+
+  test('appending a reply preserves message order and de-duplicates its id', () => {
+    const comment = makeComment('c1', 'Needs evidence')
+    const reply = { id: 'm-user', author: 'user', text: 'Which source?', createdAt: '2026-08-29T12:00:00.000Z' }
+    const once = appendThreadMessage(comment, reply)
+    const twice = appendThreadMessage(once, reply)
+    expect(commentThread(twice).messages.map((message) => message.author)).toEqual(['claude', 'user'])
+  })
+
+  test('an agent reply is inserted directly after the user turn it answers', () => {
+    const comment = {
+      ...makeComment('c1', 'Initial note'),
+      messages: [
+        { id: 'user-1', author: 'user' as const, text: 'First question', createdAt: 'T1' },
+        { id: 'user-2', author: 'user' as const, text: 'Second question', createdAt: 'T2' },
+      ],
+    }
+    const reply = {
+      id: 'user-1:claude', author: 'claude', text: 'First answer', createdAt: 'T3',
+      inReplyToMessageId: 'user-1',
+    }
+
+    expect(appendThreadMessage(comment, reply).messages?.map((message) => message.id)).toEqual([
+      'user-1', 'user-1:claude', 'user-2',
+    ])
   })
 
   test('resolveComment marks one resolved without touching others', () => {

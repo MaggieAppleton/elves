@@ -6,13 +6,16 @@ import {
 } from 'tldraw'
 import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { CardKind, NoteKind, Origin, Comment, Reference, FigureStatus, Attribution } from '../model/types'
-import { makeProseCardProps, canConvertNoteToProse, noteToProseProps, canConvertProseToNote, proseToNoteProps } from '../model/cards'
+import { CARD_DEFAULT_W, makeProseCardProps, canConvertNoteToProse, noteToProseProps, canConvertProseToNote, proseToNoteProps } from '../model/cards'
 import { reattribute, USER_AUTHOR } from '../model/attribution'
 import { AuthorMarks } from './AuthorMarks'
 import { BlameText, hasAgentRun } from './BlameText'
 import { nextFigureStatus } from '../model/figures'
-import { cardGist, commentGist, mechanicalGist } from '../model/summary'
-import { visibleComments, resolveComment } from '../model/comments'
+import { cardGist } from '../model/summary'
+import { estimateCommentHeight, visibleComments } from '../model/comments'
+import { cardAnnotationPins } from '../model/annotationPins'
+import { requestAnnotationOpen, requestAnnotationReply, requestAnnotationRetry } from '../client/annotationSelection'
+import { AnnotationPin } from '../components/AnnotationThread'
 import { assetUrl } from '../client/assets'
 import { fittedGistFontSize, measuredCardPropsHeight } from './autosize'
 import { shouldShowGist, gistFontSize } from './summaryView'
@@ -140,6 +143,25 @@ export function addCommentSummaryUp(props: Record<string, unknown>): void {
   }
 }
 
+/** Threads postdate legacy comments; preserve their original annotation as the
+ * implicit first Claude turn by defaulting only the durable suffix to []. */
+export function addCommentMessagesUp(props: Record<string, unknown>): void {
+  if (!Array.isArray(props.comments)) return
+  props.comments = props.comments.map((comment) => ({ messages: [], ...(comment as Record<string, unknown>) }))
+}
+
+/** Pins render beside a card, not in a block beneath it. Old persisted
+ * comment heights would otherwise leave a phantom vertical footprint. */
+export function removeCommentFootprintUp(props: Record<string, unknown>): void {
+  props.commentH = 0
+}
+
+export function restoreCommentFootprintDown(props: Record<string, unknown>): void {
+  const comments = Array.isArray(props.comments) ? props.comments as Comment[] : []
+  const width = typeof props.w === 'number' ? props.w : CARD_DEFAULT_W
+  props.commentH = estimateCommentHeight(comments, width)
+}
+
 // Seeds per-character authorship from a card's last-writer + text. An existing
 // card has one author for its whole body — the human (authoredBy null → 'user')
 // or the agent that wrote it — so its attribution is one run of that author over
@@ -177,6 +199,8 @@ const cardVersions = createShapePropsMigrationIds('card', {
   AddAuthoredBy: 6, AddDraftExcluded: 7, AddFigure: 8, AddAttribution: 9, AddCommentSummary: 10,
   AddCommentReviewId: 11,
   AddCommentHeight: 12,
+  AddCommentMessages: 13,
+  RemoveCommentFootprint: 14,
 })
 
 export const cardMigrations = createShapePropsMigrationSequence({
@@ -285,6 +309,19 @@ export const cardMigrations = createShapePropsMigrationSequence({
         delete (props as Record<string, unknown>).commentH
       },
     },
+    {
+      id: cardVersions.AddCommentMessages,
+      up: (props) => addCommentMessagesUp(props as Record<string, unknown>),
+      down: (props) => {
+        const comments = (props as Record<string, unknown>).comments
+        if (Array.isArray(comments)) for (const comment of comments as Record<string, unknown>[]) delete comment.messages
+      },
+    },
+    {
+      id: cardVersions.RemoveCommentFootprint,
+      up: (props) => removeCommentFootprintUp(props as Record<string, unknown>),
+      down: (props) => restoreCommentFootprintDown(props as Record<string, unknown>),
+    },
   ],
 })
 
@@ -374,6 +411,7 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
         summaryOfHash: T.nullable(T.string),
         summaryBy: T.nullable(T.string),
         summaryAt: T.nullable(T.string),
+        messages: T.arrayOf(T.object({ id: T.string, author: T.string, text: T.string, createdAt: T.string, inReplyToMessageId: T.string.optional() })).optional(),
       }),
     ),
     commentH: T.number,
@@ -461,20 +499,14 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
     const zoom = this.editor.getZoomLevel()
     const showGist = !isEditing && shouldShowGist(zoom, shape.props)
     const comments = visibleComments(shape.props.comments)
-    const commentsRef = useRef<HTMLDivElement>(null)
-    const commentLayoutKey = comments
-      .map((comment) => `${comment.id}:${comment.type ?? ''}:${comment.text}`)
-      .join('|')
+    const pins = cardAnnotationPins(comments)
     useLayoutEffect(() => {
       let cancelled = false
-      const measure = () => {
+      const reserveMarkerRow = () => {
         if (cancelled) return
         const current = this.editor.getShape<CardShape>(shape.id)
         if (!current) return
-        const element = commentsRef.current
-        const nextCommentH = element && comments.length > 0
-          ? 7 + element.getBoundingClientRect().height / this.editor.getZoomLevel()
-          : 0
+        const nextCommentH = 0
         if (Math.abs(nextCommentH - (current.props.commentH ?? 0)) <= 1) return
 
         const previousHeight = current.props.h + (current.props.commentH ?? 0)
@@ -487,19 +519,12 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
           reflowCardLane(this.editor, current.id, previousHeight)
         }, { history: 'ignore' })
       }
-      const frame = requestAnimationFrame(measure)
-      const observer = typeof ResizeObserver === 'undefined'
-        ? null
-        : new ResizeObserver(measure)
-      if (commentsRef.current) observer?.observe(commentsRef.current)
-      document.fonts?.ready?.then(measure)
+      const frame = requestAnimationFrame(reserveMarkerRow)
       return () => {
         cancelled = true
         cancelAnimationFrame(frame)
-        observer?.disconnect()
       }
-    }, [this.editor, shape.id, shape.props.w, commentLayoutKey, comments.length])
-    const { cardNumber, cardCount } = pageInfo
+    }, [this.editor, shape.id])
     // Ephemeral agent presence: a soft orange glow when the agent is looking at
     // (read_cards) or has just acted on this card. Reading the atom here is
     // reactive (this component is tldraw-`track`ed, same as the zoom read above),
@@ -814,46 +839,21 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
               </>
             )}
           </div>
-          {/* Comments keep their full-size box at every zoom, including type
-              label and resolve button — zoomed out past the gist threshold,
-              only the BODY swaps to the comment's own model gist (same
-              treatment the card's own text gets just above), sized up with
-              gistFontSize so it stays legible. */}
-          {comments.length > 0 && (
-            <div ref={commentsRef} className="elves-comments" onPointerDown={(e) => e.stopPropagation()}>
-              {comments.map((c, index) => (
-                <div
-                  key={c.id}
-                  className="elves-comment"
-                  data-type={c.type ?? 'freeform'}
-                >
-                  <div className="elves-comment__body">
-                    {c.type && <span className="elves-comment__type">{c.type}</span>}
-                    <span
-                      className="elves-comment__text"
-                      style={showGist ? { fontSize: gistFontSize(zoom) } : undefined}
-                    >
-                      {showGist ? commentGist(c) : c.text}
-                    </span>
-                  </div>
-                  <button
-                    className="elves-comment__resolve"
-                    data-testid="comment-resolve"
-                    title="Resolve"
-                    aria-label={`Resolve comment ${index + 1} of ${comments.length} on card ${cardNumber} of ${cardCount}: ${mechanicalGist(c.text, 80) || 'empty text'}`}
-                    onClick={() =>
-                      this.editor.updateShape<CardShape>({
-                        id: shape.id, type: 'card',
-                        props: { comments: resolveComment(shape.props.comments, c.id) },
-                      })
-                    }
-                  >
-                    <span aria-hidden="true">×</span>
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+          {pins.map(({ commentId, offsetY }) => {
+            const comment = comments.find((entry) => entry.id === commentId)
+            return comment ? (
+              <AnnotationPin
+                key={comment.id}
+              comment={comment}
+                offsetY={offsetY}
+                zoom={zoom}
+              onOpen={() => requestAnnotationOpen({ kind: 'card', cardId: shape.id, commentId: comment.id })}
+              target={{ kind: 'card', cardId: shape.id, commentId: comment.id }}
+              onReply={requestAnnotationReply}
+              onRetry={requestAnnotationRetry}
+              />
+            ) : null
+          })}
           {/* The peek: the merged cards fanned out to the right, read-only, each
               showing its full text so you can see exactly what was collapsed.
               stopPropagation lets you click/select the text without the canvas

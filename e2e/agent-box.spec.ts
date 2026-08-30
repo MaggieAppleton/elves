@@ -96,7 +96,38 @@ test('pressing / opens the box and streams a transcript', async ({ page }) => {
   const transcript = page.getByTestId('agent-transcript')
   await expect(transcript).toContainText('Looking at your cards.')
   // The tool name renders with underscores turned to spaces.
-  await expect(transcript).toContainText('read map')
+  await expect(page.locator('[data-kind="user"]')).toHaveText('critique my argument')
+  await expect(page.locator('[data-kind="text"]').filter({ hasText: 'Looking at your cards.' }))
+    .toHaveCount(1)
+  await expect(page.locator('[data-kind="tool"]')).toContainText('read map')
+  await expect(page.getByTestId('agent-result')).toHaveText('Found two weak spots.')
+  await expect(page.getByTestId('agent-result')).toHaveCount(1)
+})
+
+test('a suggested task fills the prompt without sending it', async ({ page }) => {
+  let runRequests = 0
+  await page.route('**/agent/run', (route) => {
+    runRequests += 1
+    return route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body: sse([dataFrame({ type: 'done', reply: 'Ready.' })]),
+    })
+  })
+
+  await openReadyCanvas(page)
+  await page.keyboard.press('/')
+
+  const suggestions = page.locator('[data-testid^="agent-suggestion-"]')
+  await expect(suggestions).toHaveCount(3)
+  await page.getByTestId('agent-suggestion-critique').click()
+  await expect(page.getByTestId('agent-input')).toHaveValue('Critique the overall canvas.')
+  await expect(page.getByTestId('agent-send')).toBeEnabled()
+  expect(runRequests).toBe(0)
+
+  await page.getByTestId('agent-send').click()
+  await expect(suggestions).toHaveCount(0)
+  expect(runRequests).toBe(1)
 })
 
 test('the submitted message is pinned above the tool calls and replies', async ({ page }) => {

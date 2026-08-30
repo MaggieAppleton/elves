@@ -1,5 +1,8 @@
-import { CommentType, Reference, RefType } from './types'
+import { AnnotationMessage, CommentType, Reference, RefType } from './types'
 import { isPersonalityId, type PersonalityId } from './reviews'
+
+/** Keeps durable annotation turns below a safe command-line prompt budget. */
+export const MAX_ANNOTATION_MESSAGE_CHARS = 12_000
 
 export type Op =
   | {
@@ -20,6 +23,11 @@ export type Op =
   | { kind: 'create_question'; text: string; x: number; y: number }
   | { kind: 'create_feedback'; text: string; x: number; y: number; feedback: { type: CommentType | null; reviewId?: string | null; reviewer?: PersonalityId | null } }
   | { kind: 'resolve_feedback'; feedbackId: string }
+  | {
+      kind: 'append_annotation_message'
+      target: { kind: 'card'; cardId: string; commentId: string } | { kind: 'feedback'; feedbackId: string }
+      message: AnnotationMessage
+    }
   | { kind: 'group_cards'; cardIds: string[] }
   | { kind: 'ungroup_cards'; groupId: string }
   | {
@@ -65,6 +73,25 @@ function isStringOrNull(v: unknown): boolean {
 
 function isFiniteNumber(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v)
+}
+
+function isAnnotationMessage(value: unknown): value is AnnotationMessage {
+  if (typeof value !== 'object' || value === null || hasPrototypeLikeKey(value)) return false
+  const message = value as Record<string, unknown>
+  return typeof message.id === 'string' && message.id.length > 0 &&
+    typeof message.author === 'string' && message.author.length > 0 &&
+    typeof message.text === 'string' && message.text.trim().length > 0 &&
+    message.text.length <= MAX_ANNOTATION_MESSAGE_CHARS &&
+    typeof message.createdAt === 'string' && message.createdAt.length > 0 &&
+    (message.inReplyToMessageId === undefined ||
+      (typeof message.inReplyToMessageId === 'string' && message.inReplyToMessageId.length > 0))
+}
+
+function isAnnotationTarget(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || hasPrototypeLikeKey(value)) return false
+  const target = value as Record<string, unknown>
+  return (target.kind === 'card' && typeof target.cardId === 'string' && typeof target.commentId === 'string') ||
+    (target.kind === 'feedback' && typeof target.feedbackId === 'string')
 }
 
 const PROTOTYPE_LIKE_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
@@ -180,6 +207,7 @@ function isOp(v: unknown): v is Op {
         (f.reviewer === undefined || f.reviewer === null || isPersonalityId(f.reviewer))
     }
     case 'resolve_feedback': return typeof op.feedbackId === 'string'
+    case 'append_annotation_message': return isAnnotationTarget(op.target) && isAnnotationMessage(op.message)
     case 'group_cards':
       return Array.isArray(op.cardIds) && op.cardIds.length >= 2 &&
         op.cardIds.every((id) => typeof id === 'string')
@@ -295,6 +323,7 @@ export function changeSetWritesText(cs: ChangeSet): boolean {
       case 'create_question':
       case 'create_feedback':
       case 'resolve_feedback':
+      case 'append_annotation_message':
       case 'group_cards':
       case 'ungroup_cards':
       case 'set_summary':
@@ -335,6 +364,7 @@ export function referencedCardIds(cs: ChangeSet): string[] {
     else if (op.kind === 'set_comment_summary') ids.push(op.cardId)
     else if (op.kind === 'edit_card') ids.push(op.cardId)
     else if (op.kind === 'delete_card') ids.push(op.cardId)
+    else if (op.kind === 'append_annotation_message' && op.target.kind === 'card') ids.push(op.target.cardId)
   }
   return ids
 }
@@ -392,5 +422,8 @@ export function referencedQuestionIds(cs: ChangeSet): string[] {
 }
 
 export function referencedFeedbackIds(cs: ChangeSet): string[] {
-  return cs.ops.flatMap((op) => op.kind === 'resolve_feedback' ? [op.feedbackId] : [])
+  return cs.ops.flatMap((op) =>
+    op.kind === 'resolve_feedback' ? [op.feedbackId]
+      : op.kind === 'append_annotation_message' && op.target.kind === 'feedback' ? [op.target.feedbackId]
+        : [])
 }

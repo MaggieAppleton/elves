@@ -1,59 +1,67 @@
-import { ShapeUtil, TLBaseShape, HTMLContainer, Rectangle2d, T, stopEventPropagation, type Editor, type Geometry2d } from 'tldraw'
-import { useLayoutEffect, type ReactNode } from 'react'
-import { makeFeedbackProps } from '../model/feedback'
-import { measuredFeedbackHeight } from './autosize'
-import { agentInfo } from './agents'
+import {
+  ShapeUtil, TLBaseShape, HTMLContainer, Rectangle2d, T,
+  createShapePropsMigrationIds, createShapePropsMigrationSequence,
+  type Geometry2d,
+} from 'tldraw'
+import { FEEDBACK_DEFAULT_H, FEEDBACK_DEFAULT_W, makeFeedbackProps } from '../model/feedback'
+import { AnnotationPin } from '../components/AnnotationThread'
+import { requestAnnotationOpen, requestAnnotationReply, requestAnnotationRetry } from '../client/annotationSelection'
 import './feedback.css'
 
 export type FeedbackShape = TLBaseShape<'feedback', ReturnType<typeof makeFeedbackProps>>
 
-function AutosizeFeedback({
-  editor, shape, children,
-}: { editor: Editor; shape: FeedbackShape; children: ReactNode }) {
-  const { text, w, h } = shape.props
-  useLayoutEffect(() => {
-    let cancelled = false
-    const fit = () => {
-      if (cancelled) return
-      const current = editor.getShape<FeedbackShape>(shape.id)
-      if (!current) return
-      const height = measuredFeedbackHeight(editor, current.props.text, current.props.w)
-      if (Math.abs(height - current.props.h) > 1) {
-        editor.run(() => {
-          editor.updateShape<FeedbackShape>({
-            id: current.id,
-            type: 'feedback',
-            props: { h: height },
-          })
-        }, { history: 'ignore' })
-      }
-    }
-    fit()
-    document.fonts?.ready?.then(fit)
-    return () => { cancelled = true }
-  }, [editor, shape.id, text, w, h])
-  return <>{children}</>
+const LEGACY_FEEDBACK_W = 370
+const LEGACY_FEEDBACK_H = 96
+
+/** Existing feedback was stored as a card-sized shape. Its saved x/y stays
+ * untouched; only its hit-test rectangle changes to match the compact pin. */
+export function compactFeedbackPinUp(props: Record<string, unknown>): void {
+  props.w = FEEDBACK_DEFAULT_W
+  props.h = FEEDBACK_DEFAULT_H
 }
+
+export function compactFeedbackPinDown(props: Record<string, unknown>): void {
+  if (props.w === FEEDBACK_DEFAULT_W && props.h === FEEDBACK_DEFAULT_H) {
+    props.w = LEGACY_FEEDBACK_W
+    props.h = LEGACY_FEEDBACK_H
+  }
+}
+
+const feedbackVersions = createShapePropsMigrationIds('feedback', { CompactPin: 1 })
+export const feedbackMigrations = createShapePropsMigrationSequence({
+  sequence: [{
+    id: feedbackVersions.CompactPin,
+    up: (props) => compactFeedbackPinUp(props as Record<string, unknown>),
+    down: (props) => compactFeedbackPinDown(props as Record<string, unknown>),
+  }],
+})
 
 export class FeedbackShapeUtil extends ShapeUtil<FeedbackShape> {
   static override type = 'feedback' as const
+  static override migrations = feedbackMigrations
   static override props = {
     w: T.number, h: T.number, text: T.string, authoredBy: T.string,
     type: T.nullable(T.string), reviewId: T.nullable(T.string), reviewer: T.nullable(T.string), resolved: T.boolean,
+    messages: T.arrayOf(T.object({ id: T.string, author: T.string, text: T.string, createdAt: T.string, inReplyToMessageId: T.string.optional() })).optional(),
   }
   getDefaultProps(): FeedbackShape['props'] { return makeFeedbackProps() }
   getGeometry(shape: FeedbackShape): Geometry2d { return new Rectangle2d({ width: shape.props.w, height: shape.props.h, isFilled: true }) }
   component(shape: FeedbackShape) {
-    const agent = agentInfo(shape.props.authoredBy)
-    const reviewer = shape.props.reviewer ? shape.props.reviewer.replaceAll('-', ' ') : null
-    return <AutosizeFeedback editor={this.editor} shape={shape}>
+    if (shape.props.resolved) return null
+    return (
       <HTMLContainer style={{ overflow: 'visible' }}>
-        <div className="elves-feedback" data-resolved={shape.props.resolved || undefined} style={{ width: '100%', height: '100%' }}>
-          <div className="elves-feedback__meta"><span>{reviewer ?? 'Agent feedback'}{agent && reviewer ? ` · ${agent.name}` : !reviewer ? ` · ${agent?.name ?? shape.props.authoredBy}` : ''}</span>{shape.props.type && <span>{shape.props.type.replaceAll('-', ' ')}</span>}<button type="button" className="elves-feedback__resolve" aria-label="Resolve feedback" onPointerDown={stopEventPropagation} onClick={(event) => { stopEventPropagation(event); this.editor.updateShape<FeedbackShape>({ id: shape.id, type: 'feedback', props: { resolved: true } }) }}>✓</button></div>
-          <div className="elves-feedback__text">{shape.props.text}</div>
-        </div>
+        <AnnotationPin
+          className="elves-feedback-pin"
+          comment={{ id: shape.id, type: shape.props.type, text: shape.props.text, resolved: false, author: shape.props.authoredBy, messages: shape.props.messages }}
+          zoom={this.editor.getZoomLevel()}
+          attribution={shape.props.reviewer?.replaceAll('-', ' ')}
+          target={{ kind: 'feedback', feedbackId: shape.id }}
+          onOpen={() => requestAnnotationOpen({ kind: 'feedback', feedbackId: shape.id })}
+          onReply={requestAnnotationReply}
+          onRetry={requestAnnotationRetry}
+        />
       </HTMLContainer>
-    </AutosizeFeedback>
+    )
   }
   indicator(shape: FeedbackShape) { return <rect width={shape.props.w} height={shape.props.h} rx={8} /> }
   override canResize() { return false }

@@ -1,5 +1,4 @@
-import type { CommentType } from './types'
-import { CARD_DEFAULT_W } from './types'
+import type { AnnotationMessage, CommentType } from './types'
 import type { PersonalityId } from './reviews'
 
 export interface FeedbackProps {
@@ -11,10 +10,13 @@ export interface FeedbackProps {
   reviewId: string | null
   reviewer: PersonalityId | null
   resolved: boolean
+  /** Optional so existing feedback annotations remain readable as one Claude turn. */
+  messages?: AnnotationMessage[]
 }
 
-export const FEEDBACK_DEFAULT_W = CARD_DEFAULT_W
-export const FEEDBACK_DEFAULT_H = 96
+/** Feedback is now a compact point annotation, not an invisible card. */
+export const FEEDBACK_DEFAULT_W = 28
+export const FEEDBACK_DEFAULT_H = 28
 
 /** Resolved feedback stays in the document for history, but leaves the active
  * canvas entirely — both rendering and hit-testing. */
@@ -31,6 +33,6 @@ export function makeFeedbackProps(
   return {
     w: FEEDBACK_DEFAULT_W, h: FEEDBACK_DEFAULT_H, text, authoredBy,
     type: metadata.type ?? null, reviewId: metadata.reviewId ?? null,
-    reviewer: metadata.reviewer ?? null, resolved: false,
+    reviewer: metadata.reviewer ?? null, resolved: false, messages: [],
   }
 }

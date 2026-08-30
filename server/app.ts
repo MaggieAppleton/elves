@@ -8,7 +8,10 @@ import {
   isChangeSet,
   ChangeSet,
   changeSetWritesText,
+  MAX_ANNOTATION_MESSAGE_CHARS,
 } from '../src/model/changeset'
+import { threadMessages } from '../src/model/comments'
+import type { AnnotationMessage } from '../src/model/types'
 import type { PresenceMessage } from '../src/model/presence'
 import {
   snapshotToCardMap, snapshotToCardsById, snapshotToDraft,
@@ -63,6 +66,7 @@ const MAX_OEMBED_BYTES = 200_000
 const CANVAS_REVISION_HEADER = 'x-elves-canvas-revision'
 const MAX_AGENT_HISTORY_MESSAGES = 12
 const MAX_AGENT_HISTORY_CHARS = 12_000
+const MAX_ANNOTATION_CONTEXT_CHARS = 12_000
 
 function parseAgentHistory(value: unknown): AgentConversationMessage[] | null {
   if (value === undefined) return []
@@ -79,6 +83,26 @@ function parseAgentHistory(value: unknown): AgentConversationMessage[] | null {
     history.push({ role: expectedRole, text })
   }
   return history
+}
+
+function boundedAnnotationText(text: string, maximum: number): string {
+  return text.length <= maximum ? text : text.slice(0, maximum)
+}
+
+/** Existing canvases may contain arbitrarily large turns, so bound the input
+ * here too instead of relying solely on the current change-set validator. */
+function annotationHistory(messages: AnnotationMessage[]): AgentConversationMessage[] {
+  const newestFirst: AgentConversationMessage[] = []
+  let chars = 0
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (newestFirst.length >= MAX_AGENT_HISTORY_MESSAGES) break
+    const text = boundedAnnotationText(message.text, MAX_ANNOTATION_MESSAGE_CHARS)
+    if (chars + text.length > MAX_AGENT_HISTORY_CHARS) break
+    chars += text.length
+    newestFirst.push({ role: message.author === 'user' ? 'user' : 'assistant', text })
+  }
+  return newestFirst.reverse()
 }
 
 type ProjectPaths = { canvasPath: string; assetsDir: string }
@@ -1096,6 +1120,167 @@ export function createServer(
       res.json({ ok: true })
     }),
   )
+
+  // --- Annotation reply runs -----------------------------------------------
+  // Annotation conversations are deliberately separate from the generic chat
+  // key: each target is single-flight, while unrelated pins remain replyable.
+  const activeAnnotationReplies = new Map<string, Promise<void>>()
+  type AnnotationTarget =
+    | { kind: 'card'; cardId: string; commentId: string }
+    | { kind: 'feedback'; feedbackId: string }
+  const annotationTarget = (value: unknown): AnnotationTarget | null => {
+    if (!isRecord(value)) return null
+    if (value.kind === 'card' && typeof value.cardId === 'string' && typeof value.commentId === 'string') {
+      return { kind: 'card', cardId: value.cardId, commentId: value.commentId }
+    }
+    if (value.kind === 'feedback' && typeof value.feedbackId === 'string') {
+      return { kind: 'feedback', feedbackId: value.feedbackId }
+    }
+    return null
+  }
+  // Keep the target lock separate from the durable message id. The latter
+  // makes retry idempotent, but permits a later user turn to overlap with an
+  // active turn if it is also used as the lock identity.
+  const annotationRunKey = (projectId: string, target: AnnotationTarget) => target.kind === 'card'
+    ? `annotation:${projectId}:card:${target.cardId}:${target.commentId}`
+    : `annotation:${projectId}:feedback:${target.feedbackId}`
+  const annotationThreadFromCanvas = (canvas: CanvasSnapshot, target: AnnotationTarget) => {
+    const store = (canvas as any)?.document?.store as Record<string, any> | undefined
+    if (!store) return null
+    if (target.kind === 'card') {
+      const shape = store[target.cardId]
+      const comment = Array.isArray(shape?.props?.comments)
+        ? shape.props.comments.find((candidate: any) => candidate?.id === target.commentId)
+        : null
+      if (!comment) return null
+      return { text: shape.props.text ?? '', messages: threadMessages(comment) }
+    }
+    const shape = store[target.feedbackId]
+    if (shape?.type !== 'feedback') return null
+    return { text: shape.props.text ?? '', messages: threadMessages({ id: shape.id, author: shape.props.authoredBy, text: shape.props.text, messages: shape.props.messages }) }
+  }
+  const appendAnnotationMessage = async (
+    projectId: string,
+    response: Response,
+    target: AnnotationTarget,
+    message: AnnotationMessage,
+    changeSetId: string,
+  ): Promise<boolean> => {
+    const changeSet: ChangeSet = {
+      id: changeSetId,
+      author: message.author,
+      ops: [{ kind: 'append_annotation_message', target, message }],
+    }
+    const digest = changeSetDigest(changeSet)
+    let persisted = false
+    const mutation = await withProjectMutation(projectId, response, async (paths) => {
+      await withCanvasLock(paths.canvasPath, (canvas) => {
+        const result = admitLegacyChangeSet(canvas, changeSet, digest)
+        if (result.kind === 'applied') {
+          persisted = true
+          return result.snapshot
+        }
+        if (result.kind === 'duplicate') persisted = true
+        return null
+      })
+      return true
+    })
+    if (mutation === null) return false
+    if (persisted) onChangeSet?.(projectId, changeSet)
+    return persisted
+  }
+
+  app.post('/projects/:id/annotations/run', wrap(async (req, res) => {
+    if (!agent) {
+      res.status(501).json({ error: 'agent runs are not configured on this server' })
+      return
+    }
+    const target = annotationTarget(req.body?.target)
+    const messageId = req.body?.messageId
+    const runId = req.body?.runId
+    if (!target || typeof messageId !== 'string' || !messageId || typeof runId !== 'string' || !runId) {
+      res.status(400).json({ error: 'target, messageId, and runId are required' })
+      return
+    }
+    const paths = await requireProject(req.params.id, res)
+    if (!paths) return
+    const thread = annotationThreadFromCanvas(await readCanvas(paths.canvasPath), target)
+    const requestedMessageIndex = thread?.messages.findIndex((message) =>
+      message.id === messageId && message.author === 'user') ?? -1
+    if (!thread || requestedMessageIndex < 0) {
+      res.status(409).json({ error: 'the persisted user reply is unavailable' })
+      return
+    }
+    const requestedMessage = thread.messages[requestedMessageIndex]
+    // New replies explicitly identify their source user turn. Keep the id
+    // fallback solely for replies saved before that field existed.
+    const completedReply = thread.messages.find((message) => message.author !== 'user' && (
+      message.inReplyToMessageId === messageId ||
+      (message.inReplyToMessageId === undefined && message.id === `${messageId}:claude`)
+    ))
+    if (completedReply) {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform' })
+      res.write(`data: ${JSON.stringify({ type: 'done', reply: completedReply.text })}\n\n`)
+      res.end('event: end\ndata: {}\n\n')
+      return
+    }
+    const history = annotationHistory(thread.messages.slice(0, requestedMessageIndex))
+    const prompt = [
+      'Reply to the user in this annotation thread. Keep the reply focused on the annotation; do not edit the canvas.',
+      `Annotation target: ${target.kind === 'card' ? `card ${target.cardId}, comment ${target.commentId}` : `feedback ${target.feedbackId}`}.`,
+      `Annotated context: ${boundedAnnotationText(thread.text, MAX_ANNOTATION_CONTEXT_CHARS)}`,
+      `User reply: ${boundedAnnotationText(requestedMessage.text, MAX_ANNOTATION_MESSAGE_CHARS)}`,
+    ].join('\n')
+    const key = annotationRunKey(req.params.id, target)
+    if (activeAnnotationReplies.has(key)) {
+      res.status(409).json({ code: 'annotation-reply-active', error: 'a reply for this message is already running', retryable: true })
+      return
+    }
+    const buffered: AgentEvent[] = []
+    let streamReady = false
+    const send = (event: AgentEvent) => {
+      if (!streamReady) buffered.push(event)
+      else if (res.writable && !res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`)
+    }
+    let streamed = ''
+    let finalReply = ''
+    const run = agent.run(key, {
+      runId, projectId: req.params.id, hasSelection: false, prompt, history, profile: 'annotation-reply',
+    }, (event) => {
+      if (event.type === 'text') streamed += event.text
+      if (event.type === 'done') finalReply = event.reply || streamed
+      send(event)
+    })
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive', 'X-Accel-Buffering': 'no',
+    })
+    res.flushHeaders?.()
+    streamReady = true
+    for (const event of buffered) send(event)
+    const settled = run.catch((error) => {
+      console.error('[elves] annotation run failed:', error)
+      send({ type: 'error', message: 'the annotation run failed unexpectedly' })
+    }).then(async () => {
+      if (finalReply.trim()) {
+        const message: AnnotationMessage = {
+          id: `${messageId}:claude`, author: 'claude',
+          text: boundedAnnotationText(finalReply, MAX_ANNOTATION_MESSAGE_CHARS),
+          createdAt: new Date().toISOString(), inReplyToMessageId: messageId,
+        }
+        if (!await appendAnnotationMessage(req.params.id, res, target, message, `annotation-reply:${messageId}:claude`)) {
+          send({ type: 'error', message: 'Claude replied, but the annotation reply could not be saved.' })
+        }
+      }
+    }).finally(() => {
+      if (res.writable && !res.writableEnded) res.write('event: end\ndata: {}\n\n')
+      res.end()
+    })
+    activeAnnotationReplies.set(key, settled)
+    void settled.finally(() => {
+      if (activeAnnotationReplies.get(key) === settled) activeAnnotationReplies.delete(key)
+    })
+  }))
 
   // --- Per-project assets ---------------------------------------------------
 

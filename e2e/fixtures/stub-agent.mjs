@@ -9,9 +9,15 @@
 // real `claude` would get, and it simulates one review pass by hitting the
 // same HTTP endpoints the elves MCP tools call, straight from Node.
 //
-// It never touches Anthropic, never reasons about anything — it just parses
-// the review id and project id back out of its own argv and plays the review
-// state machine forward.
+// It never touches Anthropic or reasons about anything. It either plays the
+// review state machine forward, or emits the small stream-json conversation
+// that an annotation reply needs.
+
+const pause = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+
+function emit(event) {
+  process.stdout.write(`${JSON.stringify(event)}\n`)
+}
 
 async function main() {
   const argv = process.argv.slice(2)
@@ -19,6 +25,24 @@ async function main() {
   // `-p <prompt>` carries the review id: "...id `<reviewId>`. Call `start_review`..."
   const pIndex = argv.indexOf('-p')
   const prompt = pIndex >= 0 ? argv[pIndex + 1] : ''
+
+  if (prompt?.includes('Reply to the user in this annotation thread.')) {
+    const userReply = /^User reply: (.+)$/m.exec(prompt)?.[1]
+    if (!userReply) {
+      console.error('stub-agent: missing annotation user reply')
+      process.exit(1)
+    }
+    emit({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'Stub is checking likely sources…' }] },
+    })
+    // Keep the first event observable in the browser before the terminal
+    // result replaces the transient stream with the durable Claude message.
+    await pause(1500)
+    emit({ type: 'result', is_error: false, result: `Stub annotation reply: ${userReply}` })
+    return
+  }
+
   const reviewIdMatch = /id `([^`]+)`/.exec(prompt || '')
   const reviewId = reviewIdMatch?.[1]
 

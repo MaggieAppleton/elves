@@ -166,6 +166,14 @@ describe('isChangeSet', () => {
     ] })).toBe(false)
   })
 
+  test('rejects an annotation turn too large to pass safely to an agent process', () => {
+    expect(isChangeSet({ id: 'x', author: 'user', ops: [{
+      kind: 'append_annotation_message',
+      target: { kind: 'feedback', feedbackId: 'shape:feedback' },
+      message: { id: 'huge', author: 'user', text: 'x'.repeat(12_001), createdAt: 'T' },
+    }] })).toBe(false)
+  })
+
   test('rejects every non-finite semantic number', () => {
     const numericOps = [
       { kind: 'move_cards', moves: [{ cardId: 'a', x: 1, y: 2 }] },

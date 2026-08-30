@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { feedbackIsHidden, makeFeedbackProps } from '../../src/model/feedback'
+import { FEEDBACK_DEFAULT_H, FEEDBACK_DEFAULT_W, feedbackIsHidden, makeFeedbackProps } from '../../src/model/feedback'
 
 describe('floating feedback props', () => {
   test('preserves agent and review provenance while starting active', () => {
@@ -15,6 +15,14 @@ describe('floating feedback props', () => {
     expect(makeFeedbackProps('What is the central claim?', 'codex')).toMatchObject({
       authoredBy: 'codex', type: null, reviewId: null, reviewer: null, resolved: false,
     })
+  })
+
+  test('uses compact point geometry and initializes a durable thread', () => {
+    expect(makeFeedbackProps('Pin')).toMatchObject({
+      w: FEEDBACK_DEFAULT_W, h: FEEDBACK_DEFAULT_H, messages: [],
+    })
+    expect(FEEDBACK_DEFAULT_W).toBe(28)
+    expect(FEEDBACK_DEFAULT_H).toBe(28)
   })
 
   test('hides only resolved feedback from the active canvas', () => {

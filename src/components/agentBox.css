@@ -56,7 +56,7 @@
    or the whole canvas. Tinted with the accent only when a selection scopes it. */
 .elves-agentbox__scope {
   font-size: 11.5px;
-  font-weight: 500;
+  font-weight: 600;
   padding: 2px 8px;
   border-radius: 999px;
   color: var(--elves-ink-faint);
@@ -109,6 +109,48 @@
 .elves-agentbox__close svg {
   width: 15px;
   height: 15px;
+}
+
+/* --- Idle command dock ------------------------------------------------- */
+/* Three concise prompt starters orient a new session without behaving like
+   actions: they only place text in the composer, leaving Enter and Send as the
+   explicit run triggers. */
+.elves-agentbox__suggestions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--elves-border-subtle);
+}
+.elves-agentbox__suggestion {
+  appearance: none;
+  padding: 4px 8px;
+  border: 1px solid var(--elves-border-subtle);
+  border-radius: 999px;
+  background: var(--elves-surface-muted);
+  color: var(--elves-ink-soft);
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.25;
+  cursor: pointer;
+  transition: border-color 100ms ease, background-color 100ms ease, color 100ms ease;
+}
+.elves-agentbox__suggestion:hover {
+  border-color: color-mix(in srgb, var(--elves-claude-accent) 35%, var(--elves-border-strong));
+  background: color-mix(in srgb, var(--elves-claude-accent) 7%, var(--elves-surface));
+  color: var(--elves-ink);
+}
+.elves-agentbox__suggestion:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring);
+}
+.elves-agentbox__sendhint {
+  margin-left: auto;
+  color: var(--elves-ink-faint);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 /* --- Collapsed bar ------------------------------------------------------ */
@@ -235,7 +277,7 @@
   padding: 7px 11px;
   font-size: 14px;
   line-height: 1.5;
-  color: var(--elves-ink);
+  color: var(--elves-ink-soft);
   white-space: pre-wrap;
   background: var(--elves-surface-muted);
   border: 1px solid var(--elves-border-subtle);
@@ -249,12 +291,22 @@
   color: var(--elves-ink);
   white-space: pre-wrap;
 }
+.elves-agentbox__text[data-testid='agent-result'] {
+  padding: 9px 10px;
+  background: color-mix(in srgb, var(--elves-claude-accent) 5%, var(--elves-surface));
+  border: 1px solid color-mix(in srgb, var(--elves-claude-accent) 22%, var(--elves-border-subtle));
+  border-radius: 9px;
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--elves-claude-accent) 55%, transparent);
+}
 
 .elves-agentbox__tool {
   margin: 0;
+  padding: 3px 7px;
   font-size: 12.5px;
   line-height: 1.4;
   color: var(--elves-ink-faint);
+  background: var(--elves-surface-muted);
+  border-radius: 5px;
 }
 .elves-agentbox__tool-name {
   color: var(--elves-ink-soft);
@@ -267,9 +319,14 @@
 
 .elves-agentbox__error {
   margin: 0;
+  padding: 8px 10px;
   font-size: 13px;
+  font-weight: 600;
   line-height: 1.45;
   color: var(--elves-cc-evidence-label, #b4472a);
+  background: color-mix(in srgb, var(--elves-cc-evidence-label, #b4472a) 9%, var(--elves-surface));
+  border: 1px solid color-mix(in srgb, var(--elves-cc-evidence-label, #b4472a) 35%, var(--elves-border-subtle));
+  border-radius: 7px;
 }
 
 .elves-agentbox__working {
@@ -277,6 +334,7 @@
   align-items: center;
   gap: 7px;
   margin: 0;
+  padding: 2px 0;
   font-size: 12.5px;
   color: var(--elves-ink-faint);
 }

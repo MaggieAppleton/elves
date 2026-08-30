@@ -47,6 +47,8 @@ export interface AgentRunInput {
    * read_selection (scope to those) vs read_map (the whole canvas). */
   hasSelection: boolean
   history?: AgentConversationMessage[]
+  /** Annotation replies never mutate the canvas and therefore receive no MCP tools. */
+  profile?: 'chat' | 'annotation-reply'
 }
 
 // The agent gets full canvas powers (all elves MCP tools) plus read-only web,
@@ -55,6 +57,8 @@ export interface AgentRunInput {
 // that auto-allows them can't widen the blast radius.
 const ALLOWED_TOOLS = ['mcp__elves__*', 'WebSearch', 'WebFetch']
 const DISALLOWED_TOOLS = ['Bash', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit']
+const REPLY_ALLOWED_TOOLS: string[] = []
+const REPLY_DISALLOWED_TOOLS = [...DISALLOWED_TOOLS, 'mcp__elves__*']
 
 // Headless, no-TTY mode: listing tools in --allowedTools is NOT enough to skip
 // approval prompts — without a permission mode the child hangs waiting for a
@@ -409,10 +413,11 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
       })
       return Promise.resolve()
     }
+    const replyOnly = input.profile === 'annotation-reply'
     const { cmd, args } = adapter.buildCommand(input, {
       mcpConfigPath: deps.mcpConfigPath,
-      allowedTools: ALLOWED_TOOLS,
-      disallowedTools: DISALLOWED_TOOLS,
+      allowedTools: replyOnly ? REPLY_ALLOWED_TOOLS : ALLOWED_TOOLS,
+      disallowedTools: replyOnly ? REPLY_DISALLOWED_TOOLS : DISALLOWED_TOOLS,
     })
 
     let child: ChildLike

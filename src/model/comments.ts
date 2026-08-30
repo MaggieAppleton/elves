@@ -1,4 +1,43 @@
-import { Comment, CommentType } from './types'
+import { AnnotationMessage, Comment, CommentType } from './types'
+
+export type AnnotationThreadSource = Pick<Comment, 'id' | 'author' | 'text'> & {
+  messages?: AnnotationMessage[]
+}
+
+/**
+ * Projects a legacy annotation into the thread model without rewriting saved
+ * canvases.  The original annotation remains the canonical first Claude turn.
+ */
+export function threadMessages(annotation: AnnotationThreadSource): AnnotationMessage[] {
+  return annotation.messages?.length
+    ? annotation.messages
+    : [{
+        id: `${annotation.id}:initial`,
+        author: annotation.author,
+        text: annotation.text,
+        createdAt: '',
+      }]
+}
+
+export function commentThread(comment: AnnotationThreadSource): { messages: AnnotationMessage[] } {
+  return { messages: threadMessages(comment) }
+}
+
+/** Append exactly once, preserving an idempotency key across retrying clients. */
+export function appendThreadMessage<T extends AnnotationThreadSource>(
+  annotation: T,
+  message: AnnotationMessage,
+): T {
+  const messages = threadMessages(annotation)
+  if (messages.some((existing) => existing.id === message.id)) return annotation
+  const parentIndex = message.inReplyToMessageId === undefined
+    ? -1
+    : messages.findIndex((existing) => existing.id === message.inReplyToMessageId)
+  const nextMessages = parentIndex < 0
+    ? [...messages, message]
+    : [...messages.slice(0, parentIndex + 1), message, ...messages.slice(parentIndex + 1)]
+  return { ...annotation, messages: nextMessages }
+}
 
 export function makeComment(
   id: string,

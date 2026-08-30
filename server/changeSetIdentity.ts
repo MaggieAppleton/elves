@@ -90,6 +90,13 @@ function projectOp(op: Op): Op {
         type: op.feedback.type, reviewId: op.feedback.reviewId ?? null, reviewer: op.feedback.reviewer ?? null,
       } }
     case 'resolve_feedback': return { kind: 'resolve_feedback', feedbackId: op.feedbackId }
+    case 'append_annotation_message': return {
+      kind: 'append_annotation_message',
+      target: op.target.kind === 'card'
+        ? { kind: 'card', cardId: op.target.cardId, commentId: op.target.commentId }
+        : { kind: 'feedback', feedbackId: op.target.feedbackId },
+      message: { ...op.message },
+    }
     case 'group_cards':
       return { kind: 'group_cards', cardIds: op.cardIds.map((cardId) => cardId) }
     case 'ungroup_cards':

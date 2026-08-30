@@ -2,7 +2,7 @@ import { createShapeId } from '@tldraw/tlschema'
 import { getIndexAbove, IndexKey } from '@tldraw/utils'
 import type { CanvasSnapshot } from './store'
 import { CHANGE_SET_STAMP_META_KEY, ChangeSet, planMerge } from '../src/model/changeset'
-import { makeComment, addComment, estimateCommentHeight } from '../src/model/comments'
+import { makeComment, addComment, appendThreadMessage } from '../src/model/comments'
 import {
   makeNoteCardProps, makeReferenceCardProps, makeFigureCardProps, claudeMayEditCardText,
   CARD_DEFAULT_W, CARD_DEFAULT_H,
@@ -15,7 +15,6 @@ import { resolvePageXY } from './digest'
 import {
   CANVAS_GAP,
   placeBelowObstacles,
-  reflowVerticalLane,
   type LayoutItem,
   type LayoutRect,
 } from '../src/model/layout'
@@ -136,24 +135,6 @@ function parentOrigin(store: StoreRecords, shape: any): { x: number; y: number }
   return parent && parent.typeName === 'shape' ? resolvePageXY(store, parent) : { x: 0, y: 0 }
 }
 
-function reflowCardLaneInStore(
-  store: StoreRecords,
-  anchorId: string,
-  previousAnchorHeight: number,
-): void {
-  for (const move of reflowVerticalLane(
-    anchorId,
-    existingCanvasItems(store),
-    previousAnchorHeight,
-  )) {
-    const shape = store[move.id]
-    if (!shape || shape.typeName !== 'shape' || (shape.type !== 'card' && shape.type !== 'question')) continue
-    const origin = parentOrigin(store, shape)
-    shape.x = move.x - origin.x
-    shape.y = move.y - origin.y
-  }
-}
-
 function findSectionShape(store: StoreRecords, id: string): any | undefined {
   const r = store[id]
   return r && r.typeName === 'shape' && r.type === 'section' ? r : undefined
@@ -199,14 +180,28 @@ export function applyChangeSetToSnapshot(
       case 'add_comment': {
         const shape = findCardShape(store, op.cardId)
         if (!shape) break
-        const previousHeight = cardOccupiedHeight(shape)
         const comment = makeComment(
           `cmt-${crypto.randomUUID()}`, op.comment.text, op.comment.type, cs.author,
           op.comment.reviewId ?? null,
         )
         shape.props.comments = addComment(shape.props.comments ?? [], comment)
-        shape.props.commentH = estimateCommentHeight(shape.props.comments, shape.props.w ?? CARD_DEFAULT_W)
-        reflowCardLaneInStore(store, shape.id, previousHeight)
+        // Pins sit beside the card, so an annotation has no vertical document
+        // footprint and must not move its downstream lane neighbours.
+        shape.props.commentH = 0
+        break
+      }
+      case 'append_annotation_message': {
+        if (op.target.kind === 'card') {
+          const { cardId, commentId } = op.target
+          const shape = findCardShape(store, cardId)
+          const comments = shape?.props.comments
+          if (!Array.isArray(comments)) break
+          shape.props.comments = comments.map((comment: any) =>
+            comment?.id === commentId ? appendThreadMessage(comment, op.message) : comment)
+        } else {
+          const shape = findFeedbackShape(store, op.target.feedbackId)
+          if (shape) shape.props = appendThreadMessage(shape.props, op.message)
+        }
         break
       }
       case 'merge_notes': {

@@ -3,6 +3,7 @@ import { Broom, CaretDown, Check, PaperPlaneRight } from '@phosphor-icons/react'
 import { agentInfo } from '../shapes/agents'
 import { runAgent, type AgentEvent, type AgentRunHandle } from '../client/agent'
 import { deriveStatus } from '../client/agentStatus'
+import { agentSuggestions } from '../client/agentSuggestions'
 import type { AgentConversationMessage } from '../../server/agentRun'
 import './agentBox.css'
 
@@ -282,6 +283,14 @@ export function AgentBox({
   }
 
   const hasTranscript = entries.length > 0 || running
+  // A stream can contain several prose events before its terminal reply. Only
+  // the last prose line of a settled run is the result: giving the selector to
+  // a streamed line would make assistive and test consumers mistake
+  // in-progress thought for the completed answer.
+  const lastAgentTextIndex = entries.reduce(
+    (last, entry, index) => entry.kind === 'text' ? index : last,
+    -1,
+  )
 
   return (
     <div className="elves-agentbox" role="dialog" aria-label="Ask an agent">
@@ -320,30 +329,52 @@ export function AgentBox({
         </div>
       </div>
 
+      {!hasTranscript && (
+        <div className="elves-agentbox__suggestions" role="group" aria-label="Suggested agent tasks">
+          {agentSuggestions(hasSelection).map((suggestion) => (
+            <button
+              key={suggestion.id}
+              type="button"
+              className="elves-agentbox__suggestion"
+              data-testid={`agent-suggestion-${suggestion.id}`}
+              onClick={() => setPrompt(suggestion.prompt)}
+            >
+              {suggestion.label}
+            </button>
+          ))}
+          <span className="elves-agentbox__sendhint">Enter to send</span>
+        </div>
+      )}
+
       {hasTranscript && (
         <div className="elves-agentbox__transcript" ref={scrollRef} data-testid="agent-transcript">
           {entries.map((en, i) =>
             en.kind === 'user' ? (
-              <p className="elves-agentbox__user" key={i}>
+              <p className="elves-agentbox__user" data-kind="user" key={i}>
                 {en.text}
               </p>
             ) : en.kind === 'text' ? (
-              <p className="elves-agentbox__text" key={i}>
+              <p
+                className="elves-agentbox__text"
+                data-kind="text"
+                data-testid={!running && i === lastAgentTextIndex ? 'agent-result' : undefined}
+                key={i}
+              >
                 {en.text}
               </p>
             ) : en.kind === 'tool' ? (
-              <p className="elves-agentbox__tool" key={i}>
+              <p className="elves-agentbox__tool" data-kind="tool" key={i}>
                 <span className="elves-agentbox__tool-name">{en.name.replace(/_/g, ' ')}</span>
                 {en.summary && <span className="elves-agentbox__tool-summary"> {en.summary}</span>}
               </p>
             ) : (
-              <p className="elves-agentbox__error" key={i}>
+              <p className="elves-agentbox__error" data-kind="error" role="alert" key={i}>
                 {en.message}
               </p>
             ),
           )}
           {running && (
-            <p className="elves-agentbox__working" aria-live="polite">
+            <p className="elves-agentbox__working" data-kind="working" aria-live="polite">
               <span className="elves-agentbox__dot" />
               working…
             </p>

@@ -3,9 +3,11 @@ import {
   addCommentsUp, addAssetIdUp, addReferenceUp, addSummaryUp,
   renameSourceToNoteUp, renameSourceToNoteDown, addAuthoredByUp, addDraftExcludedUp, addFigureUp,
   addAttributionUp, addCommentSummaryUp, addCommentReviewIdUp,
-  addCommentHeightUp,
+  addCommentHeightUp, addCommentMessagesUp,
+  removeCommentFootprintUp,
 } from '../../src/shapes/CardShapeUtil'
 import { addQuestionSummaryUp, removeQuestionSummaryDown } from '../../src/shapes/QuestionShapeUtil'
+import { compactFeedbackPinDown, compactFeedbackPinUp } from '../../src/shapes/FeedbackShapeUtil'
 
 test('migration adds comments[] and mergedInto to a pre-Phase-2 card', () => {
   const oldProps: Record<string, unknown> = {
@@ -141,6 +143,45 @@ test('AddCommentReviewId migration preserves an existing reviewId rather than cl
   }
   addCommentReviewIdUp(props)
   expect((props.comments as any[])[0].reviewId).toBe('rev-1')
+})
+
+test('AddCommentMessages migration preserves threaded snapshots and initializes legacy comments', () => {
+  const props: Record<string, unknown> = { comments: [
+    { id: 'legacy' },
+    { id: 'threaded', messages: [{ id: 'm1', author: 'user', text: 'Which source?', createdAt: 'T' }] },
+  ] }
+  addCommentMessagesUp(props)
+  expect(props.comments).toEqual([
+    { id: 'legacy', messages: [] },
+    { id: 'threaded', messages: [{ id: 'm1', author: 'user', text: 'Which source?', createdAt: 'T' }] },
+  ])
+})
+
+test('feedback pin migration compacts legacy geometry and round-trips it', () => {
+  const props: Record<string, unknown> = {
+    w: 370, h: 96, text: 'The bridge is missing.', authoredBy: 'claude',
+    type: 'structure', reviewId: null, reviewer: null, resolved: false,
+  }
+
+  compactFeedbackPinUp(props)
+  expect(props).toMatchObject({ w: 28, h: 28 })
+
+  compactFeedbackPinDown(props)
+  expect(props).toMatchObject({ w: 370, h: 96 })
+})
+
+test('feedback pin migration compacts autosized legacy geometry', () => {
+  const props: Record<string, unknown> = { w: 370, h: 228 }
+
+  compactFeedbackPinUp(props)
+
+  expect(props).toMatchObject({ w: 28, h: 28 })
+})
+
+test('card pin migration removes an existing comment footprint', () => {
+  const props: Record<string, unknown> = { commentH: 178, comments: [{ id: 'c1' }] }
+  removeCommentFootprintUp(props)
+  expect(props.commentH).toBe(0)
 })
 
 test('AddCommentReviewId migration is a no-op when comments is missing or not an array', () => {
