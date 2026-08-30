@@ -258,6 +258,19 @@ test('the gate falls back to rejecting when the local model is unreachable', asy
   await client.close()
 })
 
+test('the gate passes a value through unchanged when it has nothing to check', async () => {
+  // An empty string is valid per the schema and the gate does not examine it,
+  // so it must arrive downstream as the empty string — not as a missing
+  // argument. A gate that does not read a value must not alter it.
+  const client = await connectClient()
+  const { text } = await callText(client, 'add_comment', { project: 'p', cardId: 'c', text: '' })
+  expect(text).not.toContain('house-style')
+  // The call reached the transport (and failed on the dead port) rather than
+  // being mangled into a malformed request before it got there.
+  expect(text).not.toContain('undefined')
+  await client.close()
+})
+
 test("quoting the user's prose passes the gate", async () => {
   const client = await connectClient()
   const { text } = await callText(client, 'add_comment', {

@@ -119,8 +119,13 @@ async function styleGate(fields: { field: string; text?: string | null }[]): Pro
   const repairs: string[] = []
 
   for (const { field, text } of fields) {
+    // Nothing to check: an absent optional field, or an empty string that zod
+    // lets through. Echo the input back exactly — pushing `undefined` for an
+    // empty string would quietly turn it into a missing argument downstream,
+    // which is a different call from the one the agent made. A gate that does
+    // not examine a value must not alter it either.
     if (!text) {
-      texts.push(undefined)
+      texts.push(text ?? undefined)
       continue
     }
     const hits = lintProse(text)
