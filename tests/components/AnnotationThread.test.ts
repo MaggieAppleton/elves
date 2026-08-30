@@ -46,11 +46,57 @@ test('open mode exposes reply, retry, resolve, and close actions', () => {
     .toBe('Close annotation thread')
   const resolve = tree.root.findByProps({ className: 'elves-annotation-thread__resolve' })
   expect(resolve.props['aria-label']).toBe('Resolve Comment comment')
-  expect(tree.root.findAllByType('button').some((button) => button.children.includes('Retry'))).toBe(true)
+  const retry = tree.root.findAllByType('button').find((button) => button.children.includes('Retry'))
+  expect(retry).toBeTruthy()
+  expect(retry!.props.className).toBe('elves-annotation-thread__retry')
   resolve.props.onClick()
   expect(onResolve).toHaveBeenCalledOnce()
   tree.root.findByProps({ className: 'elves-annotation-thread__close' }).props.onClick()
   expect(onClose).toHaveBeenCalledOnce()
+})
+
+test('thread header shows its typed icon and actions while messages retain author provenance', () => {
+  const tree = create(createElement(AnnotationThread, {
+    comment: {
+      id: 'c1', type: 'needs-evidence', text: 'Opening note', resolved: false, author: 'claude',
+      messages: [
+        { id: 'claude-1', author: 'claude', text: 'Opening note', createdAt: '2026-08-30T09:00:00Z' },
+        { id: 'user-1', author: 'user', text: 'A reply', createdAt: '2026-08-30T09:01:00Z' },
+      ],
+    },
+    mode: 'open', onReply: vi.fn(), onResolve: vi.fn(), onClose: vi.fn(),
+  }))
+
+  const header = tree.root.findByProps({ className: 'elves-annotation-thread__header' })
+  const type = header.findByProps({ className: 'elves-annotation-thread__type' })
+  expect(type.props['data-type']).toBe('needs-evidence')
+  expect(type.findAllByType('svg')).toHaveLength(1)
+  expect(type.children.filter((child) => typeof child === 'string').join('')).toBe('Needs evidence')
+  expect(header.findAllByProps({ className: 'elves-annotation-thread__message-author' })).toHaveLength(0)
+  expect(header.findAll((node) => node.children.some((child) => typeof child === 'string' && child.trim() === 'Claude')))
+    .toHaveLength(0)
+
+  const actions = header.findByProps({ className: 'elves-annotation-thread__actions' })
+  const directButtons = actions.children.filter((child) => typeof child !== 'string')
+  expect(directButtons.map((button) => button.props.className)).toEqual([
+    'elves-annotation-thread__resolve', 'elves-annotation-thread__close',
+  ])
+  const resolve = directButtons[0]
+  const close = directButtons[1]
+  expect(resolve.findAllByType('svg')).toHaveLength(1)
+  expect(resolve.children.filter((child) => typeof child === 'string').join('')).toBe('Resolve')
+  expect(close.findAllByType('svg')).toHaveLength(1)
+  expect(close.children.filter((child) => typeof child === 'string').join('')).toBe('')
+
+  expect(tree.root.findAllByProps({ className: 'elves-annotation-thread__message-author' }).map((node) => node.children.join('')))
+    .toEqual(['Claude', 'You'])
+  const send = tree.root.findByProps({ className: 'elves-annotation-thread__send' })
+  expect(send.findAllByType('svg')).toHaveLength(1)
+  expect(send.children.filter((child) => typeof child === 'string').join('')).toBe('')
+  expect(send.findAll((node) => node.children.some((child) => typeof child === 'string' && child.trim() !== '')))
+    .toHaveLength(0)
+  expect(send.props['aria-label']).toBe('Send reply')
+  expect(close.props['aria-label']).toBe('Close annotation thread')
 })
 
 test('thread renders durable replies and only disables its own send control while running', () => {
@@ -72,6 +118,17 @@ test('thread renders durable replies and only disables its own send control whil
   expect(tree.root.findAllByProps({ className: 'elves-annotation-thread__message' })).toHaveLength(2)
   expect(tree.root.findByProps({ className: 'elves-annotation-thread__send' }).props.disabled).toBe(true)
   expect(tree.root.findByProps({ className: 'elves-annotation-thread__resolve' }).props.disabled).toBe(false)
+})
+
+test('a streaming Claude reply retains its author provenance', () => {
+  const tree = create(createElement(AnnotationThread, {
+    comment: { id: 'c1', type: null, text: 'Needs evidence', resolved: false, author: 'claude' },
+    mode: 'open',
+    streamingText: 'I am checking the source now.',
+  }))
+
+  expect(tree.root.findAllByProps({ className: 'elves-annotation-thread__message-author' }).map((node) => node.children.join('')))
+    .toEqual(['Claude', 'Claude'])
 })
 
 test('simultaneous threads keep reply state isolated', () => {
@@ -264,4 +321,24 @@ test('annotation pin icons use a centred fixed wrapper without a transform nudge
     expect(typeRule).toMatch(new RegExp(`background:\\s*var\\(--elves-cc-${token}-label\\)`))
     expect(typeRule).toMatch(new RegExp(`border-color:\\s*var\\(--elves-cc-${token}-label\\)`))
   }
+})
+
+test('thread controls use the embedded composer and typed header layout', () => {
+  const css = readFileSync('src/components/annotationThread.css', 'utf8')
+  expect(css).toMatch(/\.elves-annotation-thread__header\s*\{[^}]*justify-content:\s*space-between/s)
+  expect(css).toMatch(/\.elves-annotation-thread__type\s*\{[^}]*font-size:\s*12px/s)
+  expect(css).toMatch(/\.elves-annotation-thread__type\s*\{[^}]*font-weight:\s*700/s)
+  expect(css).toMatch(/\.elves-annotation-thread__type\[data-type="needs-evidence"\]\s*\{[^}]*color:\s*var\(--elves-cc-evidence-label\)/s)
+  expect(css).toMatch(/\.elves-annotation-thread__send\s*\{[^}]*position:\s*absolute/s)
+  expect(css).toMatch(/\.elves-annotation-thread__send\s*\{[^}]*border-radius:\s*50%/s)
+  expect(css).toMatch(/\.elves-annotation-thread__reply\s+textarea\s*\{[^}]*padding:\s*[^;]*43px/s)
+  expect(css).toMatch(/\.elves-annotation-thread__reply\s+textarea\s*\{[^}]*resize:\s*vertical/s)
+  expect(css).toMatch(/\.elves-annotation-thread__reply\s+textarea:focus-visible\s*\{[^}]*outline:\s*none/s)
+  expect(css).toMatch(/\.elves-annotation-thread__reply\s+textarea:focus-visible\s*\{[^}]*border-color:\s*var\(--elves-primary\)/s)
+  expect(css).toMatch(/\.elves-annotation-thread__reply\s+textarea:focus-visible\s*\{[^}]*box-shadow:\s*0 0 0 3px var\(--elves-primary-tint\)/s)
+  expect(css).toMatch(/\.elves-annotation-thread__retry\s*\{[^}]*display:\s*inline-flex/s)
+  expect(css).toMatch(/\.elves-annotation-thread__retry\s*\{[^}]*border:\s*[^;]+/s)
+  expect(css).toMatch(/\.elves-annotation-thread__retry\s*\{[^}]*border-radius:\s*[^;]+/s)
+  expect(css).toMatch(/(?=[^{}]*\.elves-annotation-thread__resolve:hover)(?=[^{}]*\.elves-annotation-thread__retry:hover)[^{}]*\{[^}]*\}/s)
+  expect(css).toMatch(/(?=[^{}]*\.elves-annotation-thread__resolve:focus-visible)(?=[^{}]*\.elves-annotation-thread__retry:focus-visible)[^{}]*\{[^}]*\}/s)
 })
