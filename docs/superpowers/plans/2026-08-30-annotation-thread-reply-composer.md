@@ -127,11 +127,11 @@ onReply(text)
 
 Store `{ pointerId, startY, startHeight }` in a ref on pointer-down and capture that pointer. On matching pointer-move, set `Math.max(REPLY_MIN_HEIGHT, startHeight + event.clientY - startY)`; clear the ref on pointer-up/cancel. Up and Down prevent default and change the same minimum by 8px.
 
-- [ ] **Step 4: Run focused tests.**
+- [ ] **Step 4: Run behavioral focused tests.**
 
-Run: `npx vitest run tests/components/AnnotationThread.test.ts tests/components/AnnotationPopoverLayer.test.ts tests/components/CommentStatesGallery.test.ts`
+Run: `npx vitest run tests/components/AnnotationThread.test.ts -t "open mode|header shows|reply sends|thread renders|simultaneous|canvas lock" && npx vitest run tests/components/AnnotationPopoverLayer.test.ts tests/components/CommentStatesGallery.test.ts`
 
-Expected: PASS.
+Expected: PASS. The separate CSS contract is intentionally deferred to Task 3, which owns its styles.
 
 ### Task 3: Style the lower-right controls without overlap
 
