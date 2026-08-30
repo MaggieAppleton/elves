@@ -8,7 +8,6 @@ import {
 } from '../model/reviews'
 import { mechanicalGist } from '../model/summary'
 import type { CommentType } from '../model/types'
-import type { AnnotationTarget } from '../client/annotationSelection'
 import './reviewPanel.css'
 
 interface Props {
@@ -19,7 +18,6 @@ interface Props {
   onSummon: (personality: PersonalityId, focus: string | null) => void
   onDismiss: (reviewId: string) => void
   onRetry: (reviewId: string) => void
-  onOpenAnnotation: (target: AnnotationTarget) => void
 }
 
 // Each personality's swatch borrows the label colour of its signature comment
@@ -76,20 +74,6 @@ function passTally(editor: Editor | null, review: Review): { open: number; total
   return { open, total: Math.max(total, review.commentCount) }
 }
 
-function resolvedAnnotations(editor: Editor | null): Array<{ target: AnnotationTarget; text: string; author: string; type: CommentType | null }> {
-  if (!editor) return []
-  const feedback = editor.getCurrentPageShapes()
-    .filter((shape): shape is FeedbackShape => shape.type === 'feedback')
-    .filter((shape) => shape.props.resolved)
-    .map((shape) => ({ target: { kind: 'feedback' as const, feedbackId: shape.id }, text: shape.props.text, author: shape.props.authoredBy, type: shape.props.type }))
-  const comments = editor.getCurrentPageShapes()
-    .filter((shape): shape is CardShape => shape.type === 'card')
-    .flatMap((shape) => shape.props.comments.filter((comment) => comment.resolved).map((comment) => ({
-      target: { kind: 'card' as const, cardId: shape.id, commentId: comment.id }, text: comment.text, author: comment.author, type: comment.type,
-    })))
-  return [...feedback, ...comments].sort((a, b) => a.text.localeCompare(b.text))
-}
-
 function EyeglassesIcon() {
   // Phosphor "eyeglasses" — reading glasses: the editor pulling the piece closer.
   return (
@@ -107,7 +91,6 @@ export function ReviewPanel({
   onSummon,
   onDismiss,
   onRetry,
-  onOpenAnnotation,
 }: Props) {
   const [open, setOpen] = useState(false)
   const [focus, setFocus] = useState('')
@@ -151,12 +134,6 @@ export function ReviewPanel({
     },
     [editor, reviews],
   )
-  const resolved = useValue(
-    'resolved annotation stack',
-    () => resolvedAnnotations(editor),
-    [editor],
-  )
-
   if (!projectId) return null
 
   const summon = (id: PersonalityId) => {
@@ -201,30 +178,6 @@ export function ReviewPanel({
           />
         )}
       </button>
-      {resolved.length > 0 && (
-        <div className="elves-review__resolved-stack" data-feedback-stack aria-label="Resolved annotations">
-          <div className="elves-review__resolved-heading">Resolved annotations · {resolved.length}</div>
-          {[...resolved].reverse().map((annotation) => {
-            const agent = agentInfo(annotation.author)
-            return <button
-              type="button"
-              className="elves-review__resolved-item"
-              key={annotation.target.kind === 'card' ? annotation.target.commentId : annotation.target.feedbackId}
-              aria-label={`Restore annotation: ${mechanicalGist(annotation.text, 80)}`}
-              onClick={() => {
-                onOpenAnnotation(annotation.target)
-                setOpen(false)
-              }}
-            >
-              <span className="elves-review__resolved-meta">
-                {annotation.target.kind === 'feedback' ? 'Feedback' : 'Comment'} · {agent?.name ?? annotation.author}
-                {annotation.type ? ` · ${annotation.type.replaceAll('-', ' ')}` : ''}
-              </span>
-              <span>{mechanicalGist(annotation.text, 80)}</span>
-            </button>
-          })}
-        </div>
-      )}
       {open && (
         <div className="elves-review__menu" role="menu" data-testid="review-menu">
           <div className="elves-review__heading">Summon a reviewer</div>
