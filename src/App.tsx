@@ -43,7 +43,7 @@ import { AgentBox } from './components/AgentBox'
 import { DraftPane } from './components/DraftPane'
 import { AnnotationPopoverLayer } from './components/AnnotationPopoverLayer'
 import {
-  clearAnnotationPresentations, requestAnnotationClose, setAnnotationRepliesLocked, setAnnotationThreadPresentation, subscribeAnnotationReply, subscribeAnnotationResolve, subscribeAnnotationRetry,
+  clearAnnotationPresentations, closeAnnotationThread, setAnnotationRepliesLocked, setAnnotationThreadPresentation, subscribeAnnotationReply, subscribeAnnotationResolve, subscribeAnnotationRetry,
   type AnnotationTarget,
 } from './client/annotationSelection'
 import {
@@ -440,7 +440,7 @@ export default function App() {
   useEffect(() => subscribeAnnotationResolve((target) => {
     if (canvasMutationsLocked || !editor) return
     resolveAnnotationRecord(editor, target)
-    requestAnnotationClose(target)
+    closeAnnotationThread(target)
   }), [canvasMutationsLocked, editor])
 
   // Shape ids are only project-local. Keep transient reply presentation scoped

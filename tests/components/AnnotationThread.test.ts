@@ -2,7 +2,11 @@ import { createElement } from 'react'
 import { act, create } from 'react-test-renderer'
 import { expect, test, vi } from 'vitest'
 import { AnnotationPin, AnnotationThread } from '../../src/components/AnnotationThread'
-import { annotationHoverTarget } from '../../src/client/annotationSelection'
+import {
+  annotationHoverTarget, clearAnnotationPresentations, setAnnotationThreadPresentation,
+  subscribeAnnotationReply, subscribeAnnotationRetry,
+} from '../../src/client/annotationSelection'
+import { foregroundThreadProps } from '../../src/components/AnnotationPopoverLayer'
 
 test('preview has no reply, retry, resolve, or close controls', () => {
   const tree = create(createElement(AnnotationThread, {
@@ -66,6 +70,51 @@ test('thread renders durable replies and only disables its own send control whil
   expect(tree.root.findAllByProps({ className: 'elves-annotation-thread__message' })).toHaveLength(2)
   expect(tree.root.findByProps({ className: 'elves-annotation-thread__send' }).props.disabled).toBe(true)
   expect(tree.root.findByProps({ className: 'elves-annotation-thread__resolve' }).props.disabled).toBe(false)
+})
+
+test('simultaneous threads keep reply state isolated', () => {
+  const tree = create(createElement('div', {},
+    createElement(AnnotationThread, {
+      comment: { id: 'a', type: null, text: 'Finding', resolved: false, author: 'claude' },
+      mode: 'open', running: true, onReply: vi.fn(), onResolve: vi.fn(), onClose: vi.fn(),
+    }),
+    createElement(AnnotationThread, {
+      comment: { id: 'b', type: null, text: 'Finding', resolved: false, author: 'claude' },
+      mode: 'open', running: false, onReply: vi.fn(), onResolve: vi.fn(), onClose: vi.fn(),
+    }),
+  ))
+
+  const sends = tree.root.findAllByProps({ className: 'elves-annotation-thread__send' })
+  act(() => tree.root.findAllByType('textarea')[1].props.onChange({ target: { value: 'A reply' } }))
+  expect(sends).toHaveLength(2)
+  expect(sends[0].props.disabled).toBe(true)
+  expect(tree.root.findAllByProps({ className: 'elves-annotation-thread__send' })[1].props.disabled).toBe(false)
+})
+
+test('foreground thread props consume only their target presentation', () => {
+  const runningTarget = { kind: 'card' as const, cardId: 'shape:a', commentId: 'a' }
+  const failedTarget = { kind: 'feedback' as const, feedbackId: 'shape:b' }
+  clearAnnotationPresentations()
+  setAnnotationThreadPresentation(runningTarget, { running: true, streamingText: 'One reply' })
+  setAnnotationThreadPresentation(failedTarget, { running: false, error: 'Second reply failed' })
+
+  expect(foregroundThreadProps(runningTarget)).toMatchObject({
+    running: true, streamingText: 'One reply', error: undefined,
+  })
+  expect(foregroundThreadProps(failedTarget)).toMatchObject({
+    running: false, streamingText: undefined, error: 'Second reply failed',
+  })
+  const onReply = vi.fn()
+  const onRetry = vi.fn()
+  const unsubscribeReply = subscribeAnnotationReply(onReply)
+  const unsubscribeRetry = subscribeAnnotationRetry(onRetry)
+  foregroundThreadProps(failedTarget).onReply?.('Retry this point')
+  foregroundThreadProps(failedTarget).onRetry?.()
+  expect(onReply).toHaveBeenCalledWith(failedTarget, 'Retry this point')
+  expect(onRetry).toHaveBeenCalledWith(failedTarget)
+  unsubscribeReply()
+  unsubscribeRetry()
+  clearAnnotationPresentations()
 })
 
 test('a targeted pin clears its temporary preview after pointer or focus leaves', () => {

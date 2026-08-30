@@ -10,7 +10,7 @@ import {
 } from '../client/annotationSelection'
 import type { CardShape } from '../shapes/CardShapeUtil'
 import type { FeedbackShape } from '../shapes/FeedbackShapeUtil'
-import { AnnotationThread, type AnnotationThreadComment } from './AnnotationThread'
+import { AnnotationThread, type AnnotationThreadComment, type AnnotationThreadProps } from './AnnotationThread'
 
 type PopoverContent = { comment: AnnotationThreadComment; attribution?: string }
 
@@ -60,6 +60,25 @@ interface AnnotationForegroundItemProps {
   mode: ForegroundEntry['mode']
   zIndex: number
   editor: Editor
+}
+
+/** Build the controls for exactly one foreground target. Presentation state is
+ * keyed by the target, so simultaneous annotation runs never borrow another
+ * thread's loading, error, or retry state. */
+export function foregroundThreadProps(target: AnnotationTarget): Pick<AnnotationThreadProps,
+  'running' | 'streamingText' | 'error' | 'disabled' | 'onReply' | 'onRetry' | 'onResolve' | 'onClose'
+> {
+  const presentation = annotationThreadPresentation(target)
+  return {
+    running: presentation?.running,
+    streamingText: presentation?.streamingText,
+    error: presentation?.error,
+    disabled: annotationRepliesLocked(),
+    onReply: (text) => requestAnnotationReply(target, text),
+    onRetry: () => requestAnnotationRetry(target),
+    onResolve: () => requestAnnotationResolve(target),
+    onClose: () => requestAnnotationClose(target),
+  }
 }
 
 function AnnotationForegroundItem({ target, mode, zIndex, editor }: AnnotationForegroundItemProps) {
@@ -157,14 +176,7 @@ function AnnotationForegroundItem({ target, mode, zIndex, editor }: AnnotationFo
           comment={content.comment}
           mode="open"
           attribution={content.attribution}
-          running={annotationThreadPresentation(target)?.running}
-          streamingText={annotationThreadPresentation(target)?.streamingText}
-          error={annotationThreadPresentation(target)?.error}
-          disabled={annotationRepliesLocked()}
-          onReply={(text) => requestAnnotationReply(target, text)}
-          onRetry={() => requestAnnotationRetry(target)}
-          onResolve={() => requestAnnotationResolve(target)}
-          onClose={() => requestAnnotationClose(target)}
+          {...foregroundThreadProps(target)}
         />
       )}
     </div>
