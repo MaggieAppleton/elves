@@ -2,7 +2,7 @@ import { createElement } from 'react'
 import { act, create } from 'react-test-renderer'
 import { expect, test, vi } from 'vitest'
 import { AnnotationPin, AnnotationThread } from '../../src/components/AnnotationThread'
-import { annotationHoverTarget, setAnnotationHover } from '../../src/client/annotationSelection'
+import { annotationHoverTarget } from '../../src/client/annotationSelection'
 
 test('preview mode renders every message but no interactive control', () => {
   const tree = create(createElement(AnnotationThread, {
@@ -86,7 +86,8 @@ test('a restored card retains a comment action name', () => {
     .toBe('Restore Needs evidence comment')
 })
 
-test('hovering a targeted pin stores its preview target in the session state', () => {
+test('a targeted pin clears its temporary preview after pointer or focus leaves', () => {
+  vi.useFakeTimers()
   const target = { kind: 'feedback' as const, feedbackId: 'shape:feedback' }
   const tree = create(createElement(AnnotationPin, {
     comment: { id: 'feedback', type: 'weak-argument', text: 'Name the causal bridge.', resolved: false, author: 'claude' },
@@ -97,8 +98,17 @@ test('hovering a targeted pin stores its preview target in the session state', (
   expect(pin.props.onPointerEnter).toEqual(expect.any(Function))
   act(() => pin.props.onPointerEnter())
   expect(annotationHoverTarget()).toEqual(target)
+  act(() => pin.props.onPointerLeave())
+  act(() => { vi.advanceTimersByTime(100) })
+  expect(annotationHoverTarget()).toBeNull()
+
+  act(() => pin.props.onFocus())
+  expect(annotationHoverTarget()).toEqual(target)
+  act(() => pin.props.onBlur())
+  act(() => { vi.advanceTimersByTime(100) })
+  expect(annotationHoverTarget()).toBeNull()
   expect(tree.root.findAllByProps({ 'data-testid': 'annotation-popover' })).toHaveLength(0)
-  setAnnotationHover(null)
+  vi.useRealTimers()
 })
 
 test('a canvas lock disables a populated reply form without discarding its draft', () => {

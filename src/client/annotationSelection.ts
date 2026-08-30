@@ -85,6 +85,10 @@ export function closeAnnotationThread(target: AnnotationTarget): void {
 }
 
 export function setAnnotationHover(target: AnnotationTarget | null): void {
+  if (target && popoverDismissTimer !== null) {
+    clearTimeout(popoverDismissTimer)
+    popoverDismissTimer = null
+  }
   hoverTarget = target && openTargets.has(annotationTargetKey(target)) ? null : target
   emitTargets()
 }
@@ -162,9 +166,19 @@ export function hideAnnotationPopover(target?: AnnotationTarget): void {
 
 /** Keep the expanded popover interactive when focus or the pointer leaves its pin. */
 export function dismissAnnotationPopoverSoon(target: AnnotationTarget): void {
-  if (!activeAnnotationPopover || annotationTargetKey(activeAnnotationPopover) !== annotationTargetKey(target)) return
+  const targetKey = annotationTargetKey(target)
+  const dismissesPopover = activeAnnotationPopover && annotationTargetKey(activeAnnotationPopover) === targetKey
+  const dismissesHover = hoverTarget && annotationTargetKey(hoverTarget) === targetKey
+  if (!dismissesPopover && !dismissesHover) return
   if (popoverDismissTimer !== null) clearTimeout(popoverDismissTimer)
-  popoverDismissTimer = setTimeout(() => hideAnnotationPopover(target), 100)
+  popoverDismissTimer = setTimeout(() => {
+    popoverDismissTimer = null
+    hideAnnotationPopover(target)
+    if (hoverTarget && annotationTargetKey(hoverTarget) === targetKey) {
+      hoverTarget = null
+      emitTargets()
+    }
+  }, 100)
 }
 
 export function clearAnnotationPopover(): void { hideAnnotationPopover() }
