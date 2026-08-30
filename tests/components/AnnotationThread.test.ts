@@ -117,6 +117,27 @@ test('foreground thread props consume only their target presentation', () => {
   clearAnnotationPresentations()
 })
 
+test('a rendered foreground retry action sends only its failed target', () => {
+  const failedTarget = { kind: 'feedback' as const, feedbackId: 'shape:failed' }
+  const onRetry = vi.fn()
+  clearAnnotationPresentations()
+  setAnnotationThreadPresentation(failedTarget, { running: false, error: 'The reply stopped.' })
+  const unsubscribeRetry = subscribeAnnotationRetry(onRetry)
+
+  const tree = create(createElement(AnnotationThread, {
+    comment: { id: 'failed', type: null, text: 'Retry this thread', resolved: false, author: 'claude' },
+    mode: 'open',
+    ...foregroundThreadProps(failedTarget),
+  }))
+  const retry = tree.root.findAllByType('button').find((button) => button.children.includes('Retry'))
+  expect(retry).toBeTruthy()
+  retry!.props.onClick()
+  expect(onRetry).toHaveBeenCalledWith(failedTarget)
+
+  unsubscribeRetry()
+  clearAnnotationPresentations()
+})
+
 test('a targeted pin clears its temporary preview after pointer or focus leaves', () => {
   vi.useFakeTimers()
   const target = { kind: 'feedback' as const, feedbackId: 'shape:feedback' }
