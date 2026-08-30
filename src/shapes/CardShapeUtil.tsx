@@ -14,7 +14,6 @@ import { nextFigureStatus } from '../model/figures'
 import { cardGist } from '../model/summary'
 import { estimateCommentHeight, visibleComments } from '../model/comments'
 import { cardAnnotationPins } from '../model/annotationPins'
-import { requestAnnotationOpen } from '../client/annotationSelection'
 import { AnnotationPin } from '../components/AnnotationThread'
 import { assetUrl } from '../client/assets'
 import { fittedGistFontSize, measuredCardPropsHeight } from './autosize'
@@ -844,11 +843,10 @@ export class CardShapeUtil extends ShapeUtil<CardShape> {
             return comment ? (
               <AnnotationPin
                 key={comment.id}
-              comment={comment}
+                comment={comment}
                 offsetY={offsetY}
                 zoom={zoom}
-              onOpen={() => requestAnnotationOpen({ kind: 'card', cardId: shape.id, commentId: comment.id })}
-              target={{ kind: 'card', cardId: shape.id, commentId: comment.id }}
+                target={{ kind: 'card', cardId: shape.id, commentId: comment.id }}
               />
             ) : null
           })}

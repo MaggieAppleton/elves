@@ -2,10 +2,42 @@ import { createElement } from 'react'
 import { act, create } from 'react-test-renderer'
 import { expect, test, vi } from 'vitest'
 import { AnnotationPin, AnnotationThread } from '../../src/components/AnnotationThread'
-import { annotationPopover, hideAnnotationPopover } from '../../src/client/annotationSelection'
+import { annotationHoverTarget, setAnnotationHover } from '../../src/client/annotationSelection'
 
-test('popover exposes the complete read-only thread without a reply input', () => {
-  const onResolve = vi.fn()
+test('preview mode renders every message but no interactive control', () => {
+  const tree = create(createElement(AnnotationThread, {
+    comment: {
+      id: 'c1', type: 'structure', text: 'Initial finding', resolved: false, author: 'claude',
+      messages: [
+        { id: 'm1', author: 'claude', text: 'Initial finding', createdAt: '2026-08-30T09:00:00Z' },
+        { id: 'm2', author: 'user', text: 'What would fix it?', createdAt: '2026-08-30T09:01:00Z' },
+      ],
+    },
+    mode: 'preview',
+  }))
+
+  expect(tree.root.findAllByProps({ className: 'elves-annotation-thread__message' })).toHaveLength(2)
+  expect(tree.root.findAllByType('textarea')).toHaveLength(0)
+  expect(tree.root.findAllByType('button')).toHaveLength(0)
+})
+
+test('open mode exposes reply, retry, resolve, and close actions', () => {
+  const onClose = vi.fn()
+  const tree = create(createElement(AnnotationThread, {
+    comment: { id: 'c1', type: null, text: 'Needs evidence', resolved: false, author: 'claude' },
+    mode: 'open', onClose, onResolve: vi.fn(), onReply: vi.fn(),
+    error: 'The reply stopped.', onRetry: vi.fn(),
+  }))
+
+  expect(tree.root.findByType('textarea')).toBeTruthy()
+  expect(tree.root.findByProps({ className: 'elves-annotation-thread__close' }).props['aria-label'])
+    .toBe('Close annotation thread')
+  expect(tree.root.findAllByType('button').some((button) => button.children.includes('Retry'))).toBe(true)
+  tree.root.findByProps({ className: 'elves-annotation-thread__close' }).props.onClick()
+  expect(onClose).toHaveBeenCalledOnce()
+})
+
+test('legacy popover mode retains read-only preview semantics', () => {
   const tree = create(createElement(AnnotationThread, {
     comment: {
       id: 'c1',
@@ -15,16 +47,12 @@ test('popover exposes the complete read-only thread without a reply input', () =
       author: 'claude',
     },
     mode: 'popover',
-    onResolve,
   }))
 
   expect(tree.root.findAllByProps({ 'data-testid': 'annotation-thread' })).toHaveLength(1)
   expect(tree.root.findAllByType('textarea')).toHaveLength(0)
   expect(tree.root.findAllByProps({ className: 'elves-annotation-thread__text' })[0].children).toContain('Give the middle a clearer bridge.')
-  const resolve = tree.root.findByProps({ className: 'elves-annotation-thread__resolve' })
-  expect(resolve.props['aria-label']).toBe('Resolve Structure comment')
-  resolve.props.onClick()
-  expect(onResolve).toHaveBeenCalledOnce()
+  expect(tree.root.findAllByType('button')).toHaveLength(0)
 })
 
 test('thread renders durable replies and only disables its own send control while running', () => {
@@ -58,21 +86,19 @@ test('a restored card retains a comment action name', () => {
     .toBe('Restore Needs evidence comment')
 })
 
-test('hovering a targeted pin promotes its expanded thread to the front canvas layer', () => {
+test('hovering a targeted pin stores its preview target in the session state', () => {
   const target = { kind: 'feedback' as const, feedbackId: 'shape:feedback' }
   const tree = create(createElement(AnnotationPin, {
     comment: { id: 'feedback', type: 'weak-argument', text: 'Name the causal bridge.', resolved: false, author: 'claude' },
     target,
-    onOpen: vi.fn(),
   }))
 
   const pin = tree.root.findByProps({ className: 'elves-annotation-pin-wrap' })
   expect(pin.props.onPointerEnter).toEqual(expect.any(Function))
-  expect(pin.props.onKeyDown).toEqual(expect.any(Function))
   act(() => pin.props.onPointerEnter())
-  expect(annotationPopover()).toEqual(target)
+  expect(annotationHoverTarget()).toEqual(target)
   expect(tree.root.findAllByProps({ 'data-testid': 'annotation-popover' })).toHaveLength(0)
-  hideAnnotationPopover()
+  setAnnotationHover(null)
 })
 
 test('a canvas lock disables a populated reply form without discarding its draft', () => {
@@ -93,7 +119,6 @@ test('a canvas lock disables a populated reply form without discarding its draft
 test('a pin name includes a bounded gist of the annotation text', () => {
   const tree = create(createElement(AnnotationPin, {
     comment: { id: 'c1', type: null, text: 'Name the causal bridge explicitly.', resolved: false, author: 'claude' },
-    onOpen: vi.fn(),
   }))
   expect(tree.root.findByProps({ 'data-testid': 'annotation-pin' }).props['aria-label']).toContain('Name the causal bridge explicitly.')
 })
