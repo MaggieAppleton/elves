@@ -58,25 +58,16 @@
 .elves-annotation-pin:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring); }
 .elves-annotation-pin__icon { transform: translateY(-.5px); }
 
+.elves-annotation-popover-layer {
+  position: absolute;
+  inset: 0;
+  z-index: calc(var(--layer-canvas-overlays) + 1);
+  pointer-events: none;
+}
 .elves-annotation-popover {
   position: absolute;
-  top: -8px;
-  right: 100%;
   width: min(300px, 72vw);
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transform: translateX(4px);
-  transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
-}
-.elves-annotation-pin-wrap:hover .elves-annotation-popover,
-.elves-annotation-pin-wrap:focus-within .elves-annotation-popover {
-  opacity: 1;
-  visibility: visible;
   pointer-events: all;
-  transform: translateX(0);
 }
+.elves-annotation-popover--front { transform: translateX(-100%); }
 .elves-annotation-thread--popover { box-shadow: var(--elves-shadow-md); }
-@media (prefers-reduced-motion: reduce) {
-  .elves-annotation-popover { transition: none; }
-}

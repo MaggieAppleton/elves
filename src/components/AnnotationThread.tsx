@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent, type PointerEvent } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react'
 import { agentInfo } from '../shapes/agents'
 import { annotationPin, PIN_SIZE } from '../model/annotationPins'
 import { threadMessages } from '../model/comments'
 import { commentGist } from '../model/summary'
 import type { Comment, CommentType } from '../model/types'
 import {
-  annotationRepliesLocked, annotationThreadPresentation, subscribeAnnotationThreadPresentation,
+  annotationTargetKey, dismissAnnotationPopoverSoon, showAnnotationPopover,
   type AnnotationTarget,
 } from '../client/annotationSelection'
 import './annotationThread.css'
@@ -121,27 +121,13 @@ export interface AnnotationPinProps {
   offsetY?: number
   zoom?: number
   className?: string
-  attribution?: string
   target?: AnnotationTarget
   onOpen: () => void
-  onReply?: (target: AnnotationTarget, text: string) => void
-  onRetry?: (target: AnnotationTarget) => void
 }
 
 /** A compact target whose adjacent popover shares the inspector's thread view. */
-export function AnnotationPin({ comment, offsetY = 0, zoom = 1, className, attribution, target, onOpen, onReply, onRetry }: AnnotationPinProps) {
+export function AnnotationPin({ comment, offsetY = 0, zoom = 1, className, target, onOpen }: AnnotationPinProps) {
   const token = annotationPin(comment.type)
-  const [presentation, setPresentation] = useState(() => target ? annotationThreadPresentation(target) : undefined)
-  const [locked, setLocked] = useState(annotationRepliesLocked)
-  useEffect(() => {
-    if (!target) return
-    const update = () => {
-      setPresentation(annotationThreadPresentation(target))
-      setLocked(annotationRepliesLocked())
-    }
-    update()
-    return subscribeAnnotationThreadPresentation(update)
-  }, [target?.kind, target?.kind === 'card' ? target.cardId : target?.feedbackId, target?.kind === 'card' ? target.commentId : undefined])
   const scale = 1 / zoom
   const style = {
     top: offsetY * scale,
@@ -154,28 +140,46 @@ export function AnnotationPin({ comment, offsetY = 0, zoom = 1, className, attri
     stopEvent(event)
     onOpen()
   }
+  const showPopover = () => {
+    if (target) showAnnotationPopover(target)
+  }
+  const dismissPopover = () => {
+    if (target) dismissAnnotationPopoverSoon(target)
+  }
+  const focusPopover = (event: KeyboardEvent) => {
+    if (event.key !== 'Tab' || event.shiftKey || !target || typeof document === 'undefined') return
+    event.preventDefault()
+    const targetKey = annotationTargetKey(target)
+    showAnnotationPopover(target)
+    requestAnimationFrame(() => {
+      const popover = [...document.querySelectorAll<HTMLElement>('[data-annotation-popover-target]')]
+        .find((element) => element.dataset.annotationPopoverTarget === targetKey)
+      popover?.querySelector<HTMLElement>('textarea:not(:disabled), button:not(:disabled), [href]')?.focus()
+    })
+  }
 
   return (
-    <div className={`elves-annotation-pin-wrap${className ? ` ${className}` : ''}`} style={style} onPointerDown={stopPointer}>
+    <div
+      className={`elves-annotation-pin-wrap${className ? ` ${className}` : ''}`}
+      style={style}
+      onPointerDown={stopPointer}
+      onPointerEnter={showPopover}
+      onPointerLeave={dismissPopover}
+      onFocus={showPopover}
+      onBlur={dismissPopover}
+      onKeyDown={focusPopover}
+    >
       <button
         type="button"
         className="elves-annotation-pin"
         data-type={token.tone}
         data-testid="annotation-pin"
+        data-annotation-target={target ? annotationTargetKey(target) : undefined}
         aria-label={`Open ${token.label} comment from ${agentName(comment.author)}: ${commentGist(comment as Comment)}`}
         onClick={open}
       >
         <span aria-hidden="true" className="elves-annotation-pin__icon">{pinGlyph(token.icon)}</span>
       </button>
-      <div className="elves-annotation-popover" data-testid="annotation-popover">
-        <AnnotationThread comment={comment} mode="popover" attribution={attribution}
-          running={presentation?.running}
-          streamingText={presentation?.streamingText}
-          error={presentation?.error}
-          disabled={locked}
-          onReply={target && onReply ? (text) => onReply(target, text) : undefined}
-          onRetry={target && onRetry ? () => onRetry(target) : undefined} />
-      </div>
     </div>
   )
 }

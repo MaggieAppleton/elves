@@ -42,8 +42,9 @@ import { LinkPrompt } from './components/LinkPrompt'
 import { AgentBox } from './components/AgentBox'
 import { DraftPane } from './components/DraftPane'
 import { AnnotationRail } from './components/AnnotationRail'
+import { AnnotationPopoverLayer } from './components/AnnotationPopoverLayer'
 import {
-  clearAnnotationThreadPresentations, setAnnotationRepliesLocked, setAnnotationThreadPresentation, subscribeAnnotationOpen, subscribeAnnotationReply, subscribeAnnotationRetry,
+  clearAnnotationPopover, clearAnnotationThreadPresentations, setAnnotationRepliesLocked, setAnnotationThreadPresentation, subscribeAnnotationOpen, subscribeAnnotationReply, subscribeAnnotationRetry,
   type AnnotationTarget,
 } from './client/annotationSelection'
 import {
@@ -74,6 +75,7 @@ const shapeUtils = [CardShapeUtil, SectionShapeUtil, QuestionShapeUtil, Feedback
 const components = {
   SelectionForeground: CardSelectionForeground,
   OnTheCanvas: SnapHighlight,
+  InFrontOfTheCanvas: AnnotationPopoverLayer,
 }
 const canvasTransport = {
   load: loadCanvasVersioned,
@@ -952,6 +954,7 @@ export default function App() {
     setAnnotationTarget(null)
     setAnnotationThreadStates({})
     clearAnnotationThreadPresentations()
+    clearAnnotationPopover()
     viewBeforeAnnotation.current = null
     annotationProjectId.current = null
     localStorage.setItem(LAST_PROJECT_KEY, id)
