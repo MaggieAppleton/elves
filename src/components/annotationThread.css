@@ -32,11 +32,15 @@
 .elves-annotation-thread__reply textarea { box-sizing: border-box; width: 100%; min-height: 76px; padding: 9px 43px 9px 10px; border: 1px solid var(--elves-border-strong); border-radius: 8px; resize: none; background: var(--elves-surface); color: var(--elves-ink); font: 13px/1.45 var(--elves-card-font); }
 .elves-annotation-thread__reply textarea:focus-visible { outline: none; border-color: var(--elves-primary); box-shadow: 0 0 0 3px var(--elves-primary-tint); }
 .elves-annotation-thread__send { position: absolute; right: 8px; bottom: 8px; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: var(--elves-primary); color: var(--elves-on-primary, #fff); cursor: pointer; }
-.elves-annotation-thread__error { color: var(--elves-danger, #b42318); font-size: 12px; }
+.elves-annotation-thread__error { display: flex; align-items: flex-start; gap: 8px; padding: 9px 10px; border: 1px solid var(--elves-danger, #b42318); border-radius: 8px; background: color-mix(in oklch, var(--elves-danger, #b42318) 10%, var(--elves-surface)); color: var(--elves-danger, #b42318); font-size: 12px; }
+.elves-annotation-thread__error-message { display: flex; flex: 1 1 auto; min-width: 0; gap: 7px; overflow-wrap: anywhere; line-height: 1.45; }
+.elves-annotation-thread__error-message svg { flex: 0 0 auto; margin-top: 1px; }
 .elves-annotation-thread__close { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--elves-ink-faint); cursor: pointer; }
 .elves-annotation-thread__resolve { display: inline-flex; align-items: center; gap: 4px; min-height: 26px; padding: 4px 7px; border: 1px solid var(--elves-border-strong); border-radius: 6px; background: transparent; color: var(--elves-ink-soft); font: 600 12px var(--elves-card-font); cursor: pointer; }
-.elves-annotation-thread__retry { display: inline-flex; align-items: center; gap: 4px; min-height: 26px; padding: 4px 7px; border: 1px solid var(--elves-border-strong); border-radius: 6px; background: transparent; color: var(--elves-ink-soft); font: 600 12px var(--elves-card-font); cursor: pointer; }
-.elves-annotation-thread__resolve:hover:not(:disabled), .elves-annotation-thread__retry:hover:not(:disabled) { background: var(--elves-tertiary); color: var(--elves-ink); }
+.elves-annotation-thread__retry { flex: 0 0 auto; align-self: flex-end; display: inline-flex; align-items: center; gap: 4px; min-height: 26px; margin-left: auto; padding: 4px 7px; border: 1px solid var(--elves-danger, #b42318); border-radius: 6px; background: transparent; color: var(--elves-danger, #b42318); font: 600 12px var(--elves-card-font); cursor: pointer; }
+.elves-annotation-thread__resolve:hover:not(:disabled), .elves-annotation-thread__retry:hover:not(:disabled) { opacity: 1; }
+.elves-annotation-thread__resolve:hover:not(:disabled) { background: var(--elves-tertiary); color: var(--elves-ink); }
+.elves-annotation-thread__retry:hover:not(:disabled) { background: var(--elves-danger, #b42318); color: var(--elves-surface); }
 .elves-annotation-thread__resolve:disabled, .elves-annotation-thread__retry:disabled { opacity: .52; cursor: default; }
 .elves-annotation-thread__close:hover:not(:disabled), .elves-annotation-thread__reply-trigger:hover:not(:disabled) { background: var(--elves-tertiary); color: var(--elves-ink); }
 .elves-annotation-thread__send:hover:not(:disabled) { background: var(--elves-primary-strong); }

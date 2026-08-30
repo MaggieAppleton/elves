@@ -139,16 +139,22 @@ export function AnnotationThread({
           <PaperPlaneRight aria-hidden="true" size={15} weight="bold" />
         </button>
       </form>}
-      {!preview && error && <div className="elves-annotation-thread__error" role="alert">{error} {onRetry && <button
-        type="button"
-        className="elves-annotation-thread__retry"
-        disabled={disabled || running}
-        onClick={() => {
-          if (!disabled && !running) onRetry()
-        }}
-      >
-        Retry
-      </button>}</div>}
+      {!preview && error && <div className="elves-annotation-thread__error" role="alert">
+        <div className="elves-annotation-thread__error-message">
+          <Warning aria-hidden="true" size={16} weight="fill" />
+          {error}
+        </div>
+        {onRetry && <button
+          type="button"
+          className="elves-annotation-thread__retry"
+          disabled={disabled || running}
+          onClick={() => {
+            if (!disabled && !running) onRetry()
+          }}
+        >
+          Retry
+        </button>}
+      </div>}
     </article>
   )
 }
