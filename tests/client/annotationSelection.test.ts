@@ -1,5 +1,18 @@
 import { expect, test, vi } from 'vitest'
-import { requestAnnotationOpen, subscribeAnnotationOpen } from '../../src/client/annotationSelection'
+import {
+  annotationOpenTargets,
+  annotationHoverTarget,
+  clearAnnotationPresentations,
+  closeAnnotationThread,
+  openAnnotationThread,
+  promoteAnnotationThread,
+  requestAnnotationOpen,
+  setAnnotationHover,
+  subscribeAnnotationOpen,
+} from '../../src/client/annotationSelection'
+
+const a = { kind: 'card' as const, cardId: 'shape:a', commentId: 'comment:a' }
+const b = { kind: 'feedback' as const, feedbackId: 'shape:b' }
 
 test('annotation-open listeners receive the selected target once', () => {
   const receive = vi.fn()
@@ -16,4 +29,24 @@ test('unsubscribed annotation-open listeners no longer receive targets', () => {
   unsubscribe()
   requestAnnotationOpen({ kind: 'card', cardId: 'shape:card', commentId: 'comment:one' })
   expect(receive).not.toHaveBeenCalled()
+})
+
+test('open targets are session-only, independent, and ordered by engagement', () => {
+  clearAnnotationPresentations()
+  openAnnotationThread(a)
+  openAnnotationThread(b)
+  expect(annotationOpenTargets()).toEqual([a, b])
+  promoteAnnotationThread(a)
+  expect(annotationOpenTargets()).toEqual([b, a])
+  closeAnnotationThread(a)
+  expect(annotationOpenTargets()).toEqual([b])
+})
+
+test('hover target is temporary and separate from open targets', () => {
+  clearAnnotationPresentations()
+  setAnnotationHover(a)
+  expect(annotationHoverTarget()).toEqual(a)
+  expect(annotationOpenTargets()).toEqual([])
+  setAnnotationHover(null)
+  expect(annotationHoverTarget()).toBeNull()
 })

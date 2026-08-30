@@ -12,6 +12,7 @@ type AnnotationOpenListener = (target: AnnotationTarget) => void
 type AnnotationReplyListener = (target: AnnotationTarget, text: string) => void
 type AnnotationRetryListener = (target: AnnotationTarget) => void
 type AnnotationPopoverListener = () => void
+type AnnotationTargetListener = () => void
 
 const listeners = new Set<AnnotationOpenListener>()
 const replyListeners = new Set<AnnotationReplyListener>()
@@ -19,9 +20,12 @@ const retryListeners = new Set<AnnotationRetryListener>()
 const presentationListeners = new Set<() => void>()
 const popoverListeners = new Set<AnnotationPopoverListener>()
 const presentations = new Map<string, AnnotationThreadPresentation>()
+const openTargets = new Map<string, AnnotationTarget>()
+const targetListeners = new Set<AnnotationTargetListener>()
 let annotationReplyLocked = false
 let activeAnnotationPopover: AnnotationTarget | null = null
 let popoverDismissTimer: ReturnType<typeof setTimeout> | null = null
+let hoverTarget: AnnotationTarget | null = null
 
 export function annotationTargetKey(target: AnnotationTarget): string {
   return target.kind === 'card'
@@ -35,7 +39,61 @@ export function subscribeAnnotationOpen(listener: AnnotationOpenListener): () =>
 }
 
 export function requestAnnotationOpen(target: AnnotationTarget): void {
+  if (openTargets.has(annotationTargetKey(target))) promoteAnnotationThread(target)
+  else openAnnotationThread(target)
   listeners.forEach((listener) => listener(target))
+}
+
+function emitTargets(): void {
+  targetListeners.forEach((listener) => listener())
+}
+
+export function annotationOpenTargets(): AnnotationTarget[] {
+  return Array.from(openTargets.values())
+}
+
+export function annotationHoverTarget(): AnnotationTarget | null {
+  return hoverTarget
+}
+
+export function subscribeAnnotationTargets(listener: AnnotationTargetListener): () => void {
+  targetListeners.add(listener)
+  return () => targetListeners.delete(listener)
+}
+
+export function openAnnotationThread(target: AnnotationTarget): void {
+  const key = annotationTargetKey(target)
+  if (openTargets.has(key)) return
+  openTargets.set(key, target)
+  emitTargets()
+}
+
+export function promoteAnnotationThread(target: AnnotationTarget): void {
+  const key = annotationTargetKey(target)
+  const current = openTargets.get(key)
+  if (!current) return
+  openTargets.delete(key)
+  openTargets.set(key, current)
+  emitTargets()
+}
+
+export function closeAnnotationThread(target: AnnotationTarget): void {
+  if (!openTargets.delete(annotationTargetKey(target))) return
+  emitTargets()
+}
+
+export function setAnnotationHover(target: AnnotationTarget | null): void {
+  hoverTarget = target && openTargets.has(annotationTargetKey(target)) ? null : target
+  emitTargets()
+}
+
+/** Clear all ephemeral annotation state; none of this belongs in a canvas snapshot. */
+export function clearAnnotationPresentations(): void {
+  openTargets.clear()
+  hoverTarget = null
+  clearAnnotationPopover()
+  clearAnnotationThreadPresentations()
+  emitTargets()
 }
 
 export function subscribeAnnotationReply(listener: AnnotationReplyListener): () => void {
