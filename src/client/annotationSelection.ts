@@ -11,12 +11,14 @@ export interface AnnotationThreadPresentation {
 type AnnotationOpenListener = (target: AnnotationTarget) => void
 type AnnotationReplyListener = (target: AnnotationTarget, text: string) => void
 type AnnotationRetryListener = (target: AnnotationTarget) => void
+type AnnotationActionListener = (target: AnnotationTarget) => void
 type AnnotationPopoverListener = () => void
 type AnnotationTargetListener = () => void
 
 const listeners = new Set<AnnotationOpenListener>()
 const replyListeners = new Set<AnnotationReplyListener>()
 const retryListeners = new Set<AnnotationRetryListener>()
+const resolveListeners = new Set<AnnotationActionListener>()
 const presentationListeners = new Set<() => void>()
 const popoverListeners = new Set<AnnotationPopoverListener>()
 const presentations = new Map<string, AnnotationThreadPresentation>()
@@ -82,6 +84,31 @@ export function promoteAnnotationThread(target: AnnotationTarget): void {
 export function closeAnnotationThread(target: AnnotationTarget): void {
   if (!openTargets.delete(annotationTargetKey(target))) return
   emitTargets()
+}
+
+export function requestAnnotationClose(target: AnnotationTarget): void {
+  closeAnnotationThread(target)
+}
+
+export function subscribeAnnotationResolve(listener: AnnotationActionListener): () => void {
+  resolveListeners.add(listener)
+  return () => resolveListeners.delete(listener)
+}
+
+export function requestAnnotationResolve(target: AnnotationTarget): void {
+  resolveListeners.forEach((listener) => listener(target))
+}
+
+/** Remove stale presentation state without changing any canvas records. */
+export function pruneAnnotationThreads(isOpenTarget: (target: AnnotationTarget) => boolean): void {
+  let changed = false
+  for (const [key, target] of openTargets) {
+    if (!isOpenTarget(target)) {
+      openTargets.delete(key)
+      changed = true
+    }
+  }
+  if (changed) emitTargets()
 }
 
 export function setAnnotationHover(target: AnnotationTarget | null): void {
