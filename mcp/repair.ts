@@ -39,10 +39,33 @@ export interface RepairResult {
  * local model is visible rather than silently doubling the rejection rate. */
 export type RepairFailure = RepairRejection | 'unreachable'
 
+/** Consecutive transport failures before the repairer stops trying for a while. */
+const BREAKER_TRIP = 2
+/** How long it stays tripped. Long enough that a pass of six notes doesn't pay
+ * the timeout six times over; short enough that starting Ollama mid-session
+ * gets picked up without a restart. */
+const BREAKER_COOLDOWN_MS = 60_000
+
 export class OllamaRepairer implements Repairer {
   readonly label: string
   /** Set by repair() so the caller can log why a repair was thrown away. */
   lastFailure: RepairFailure | null = null
+
+  /**
+   * Circuit breaker for a host that isn't there.
+   *
+   * Ollama unloads an idle model after a few minutes, so a cold call can run
+   * past the timeout — and on a machine that never runs Ollama at all, every
+   * attempt does. Without this, a review pass of six notes pays the full
+   * timeout twice per note before falling back, turning a cheap feature into a
+   * minute and a half of dead waiting.
+   *
+   * Only TRANSPORT failures trip it. A repair that comes back and fails the
+   * leash means Ollama is alive and working; the next note may well repair
+   * fine, so that must not stop us trying.
+   */
+  private consecutiveTransportFailures = 0
+  private breakerUntil = 0
 
   constructor(
     private readonly host = process.env.OLLAMA_HOST ?? 'http://localhost:11434',
@@ -61,13 +84,27 @@ export class OllamaRepairer implements Repairer {
 
   async repair(text: string, hits: StyleHit[]): Promise<RepairResult | null> {
     this.lastFailure = null
+    if (this.now() < this.breakerUntil) {
+      this.lastFailure = 'unreachable'
+      return null
+    }
+
     const prompt = buildRepairPrompt(text, hits)
     for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
       const raw = await this.generate(prompt)
       if (raw === null) {
         this.lastFailure = 'unreachable'
+        this.consecutiveTransportFailures += 1
+        if (this.consecutiveTransportFailures >= BREAKER_TRIP) {
+          this.breakerUntil = this.now() + BREAKER_COOLDOWN_MS
+          console.error(
+            `[elves] house style: ${this.label} unreachable — pausing local repair for ${BREAKER_COOLDOWN_MS / 1000}s`,
+          )
+        }
         return null
       }
+      // It answered, so the host is fine whatever the leash decides next.
+      this.consecutiveTransportFailures = 0
       const candidate = cleanRepair(raw)
       const verdict = acceptRepair(text, candidate)
       if (verdict.ok) return { text: candidate, attempts: attempt }
@@ -76,7 +113,13 @@ export class OllamaRepairer implements Repairer {
     return null
   }
 
-  private async generate(prompt: string): Promise<string | null> {
+  /** Overridable so a test can move time without waiting a minute. */
+  protected now(): number {
+    return Date.now()
+  }
+
+  /** The one network call. Protected so a test can stand in for the host. */
+  protected async generate(prompt: string): Promise<string | null> {
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), this.timeoutMs)
     try {

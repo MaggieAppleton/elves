@@ -117,3 +117,70 @@ test('an unreachable Ollama returns null rather than throwing', async () => {
 test('the repairer labels its provenance', () => {
   expect(new OllamaRepairer('http://x', 'llama3.2').label).toBe('ollama/llama3.2')
 })
+
+test('an unreachable host stops being called after a couple of tries', async () => {
+  // A pass of six notes must not pay the timeout twelve times over on a machine
+  // that never runs Ollama.
+  let calls = 0
+  class Counting extends OllamaRepairer {
+    protected override async generate() {
+      calls += 1
+      return null
+    }
+  }
+  const repairer = new Counting('http://127.0.0.1:1', 'llama3.2', 50, 1)
+  const text = "It's worth noting that this claim needs a source."
+  const hits = lintProse(text)
+
+  await repairer.repair(text, hits)
+  await repairer.repair(text, hits)
+  const after = calls
+  // The breaker is tripped: further notes short-circuit without touching HTTP.
+  for (let i = 0; i < 6; i++) await repairer.repair(text, hits)
+  expect(calls).toBe(after)
+  expect(repairer.lastFailure).toBe('unreachable')
+})
+
+test('the breaker reopens once the cooldown has passed', async () => {
+  let calls = 0
+  let clock = 1_000_000
+  class Fake extends OllamaRepairer {
+    protected override now() { return clock }
+    protected override async generate() {
+      calls += 1
+      return null
+    }
+  }
+  const repairer = new Fake('http://127.0.0.1:1', 'llama3.2', 50, 1)
+  const text = "It's worth noting that this claim needs a source."
+  const hits = lintProse(text)
+
+  await repairer.repair(text, hits)
+  await repairer.repair(text, hits)
+  const tripped = calls
+  await repairer.repair(text, hits)
+  expect(calls).toBe(tripped) // still paused
+
+  clock += 61_000
+  await repairer.repair(text, hits)
+  expect(calls).toBe(tripped + 1) // probed again
+})
+
+test('a host that answers but fails the leash keeps being tried', async () => {
+  // Ollama working and the repair not holding is not a transport problem --
+  // the next note may repair fine, so this must not trip the breaker.
+  let calls = 0
+  class Useless extends OllamaRepairer {
+    protected override async generate() {
+      calls += 1
+      return 'Something entirely different was invented here instead.'
+    }
+  }
+  const repairer = new Useless('http://x', 'llama3.2', 50, 1)
+  const text = "It's worth noting that this claim needs a source."
+  const hits = lintProse(text)
+
+  for (let i = 0; i < 4; i++) await repairer.repair(text, hits)
+  expect(calls).toBe(4)
+  expect(repairer.lastFailure).not.toBe('unreachable')
+})

@@ -31,6 +31,10 @@ import {
 } from '../../mcp/tools'
 import { PERSONALITIES } from '../../src/model/reviews'
 import { createSelectionStore } from '../../server/selection'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { createMcpServer, setRepairer } from '../../mcp/index'
+import type { Repairer } from '../../mcp/repair'
 
 let servers: http.Server[] = []
 let dirs: string[] = []
@@ -485,4 +489,129 @@ test('readSelectionTool returns the enriched selection (with project) reported b
 test('readSelectionTool returns an empty selection when nothing is selected', async () => {
   const { base } = await liveElvesWithSelection()
   expect(await readSelectionTool(base)).toEqual({ selection: [] })
+})
+
+// ---------------------------------------------------------------------------
+// What the style gate actually WRITES
+// ---------------------------------------------------------------------------
+//
+// The gate's other coverage (tests/mcp/server.test.ts) drives it against a dead
+// port, which proves the gate CHOSE to repair but can see nothing downstream of
+// that: a bug that repaired a note and then wrote the original would pass every
+// one of those tests. These go through the real server and read the card back.
+//
+// They live in this file on purpose. They need a live Elves and an MCP client,
+// and the harness for both is already here. A separate file would add another
+// vitest worker and another HTTP server, which turned out to be enough extra
+// parallel load to tip tests/server/changeset.test.ts's 5s timeouts into
+// failing about half of all runs.
+
+function fixedRepair(text: string): Repairer {
+  return { label: 'test/fixed', async repair() { return { text, attempts: 1 } } }
+}
+const NO_REPAIR: Repairer = { label: 'test/none', async repair() { return null } }
+
+async function mcpClient(base: string): Promise<Client> {
+  const server = createMcpServer(base)
+  const [clientT, serverT] = InMemoryTransport.createLinkedPair()
+  await server.connect(serverT)
+  const client = new Client({ name: 'gate-test', version: '0.0.0' })
+  await client.connect(clientT)
+  return client
+}
+
+// Three cases, not six. Each liveElves() is a real HTTP server and a real temp
+// dir, and tests/server/changeset.test.ts runs 5s timeouts against the same
+// machine — it flakes roughly one run in five on its own, and six more servers
+// here took that to two in five. Grouping the assertions keeps the added load
+// where it was.
+
+test('a repaired note lands repaired, and the agent is told it was changed', async () => {
+  const { base } = await liveElves()
+  await seedCard(base, 'shape:c1')
+  setRepairer(fixedRepair('The 73% figure has no source.'))
+  const client = await mcpClient(base)
+
+  const res = (await client.callTool({
+    name: 'add_comment',
+    arguments: { project: 'essay', cardId: 'shape:c1', text: "It's worth noting that the 73% figure has no source." },
+  })) as { isError?: boolean; content: { text: string }[] }
+  expect(res.isError).toBeFalsy()
+
+  // What the canvas actually holds — the whole point of this file.
+  const [card] = await readCardsTool(base, 'essay', ['shape:c1'])
+  expect(card.comments).toHaveLength(1)
+  expect(card.comments[0].text).toBe('The 73% figure has no source.')
+  expect(card.comments[0].text).not.toContain("It's worth noting")
+
+  // And the agent is told, rather than having its words changed silently.
+  const said = res.content.map((c) => c.text).join('\n')
+  expect(said).toContain('comment added')
+  expect(said).toContain('house style')
+  expect(said).toContain('didactic-hedge')
+  await client.close()
+})
+
+test('a clean note is untouched, and a note that cannot be repaired writes nothing', async () => {
+  const { base } = await liveElves()
+  await seedCard(base, 'shape:c1')
+  const client = await mcpClient(base)
+
+  // A repairer that would mangle anything it touched: a clean note must never
+  // reach it, and must land byte-for-byte.
+  setRepairer(fixedRepair('WRONG'))
+  const clean = (await client.callTool({
+    name: 'add_comment',
+    arguments: { project: 'essay', cardId: 'shape:c1', text: 'The 73% figure has no source.' },
+  })) as { content: { text: string }[] }
+  let [card] = await readCardsTool(base, 'essay', ['shape:c1'])
+  expect(card.comments).toHaveLength(1)
+  expect(card.comments[0].text).toBe('The 73% figure has no source.')
+  expect(clean.content.map((c) => c.text).join('')).not.toContain('house style')
+
+  // Repair unavailable (Ollama down): the gate rejects and nothing is written.
+  setRepairer(NO_REPAIR)
+  const rejected = (await client.callTool({
+    name: 'add_comment',
+    arguments: { project: 'essay', cardId: 'shape:c1', text: "It's worth noting that this claim is weak." },
+  })) as { isError?: boolean }
+  expect(rejected.isError).toBe(true)
+  ;[card] = await readCardsTool(base, 'essay', ['shape:c1'])
+  expect(card.comments).toHaveLength(1) // still just the clean one
+  await client.close()
+})
+
+test('repairs land on questions and figure titles too, leaving clean fields alone', async () => {
+  const { base } = await liveElves()
+  await seedEmptyCanvas(base)
+  const client = await mcpClient(base)
+
+  setRepairer(fixedRepair('Who is this piece for?'))
+  await client.callTool({
+    name: 'create_question',
+    arguments: { project: 'essay', text: 'I noticed that who this piece is for is unclear.', x: 10, y: 10 },
+  })
+
+  setRepairer(fixedRepair('Layer diagram'))
+  await client.callTool({
+    name: 'create_figure_card',
+    arguments: {
+      project: 'essay',
+      title: 'The intricate interplay',
+      description: 'The three layers and where the write path crosses them.',
+      x: 400, y: 10,
+    },
+  })
+
+  const map = await readMapTool(base, 'essay')
+  expect(map.questions).toHaveLength(1)
+  expect(map.questions[0].text).toBe('Who is this piece for?')
+
+  const figure = map.cards.find((c) => c.kind === 'figure')!
+  const [full] = await readCardsTool(base, 'essay', [figure.id])
+  // The title broke a rule and was repaired; the description was already clean
+  // and must survive untouched.
+  expect(full.figureTitle).toBe('Layer diagram')
+  expect(full.text).toBe('The three layers and where the write path crosses them.')
+  await client.close()
 })
