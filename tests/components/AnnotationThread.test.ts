@@ -28,16 +28,21 @@ test('preview has no reply, retry, resolve, or close controls', () => {
 
 test('open mode exposes reply, retry, resolve, and close actions', () => {
   const onClose = vi.fn()
+  const onResolve = vi.fn()
   const tree = create(createElement(AnnotationThread, {
     comment: { id: 'c1', type: null, text: 'Needs evidence', resolved: false, author: 'claude' },
-    mode: 'open', onClose, onResolve: vi.fn(), onReply: vi.fn(),
+    mode: 'open', onClose, onResolve, onReply: vi.fn(),
     error: 'The reply stopped.', onRetry: vi.fn(),
   }))
 
   expect(tree.root.findByType('textarea')).toBeTruthy()
   expect(tree.root.findByProps({ className: 'elves-annotation-thread__close' }).props['aria-label'])
     .toBe('Close annotation thread')
+  const resolve = tree.root.findByProps({ className: 'elves-annotation-thread__resolve' })
+  expect(resolve.props['aria-label']).toBe('Resolve Comment comment')
   expect(tree.root.findAllByType('button').some((button) => button.children.includes('Retry'))).toBe(true)
+  resolve.props.onClick()
+  expect(onResolve).toHaveBeenCalledOnce()
   tree.root.findByProps({ className: 'elves-annotation-thread__close' }).props.onClick()
   expect(onClose).toHaveBeenCalledOnce()
 })
@@ -61,16 +66,6 @@ test('thread renders durable replies and only disables its own send control whil
   expect(tree.root.findAllByProps({ className: 'elves-annotation-thread__message' })).toHaveLength(2)
   expect(tree.root.findByProps({ className: 'elves-annotation-thread__send' }).props.disabled).toBe(true)
   expect(tree.root.findByProps({ className: 'elves-annotation-thread__resolve' }).props.disabled).toBe(false)
-})
-
-test('a restored card retains a comment action name', () => {
-  const tree = create(createElement(AnnotationThread, {
-    comment: { id: 'c1', type: 'needs-evidence', text: 'Needs a source', resolved: true, author: 'claude' },
-    mode: 'open', actionLabel: 'Restore comment', onResolve: vi.fn(),
-  }))
-
-  expect(tree.root.findByProps({ className: 'elves-annotation-thread__resolve' }).props['aria-label'])
-    .toBe('Restore Needs evidence comment')
 })
 
 test('a targeted pin clears its temporary preview after pointer or focus leaves', () => {

@@ -6,7 +6,6 @@
   border-radius: 10px;
   background: var(--elves-bg);
 }
-.elves-annotation-thread[data-selected="true"] { border-color: var(--elves-primary); box-shadow: 0 0 0 1px var(--elves-primary-tint-2); }
 .elves-annotation-thread__meta { display: flex; flex-wrap: wrap; gap: 5px 8px; color: var(--elves-ink-faint); font-size: 11px; font-weight: 550; text-transform: capitalize; }
 .elves-annotation-thread__type { color: var(--elves-primary-strong); }
 .elves-annotation-thread__messages { display: grid; gap: 8px; }
