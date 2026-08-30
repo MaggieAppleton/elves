@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { PERSONALITIES, PERSONALITY_IDS, type PersonalityId } from '../src/model/reviews'
+import { HOUSE_STYLE, formatStyleRejection, lintProse } from '../src/model/houseStyle'
 import {
   readMapTool,
   readCardsTool,
@@ -46,18 +47,49 @@ const PROJECT = z
     "The project id to operate on (from list_projects). If you don't already know it, call list_projects first and confirm with the user — never guess.",
   )
 
-// House style handed to EVERY agent that connects (Claude or otherwise), sent
-// once in the MCP initialize handshake so it colors every tool call — not just
+// House rules handed to EVERY agent that connects (Claude or otherwise), sent
+// once in the MCP initialize handshake so they color every tool call — not just
 // this server's. The canvas is the user's draft; an agent works in its margins,
-// so the governing rule is brevity: everything you leave on the canvas is a
-// sticky note, never an essay.
+// so the first rule is brevity: everything you leave on the canvas is a sticky
+// note, never an essay. The second is HOUSE_STYLE, appended below — brevity
+// alone does not save a one-sentence note that reads as machine-written, and
+// unlike the rest of this text those rules are also enforced (see styleGate).
 const INSTRUCTIONS = `You are a collaborator in the margins of someone's writing project — a canvas of cards holding their draft. The user writes the prose; you leave the marginalia: comments, questions, section labels, figure suggestions, reference cards.
 
 The one house rule, non-negotiable: ONE SENTENCE. Every comment, question, and figure description is a single sentence — two only if the first truly cannot stand alone, and never more. Reply with only the note itself: no preamble, no "I noticed that...", no throat-clearing — say the one thing that matters and stop. A wall of text in the margin is worse than silence — the user skims it and loses trust in the rest.
 
 Be sparing as well as brief: a few pointed notes beat a dozen, and one precise question beats five vague ones. You annotate and suggest; you never write the user's prose for them.
 
-The user can also summon a REVIEW PASS — a bounded, in-character editorial read by one of five personalities (Devil's Advocate, Fact-Checker, Trimmer, First Reader, Architect). When you start work on a canvas, check list_reviews: a pending review is the user's summons waiting for you — claim it with start_review and follow the brief it returns. If the user asks for that kind of read in chat ("play devil's advocate on this"), open the pass with start_review(personality) instead of free-styling, so their review panel shows the pass and groups your notes.`
+The user can also summon a REVIEW PASS — a bounded, in-character editorial read by one of five personalities (Devil's Advocate, Fact-Checker, Trimmer, First Reader, Architect). When you start work on a canvas, check list_reviews: a pending review is the user's summons waiting for you — claim it with start_review and follow the brief it returns. If the user asks for that kind of read in chat ("play devil's advocate on this"), open the pass with start_review(personality) instead of free-styling, so their review panel shows the pass and groups your notes.
+
+${HOUSE_STYLE}`
+
+/**
+ * Reject a write whose text breaks house style, before it reaches the canvas.
+ *
+ * The style rules are stated in INSTRUCTIONS, in every review brief, and in the
+ * headless preamble — but an instruction an agent can skim is an instruction an
+ * agent can skim past, and the cost lands on the user, who opens their canvas
+ * and finds "It's worth noting that this claim plays a crucial role" sitting in
+ * the margin of their draft. So the rules are also a gate. A failing call comes
+ * back as an MCP error naming the rule and underlining the span, which is a
+ * retryable signal: the agent rewrites and calls again, and nothing slop-shaped
+ * ever lands.
+ *
+ * Only the agent's OWN words are checked. Transcription (create_note_card) and
+ * reference fields are the user's words and the source's facts respectively, so
+ * they pass through untouched — see the note in src/model/houseStyle.ts.
+ */
+function styleGate(fields: { field: string; text?: string | null }[]) {
+  for (const { field, text } of fields) {
+    if (!text) continue
+    const hits = lintProse(text)
+    if (hits.length) {
+      return { content: [{ type: 'text' as const, text: formatStyleRejection(field, text, hits) }], isError: true }
+    }
+  }
+  return null
+}
 
 export function createMcpServer(baseUrl: string): McpServer {
   const server = new McpServer({ name: 'elves', version: '0.1.0' }, { instructions: INSTRUCTIONS })
@@ -118,6 +150,8 @@ export function createMcpServer(baseUrl: string): McpServer {
       ),
     },
     async ({ project, cardId, text, type, reviewId }) => {
+      const rejected = styleGate([{ field: 'comment', text }])
+      if (rejected) return rejected
       await addCommentTool(baseUrl, project, { cardId, text, type: type ?? null, reviewId: reviewId ?? null })
       return { content: [{ type: 'text', text: 'comment added' }] }
     },
@@ -158,6 +192,8 @@ export function createMcpServer(baseUrl: string): McpServer {
     "Close a review pass with your VERDICT: one to three sentences of honest overall read — the through-line of what you found, including 'this holds up' when it does. The verdict appears in the user's review panel (don't also leave it as feedback). Call this exactly once, after your last annotation or question of the pass; the server stamps the pass's annotation count at this moment. Also tell the user the verdict in chat.",
     { project: PROJECT, reviewId: z.string(), verdict: z.string() },
     async ({ project, reviewId, verdict }) => {
+      const rejected = styleGate([{ field: 'verdict', text: verdict }])
+      if (rejected) return rejected
       const review = await completeReviewTool(baseUrl, project, { reviewId, verdict })
       return {
         content: [{
@@ -229,6 +265,8 @@ export function createMcpServer(baseUrl: string): McpServer {
     'Create a section header in a project: a big thematic label (a few words) that sits above a cluster of cards so the shape of the piece reads at a glance when zoomed out. x is narrative order like cards — place it above/at the start of the cluster it labels. Unlike card text, you may write this directly; it renders in your accent color so the user can see you authored it.',
     { project: PROJECT, text: z.string(), x: z.number(), y: z.number() },
     async ({ project, text, x, y }) => {
+      const rejected = styleGate([{ field: 'section label', text }])
+      if (rejected) return rejected
       await createSectionTool(baseUrl, project, { text, x, y })
       return { content: [{ type: 'text', text: 'section created' }] }
     },
@@ -239,6 +277,11 @@ export function createMcpServer(baseUrl: string): McpServer {
     "Drop a FIGURE CARD — a placeholder for a planned visual (illustration, diagram, interactive animation) — at its narrative position among the prose and notes. `title` is a short working title; `description` names the idea in ONE sentence — two at most, never more: what the visual shows and the one contrast or structure that matters. No preamble, no spec — name the idea, don't storyboard it (avoid 'draw X on the left, label Y, then Z'); the user designs the actual figure, so over-prescribing just gets deleted. Suggest one where the prose would carry more as a picture: a spatial relationship described in words, a process or sequence, a comparison across more than two dimensions, or anything the text is straining to say linearly. It lands at status `idea` and renders with your authorship mark — your suggestion, the user's call to refine, keep, or delete (they own the actual illustration; you only plan it, never generate it). x is narrative order like other cards; place it beside the prose it would illustrate. First check read_map: if a figure is already planned there, don't add a duplicate. This writes a placeholder plan, never the user's prose.",
     { project: PROJECT, title: z.string(), description: z.string(), x: z.number(), y: z.number() },
     async ({ project, title, description, x, y }) => {
+      const rejected = styleGate([
+        { field: 'figure title', text: title },
+        { field: 'figure description', text: description },
+      ])
+      if (rejected) return rejected
       await createFigureCardTool(baseUrl, project, { title, description, x, y })
       return { content: [{ type: 'text', text: 'figure card created' }] }
     },
@@ -249,6 +292,16 @@ export function createMcpServer(baseUrl: string): McpServer {
     "Edit an existing WORKING-MATERIAL card in place — a note's body or a figure's description, via `text`; plus a figure's working `title` (figures only). Pass only the field(s) you want to change; omit the rest to leave them untouched. Get the cardId from read_map. This edits notes and figures, which are working material an agent helps maintain. It does NOT edit a PROSE card — that holds the user's own draft, theirs alone to write — nor a REFERENCE card's `text`, which is the user's own annotation; a reference's bibliographic facts are set once at creation and aren't editable here (recreate it to change them). Prefer this over delete + recreate — it keeps the card's id, position, and authorship mark.",
     { project: PROJECT, cardId: z.string(), text: z.string().optional(), title: z.string().optional() },
     async ({ project, cardId, text, title }) => {
+      // Only `title` is gated. A figure's working title is always the agent's
+      // own words, but `text` is whichever body this card happens to have —
+      // and on a note card that body is the USER's: handwriting the agent
+      // transcribed, or something she typed herself. The tool cannot tell the
+      // two apart without a read, and grading her words is worse than missing
+      // a stale figure description, so the check stops at the title. Freshly
+      // written figure descriptions still go through create_figure_card, which
+      // is gated.
+      const rejected = styleGate([{ field: 'figure title', text: title }])
+      if (rejected) return rejected
       await editCardTool(baseUrl, project, { cardId, text, title })
       return { content: [{ type: 'text', text: 'card updated' }] }
     },
@@ -279,6 +332,8 @@ export function createMcpServer(baseUrl: string): McpServer {
     'Rename an existing section header — tighten its wording, or rename it after merging two sections into one. Section labels are organizational, not prose, so you may write this text directly. Never use this to write or edit a CARD\'s text — there is no tool for that, and there never will be.',
     { project: PROJECT, sectionId: z.string(), text: z.string() },
     async ({ project, sectionId, text }) => {
+      const rejected = styleGate([{ field: 'section label', text }])
+      if (rejected) return rejected
       await editSectionTextTool(baseUrl, project, { sectionId, text })
       return { content: [{ type: 'text', text: 'section renamed' }] }
     },
@@ -289,6 +344,8 @@ export function createMcpServer(baseUrl: string): McpServer {
     "Drop a QUESTION card near a cluster — a short, pointed question the way a good editor asks (\"What did the room smell like?\", \"You assert X in three places but never argue it — which card is the argument?\"). It provokes what the user hasn't written yet; they answer by writing their OWN cards beside it, then dismiss it. A question card holds ONLY a question, never draft prose — that's the point, and it keeps you inside the \"only the user writes the final prose\" rule. It renders in your accent with your authorship mark. Guidance: ONE sentence per question, no preamble — just ask it, never more than one. FEW and SPECIFIC — at most ~5 per pass; anchored in what the cards actually say, not generic writing advice; concrete beats abstract. Check existing questions in read_map FIRST (open AND dismissed) — a dismissed question is one the user already answered or waved off, so don't re-ask it. x is narrative order like cards; place it beside the cluster it interrogates.",
     { project: PROJECT, text: z.string(), x: z.number(), y: z.number() },
     async ({ project, text, x, y }) => {
+      const rejected = styleGate([{ field: 'question', text }])
+      if (rejected) return rejected
       await createQuestionTool(baseUrl, project, { text, x, y })
       return { content: [{ type: 'text', text: 'question created' }] }
     },
@@ -299,6 +356,8 @@ export function createMcpServer(baseUrl: string): McpServer {
     'Create a movable agent-authored feedback card when no single card is the right target. Put it beside the relevant cluster, or on the far-left global edge for essay-wide feedback. ONE sentence. During a review pass pass its reviewId and reviewer personality.',
     { project: PROJECT, text: z.string(), x: z.number(), y: z.number(), type: COMMENT_TYPE.nullish(), reviewId: z.string().nullish(), reviewer: PERSONALITY.nullish() },
     async ({ project, text, x, y, type, reviewId, reviewer }) => {
+      const rejected = styleGate([{ field: 'feedback note', text }])
+      if (rejected) return rejected
       await createFeedbackTool(baseUrl, project, { text, x, y, type: type ?? null, reviewId: reviewId ?? null, reviewer: reviewer ?? null })
       return { content: [{ type: 'text', text: 'feedback added' }] }
     },

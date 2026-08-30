@@ -52,3 +52,153 @@ test('the MCP server exposes the scoped tools plus list_projects, and no text-ed
 
   await client.close()
 })
+
+// The house-style gate runs in the tool handler, before anything is sent over
+// the wire, so these drive it against a deliberately dead base url: a call that
+// is rejected never reaches the network, and a call that gets past the gate
+// fails with a connection error instead. That difference is the assertion.
+const DEAD = 'http://127.0.0.1:1'
+
+async function connectClient() {
+  const server = createMcpServer(DEAD)
+  const [clientT, serverT] = InMemoryTransport.createLinkedPair()
+  await server.connect(serverT)
+  const client = new Client({ name: 'test', version: '0.0.0' })
+  await client.connect(clientT)
+  return client
+}
+
+async function callText(client: Client, name: string, args: Record<string, unknown>) {
+  try {
+    const res = (await client.callTool({ name, arguments: args })) as {
+      isError?: boolean
+      content: { text: string }[]
+    }
+    return { isError: Boolean(res.isError), text: res.content.map((c) => c.text).join('\n') }
+  } catch (err) {
+    // A connection refusal surfaces as a thrown protocol error; for these tests
+    // that counts as "the gate let it through".
+    return { isError: true, text: String(err) }
+  }
+}
+
+test('the initialize handshake hands every agent the house style', async () => {
+  const client = await connectClient()
+  const instructions = client.getInstructions() ?? ''
+  expect(instructions).toContain('HOUSE STYLE')
+  expect(instructions).toContain("it's worth noting")
+  expect(instructions).toContain('double quotes')
+  await client.close()
+})
+
+const SLOP = "It's worth noting that this claim plays a crucial role."
+
+const GATED: [string, Record<string, unknown>, string][] = [
+  ['add_comment', { project: 'p', cardId: 'c', text: SLOP }, 'comment'],
+  ['create_question', { project: 'p', text: SLOP, x: 0, y: 0 }, 'question'],
+  ['create_feedback', { project: 'p', text: SLOP, x: 0, y: 0 }, 'feedback note'],
+  ['create_section', { project: 'p', text: 'The ever-evolving landscape', x: 0, y: 0 }, 'section label'],
+  ['edit_section_text', { project: 'p', sectionId: 's', text: 'A vibrant tapestry' }, 'section label'],
+  ['create_figure_card', { project: 'p', title: 'T', description: SLOP, x: 0, y: 0 }, 'figure description'],
+  ['edit_card', { project: 'p', cardId: 'c', title: 'A seamless tapestry' }, 'figure title'],
+  ['complete_review', { project: 'p', reviewId: 'r', verdict: SLOP }, 'verdict'],
+]
+
+for (const [tool, args, field] of GATED) {
+  test(`${tool} rejects slop before it can reach the canvas`, async () => {
+    const client = await connectClient()
+    const { isError, text } = await callText(client, tool, args)
+    expect(isError).toBe(true)
+    expect(text).toContain(`this ${field} hits`)
+    expect(text).toContain('house-style')
+    await client.close()
+  })
+}
+
+test('a rejection names the rule and quotes the phrase, so the agent can fix it', async () => {
+  const client = await connectClient()
+  const { text } = await callText(client, 'add_comment', { project: 'p', cardId: 'c', text: SLOP })
+  expect(text).toContain('didactic-hedge')
+  expect(text).toContain('inflated-role')
+  expect(text).toContain('plays a crucial role')
+  expect(text).toContain('call the tool again')
+  await client.close()
+})
+
+test('a clean note gets past the gate', async () => {
+  const client = await connectClient()
+  const { text } = await callText(client, 'add_comment', {
+    project: 'p',
+    cardId: 'c',
+    text: 'The 73% figure has no source.',
+  })
+  // It still fails — nothing is listening on the dead port — but not on style.
+  expect(text).not.toContain('house-style')
+  await client.close()
+})
+
+test('a figure title is checked as well as its description', async () => {
+  const client = await connectClient()
+  const { text } = await callText(client, 'create_figure_card', {
+    project: 'p',
+    title: 'The intricate interplay',
+    description: 'Three layers, and where the write path crosses them.',
+    x: 0,
+    y: 0,
+  })
+  expect(text).toContain('this figure title hits')
+  expect(text).toContain('ai-vocab')
+  await client.close()
+})
+
+test("transcription is never style-checked — those are the user's own words", async () => {
+  // create_note_card digitizes handwriting. Tidying it would be rewriting the
+  // user's notes, which is the one thing an Elves agent must never do.
+  const client = await connectClient()
+  const { text } = await callText(client, 'create_note_card', {
+    project: 'p',
+    text: "It's worth noting that I delve into the intricate tapestry here.",
+    x: 0,
+    y: 0,
+  })
+  expect(text).not.toContain('house-style')
+  await client.close()
+})
+
+test("edit_card's body is never style-checked — it may be the user's own words", async () => {
+  // `text` on a note card is handwriting the agent transcribed, or something
+  // the user typed herself. The tool cannot tell a note from a figure without a
+  // read, and grading her words is worse than missing a stale description.
+  const client = await connectClient()
+  const { text } = await callText(client, 'edit_card', {
+    project: 'p',
+    cardId: 'c',
+    text: "It's worth noting that I delve into the intricate tapestry here.",
+  })
+  expect(text).not.toContain('house-style')
+  await client.close()
+})
+
+test('reference fields are never style-checked — those are the source\'s facts', async () => {
+  const client = await connectClient()
+  const { text } = await callText(client, 'create_reference', {
+    project: 'p',
+    url: 'https://example.com/paper',
+    x: 0,
+    y: 0,
+    description: 'A meticulous study of the intricate interplay between seamless systems.',
+  })
+  expect(text).not.toContain('house-style')
+  await client.close()
+})
+
+test("quoting the user's prose passes the gate", async () => {
+  const client = await connectClient()
+  const { text } = await callText(client, 'add_comment', {
+    project: 'p',
+    cardId: 'c',
+    text: 'Cut "it\'s worth noting that" from the opening.',
+  })
+  expect(text).not.toContain('house-style')
+  await client.close()
+})
