@@ -14,8 +14,7 @@ export type AnnotationThreadComment = Pick<Comment, 'id' | 'type' | 'text' | 're
 
 export interface AnnotationThreadProps {
   comment: AnnotationThreadComment
-  /** `rail` keeps the intermediate inspector migration type-safe. */
-  mode: 'preview' | 'open' | 'rail'
+  mode: 'preview' | 'open'
   selected?: boolean
   disabled?: boolean
   attribution?: string
@@ -52,8 +51,7 @@ export function AnnotationThread({
   onRetry,
   onClose,
 }: AnnotationThreadProps) {
-  const renderMode = mode === 'rail' ? 'open' : mode
-  const preview = renderMode === 'preview'
+  const preview = mode === 'preview'
   const type = annotationType(comment.type)
   const [reply, setReply] = useState('')
   const sending = useRef(false)
@@ -71,7 +69,7 @@ export function AnnotationThread({
   }
   return (
     <article
-      className={`elves-annotation-thread elves-annotation-thread--${renderMode}${mode === 'rail' ? ' elves-annotation-thread--legacy-rail' : ''}`}
+      className={`elves-annotation-thread elves-annotation-thread--${mode}`}
       data-selected={selected}
       data-testid="annotation-thread"
     >

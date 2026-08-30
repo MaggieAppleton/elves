@@ -8,14 +8,12 @@ export interface AnnotationThreadPresentation {
   error?: string | null
 }
 
-type AnnotationOpenListener = (target: AnnotationTarget) => void
 type AnnotationReplyListener = (target: AnnotationTarget, text: string) => void
 type AnnotationRetryListener = (target: AnnotationTarget) => void
 type AnnotationActionListener = (target: AnnotationTarget) => void
 type AnnotationPopoverListener = () => void
 type AnnotationTargetListener = () => void
 
-const listeners = new Set<AnnotationOpenListener>()
 const replyListeners = new Set<AnnotationReplyListener>()
 const retryListeners = new Set<AnnotationRetryListener>()
 const resolveListeners = new Set<AnnotationActionListener>()
@@ -35,15 +33,9 @@ export function annotationTargetKey(target: AnnotationTarget): string {
     : `feedback:${target.feedbackId}`
 }
 
-export function subscribeAnnotationOpen(listener: AnnotationOpenListener): () => void {
-  listeners.add(listener)
-  return () => listeners.delete(listener)
-}
-
 export function requestAnnotationOpen(target: AnnotationTarget): void {
   if (openTargets.has(annotationTargetKey(target))) promoteAnnotationThread(target)
   else openAnnotationThread(target)
-  listeners.forEach((listener) => listener(target))
 }
 
 function emitTargets(): void {

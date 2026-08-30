@@ -71,5 +71,3 @@
 }
 .elves-annotation-thread--preview { box-shadow: var(--elves-shadow-md); }
 .elves-annotation-thread__close { position: absolute; top: 8px; right: 8px; }
-/* The inspector remains in the legacy layout until its migration removes `rail`. */
-.elves-annotation-thread--legacy-rail { position: static; width: auto; }
