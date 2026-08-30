@@ -113,20 +113,17 @@ test('a clean reply is returned untouched and never reaches the model', async ()
   expect(result).toEqual({ text: clean, repaired: false, broke: [] })
 })
 
-test('an unreachable local model stops being called after a couple of replies', async () => {
-  // This repair sits between the agent's last word and the saved message, with
-  // the annotation stream held open across it — so every reply that trips a
-  // rule on a machine with no Ollama would stall the thread for the full
-  // timeout after the answer was already known.
-  const slow = { host: 'http://127.0.0.1:1', timeoutMs: 300 }
-  const started = Date.now()
+test('every reply survives an unreachable local model, however many in a row', async () => {
+  // The breaker itself is tested deterministically in TransportBreaker's own
+  // cases; what matters here is that tripping it changes nothing the caller
+  // sees. Six replies, no Ollama, six sets of the agent's own words.
+  const dead = { host: 'http://127.0.0.1:1', timeoutMs: 200 }
   for (let i = 0; i < 6; i++) {
-    const result = await repairReply(SLOPPY, slow)
+    const result = await repairReply(SLOPPY, dead)
     expect(result.text).toBe(SLOPPY)
+    expect(result.repaired).toBe(false)
+    expect(result.broke).toContain('didactic-hedge')
   }
-  // Two attempts pay the timeout; the remaining four short-circuit. Without the
-  // breaker this would be six.
-  expect(Date.now() - started).toBeLessThan(300 * 4)
 })
 
 test('an unreachable local model leaves the agent\'s own words saved', async () => {
