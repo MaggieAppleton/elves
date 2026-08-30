@@ -101,6 +101,12 @@ test('a repair that grows the note is refused', () => {
     'The middle of the piece sags considerably in several places.').ok).toBe(false)
 })
 
+test('a two-word repair is kept — it is exactly the deletion we asked for', () => {
+  // A three-word floor threw this away and escalated a repairable note into a
+  // rejection, which is the expensive path.
+  expect(acceptRepair('I noticed that it repeats.', 'It repeats.')).toEqual({ ok: true })
+})
+
 test('a repair that collapses to nothing is refused', () => {
   expect(acceptRepair('No fluff, no filler, no jargon.', '.'))
     .toEqual({ ok: false, reason: 'too-short' })

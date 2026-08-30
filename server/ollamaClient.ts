@@ -53,6 +53,44 @@ export async function ollamaGenerate({ host, model, prompt, timeoutMs }: OllamaR
   }
 }
 
+/**
+ * Stop calling a host that isn't answering.
+ *
+ * Ollama unloads an idle model after a few minutes, so a cold call can outrun
+ * any sane timeout — and on a machine that never runs Ollama, every call does.
+ * Both repair paths pay that cost repeatedly without this: a review pass of six
+ * notes, or a thread where several replies in a row trip a rule.
+ *
+ * Only TRANSPORT failures count. A reply that comes back and fails its leash
+ * means the host is alive and working, and the next one may well succeed.
+ */
+export class TransportBreaker {
+  private failures = 0
+  private until = 0
+
+  constructor(
+    private readonly trip = 2,
+    private readonly cooldownMs = 60_000,
+    private readonly clock: () => number = () => Date.now(),
+  ) {}
+
+  get open(): boolean {
+    return this.clock() < this.until
+  }
+
+  recordSuccess(): void {
+    this.failures = 0
+  }
+
+  /** @returns true when this failure is the one that tripped the breaker. */
+  recordFailure(): boolean {
+    this.failures += 1
+    if (this.failures < this.trip) return false
+    this.until = this.clock() + this.cooldownMs
+    return true
+  }
+}
+
 export const DEFAULT_OLLAMA_HOST = process.env.OLLAMA_HOST ?? 'http://localhost:11434'
 export const DEFAULT_OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? 'llama3.2'
 

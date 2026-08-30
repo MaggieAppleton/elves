@@ -192,7 +192,10 @@ export const RULES: StyleRule[] = [
     why: 'Throat-clearing before the note. Delete the run-up and start at the thing itself.',
     scope: 'any',
     find: regexFinder(
-      /(?:^|\n)\s*(?:I\s+(?:noticed|noted|think|feel|wonder|see|suspect|would\s+(?:say|argue|note|flag))\b|(?:It|This)\s+(?:seems|feels|appears|looks)\s+(?:like|as\s+if|to\s+be)\b|One\s+(?:thing|note|small\s+thing)\b|Just\s+(?:a\s+(?:note|thought|flag)|flagging)\b|(?:You\s+(?:might|may|could)\s+(?:want\s+to\s+)?)?consider(?:ed)?\s+(?:adding|whether|making|reframing)\b|A\s+(?:small|quick|minor)\s+(?:note|point|thought)\b)/gi,
+      // The hedge prefix on "consider" is REQUIRED. A bare "Consider adding a
+      // source for the 73% figure." is the terse imperative this rule exists to
+      // encourage; only "You might consider…" is the throat-clearing.
+      /(?:^|\n)\s*(?:I\s+(?:noticed|noted|think|feel|wonder|see|suspect|would\s+(?:say|argue|note|flag))\b|(?:It|This)\s+(?:seems|feels|appears|looks)\s+(?:like|as\s+if|to\s+be)\b|One\s+(?:thing|note|small\s+thing)\b|Just\s+(?:a\s+(?:note|thought|flag)|flagging)\b|You\s+(?:might|may|could)\s+(?:want\s+to\s+)?consider(?:ed)?\s+(?:adding|whether|making|reframing)\b|A\s+(?:small|quick|minor)\s+(?:note|point|thought)\b)/gi,
     ),
   },
   {
@@ -200,7 +203,12 @@ export const RULES: StyleRule[] = [
     why: 'Praise in the margin. The user did not ask to be flattered; say the thing.',
     scope: 'any',
     find: regexFinder(
-      /\b(?:great|good|excellent|interesting|fascinating|nice|strong|lovely)\s+(?:question|point|catch|observation|idea|instinct|work)\b|\byou(?:['’]re|\s+are)\s+(?:absolutely\s+|completely\s+|quite\s+)?right\b|\bI\s+(?:love|really\s+like)\s+(?:this|that|how)\b|\b(?:this|that)\s+is\s+(?:a\s+)?(?:really\s+|very\s+)?(?:great|excellent|fantastic|wonderful)\b/gi,
+      // Praise opens a turn; a noun phrase does not. Anchoring to the start of a
+      // sentence and refusing a following linking verb separates "Good catch on
+      // the ordering." from "The strong point here is the ending." and "Good
+      // work is buried in card 5." — both of which describe the draft rather
+      // than compliment the writer.
+      /(?:^|[.!?]\s+|\n)(?:great|good|excellent|interesting|fascinating|nice|strong|lovely)\s+(?:question|point|catch|observation|idea|instinct|work)\b(?!\s+(?:is|are|was|were|has|have|here|of|in))|\byou(?:['’]re|\s+are)\s+(?:absolutely\s+|completely\s+|quite\s+)?right\b|\bI\s+(?:love|really\s+like)\s+(?:this|that|how)\b|\b(?:this|that)\s+is\s+(?:a\s+)?(?:really\s+|very\s+)?(?:great|excellent|fantastic|wonderful)\b/gi,
     ),
   },
   {
@@ -208,7 +216,11 @@ export const RULES: StyleRule[] = [
     why: 'Hedges stacked on hedges. Keep at most one, or drop them and commit.',
     scope: 'any',
     find: regexFinder(
-      /\b(?:perhaps|maybe|possibly|arguably|somewhat|slightly|fairly|rather|relatively|a\s+bit|a\s+little|kind\s+of|sort\s+of|might|seems?|appears?|potentially|generally|typically)\b(?:\s+\w+){0,2}?\s+\b(?:perhaps|maybe|possibly|arguably|somewhat|slightly|fairly|rather|relatively|a\s+bit|a\s+little|kind\s+of|sort\s+of|might|seems?|appears?|potentially|generally|typically)\b/gi,
+      // A pile needs at least one hedging ADVERB. A modal plus a perception
+      // verb — "this might seem redundant" — is a single hedge in ordinary
+      // usage, and the examples this rule is named for are all adverb stacks
+      // ("perhaps somewhat unclear", "it might arguably be").
+      /\b(?:perhaps|maybe|possibly|arguably|somewhat|slightly|fairly|rather|relatively|a\s+bit|a\s+little|kind\s+of|sort\s+of|potentially|generally|typically)\b(?:\s+\w+){0,2}?\s+\b(?:perhaps|maybe|possibly|arguably|somewhat|slightly|fairly|rather|relatively|a\s+bit|a\s+little|kind\s+of|sort\s+of|potentially|generally|typically|might|could|seems?|appears?)\b|\b(?:might|could|seems?|appears?)\b(?:\s+\w+){0,2}?\s+\b(?:perhaps|maybe|possibly|arguably|somewhat|slightly|fairly|rather|relatively|a\s+bit|a\s+little|kind\s+of|sort\s+of|potentially|generally|typically)\b/gi,
     ),
   },
   {
@@ -280,8 +292,14 @@ export const RULES: StyleRule[] = [
     id: 'the-whole-point',
     why: '"That\'s the whole point / the entire game." Name the point instead of labelling it one.',
     scope: 'any',
+    // The cliché is the NOUN, not the quantifier. Without pinning it, this ate
+    // ordinary notes an editor should be able to write — "The entire second
+    // section is unsourced", "Card 3 is the whole argument" — and tier 1 could
+    // not rescue them, since deleting the matched span destroys the sentence.
+    // A leading wh-word marks a genuine question ("What is the entire point of
+    // this section?"), which is a legitimate thing to ask rather than a cliché.
     find: regexFinder(
-      /(?:\b(?:is|was|are|were)|['’]s)\s+the\s+(?:whole|entire)\b(?:\s+\w+)?|\bhere(?:['’]s|\s+is)\s+the\s+whole\b(?:\s+\w+)?|\bthe\s+entire\s+[\w'’-]+(?:\s+[\w'’-]+){0,4}?\s+(?:is|was|are|were)\b/gi,
+      /(?<!\b(?:what|which|where|why|how)\s)(?:\b(?:is|was|are|were)|['’]s)\s+the\s+(?:whole|entire)\s+(?:point|game|thing|deal|story|idea|trick|pitch|ballgame|business\s+model)\b|\bhere(?:['’]s|\s+is)\s+the\s+whole\s+(?:point|game|thing|deal|story|idea)\b|\bthe\s+entire\s+(?:point|game|thing|deal|story|idea)\b[^.!?\n]{0,40}?\s+(?:is|was|are|were)\b/gi,
     ),
   },
   {
@@ -425,7 +443,11 @@ export const RULES: StyleRule[] = [
     why: 'Analysis bolted onto a sentence end (", highlighting the importance of …"). Cut the tail.',
     scope: 'any',
     find: regexFinder(
-      /,\s+(?:highlighting|underscoring|emphasizing|emphasising|showcasing|reflecting|demonstrating|illustrating|signaling|signalling|solidifying|cementing|reinforcing|underlining)\s+(?:its|his|her|their|our|the|a|an|how|that|what|both)\b[^.!?\n]*/gi,
+      // The tail must actually END the sentence, as the rule's name says. A
+      // comma closing the clause makes it a mid-sentence appositive — "The
+      // opening, reflecting the draft you sent, is strong." — which is ordinary
+      // English, not analysis bolted on the end.
+      /,\s+(?:highlighting|underscoring|emphasizing|emphasising|showcasing|reflecting|demonstrating|illustrating|signaling|signalling|solidifying|cementing|reinforcing|underlining)\s+(?:its|his|her|their|our|the|a|an|how|that|what|both)\b[^.!?,\n]*(?=[.!?]|$)/gi,
     ),
   },
   {
@@ -820,7 +842,11 @@ export function acceptRepair(original: string, repaired: string): RepairVerdict 
   // A repair deletes; it never waffles. One word of slack covers a contraction
   // being spelled out when the phrase in front of it goes.
   if (words(clean).length > words(original).length + 1) return { ok: false, reason: 'longer' }
-  if (words(clean).length < 3) return { ok: false, reason: 'too-short' }
+  // Two words, not three. "I noticed that it repeats." -> "It repeats." is
+  // exactly the deletion this exists to make, and a floor of three threw it
+  // away and escalated a repairable note to a rejection. Collapse to nothing is
+  // already covered by the number, quote and invention checks below.
+  if (words(clean).length < 2) return { ok: false, reason: 'too-short' }
 
   // The load-bearing specifics. "The 73% figure has no source" is worth saying;
   // "The figure has no source" is not the same note.

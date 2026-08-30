@@ -90,6 +90,12 @@ test('cleanReply strips a label and a wrapping quote but keeps the paragraphs', 
     .toBe('The middle sags.\n\nThe ending lands.')
 })
 
+test('cleanReply leaves a reply that merely begins and ends with a quotation', () => {
+  // A greedy strip turned `"one" and "two"` into `one" and "two`, which the
+  // leash then discarded — so the repair was silently lost rather than applied.
+  expect(cleanReply('"one" and "two"')).toBe('"one" and "two"')
+})
+
 test('cleanReply never truncates a multi-paragraph reply to its first line', () => {
   // The note version keeps only the first line; doing that here would silently
   // drop most of an answer the user is waiting on.
@@ -105,6 +111,22 @@ test('a clean reply is returned untouched and never reaches the model', async ()
   const clean = 'The opening covers three claims. Only the first has a source.'
   const result = await repairReply(clean, { host: 'http://127.0.0.1:1', timeoutMs: 50 })
   expect(result).toEqual({ text: clean, repaired: false, broke: [] })
+})
+
+test('an unreachable local model stops being called after a couple of replies', async () => {
+  // This repair sits between the agent's last word and the saved message, with
+  // the annotation stream held open across it — so every reply that trips a
+  // rule on a machine with no Ollama would stall the thread for the full
+  // timeout after the answer was already known.
+  const slow = { host: 'http://127.0.0.1:1', timeoutMs: 300 }
+  const started = Date.now()
+  for (let i = 0; i < 6; i++) {
+    const result = await repairReply(SLOPPY, slow)
+    expect(result.text).toBe(SLOPPY)
+  }
+  // Two attempts pay the timeout; the remaining four short-circuit. Without the
+  // breaker this would be six.
+  expect(Date.now() - started).toBeLessThan(300 * 4)
 })
 
 test('an unreachable local model leaves the agent\'s own words saved', async () => {

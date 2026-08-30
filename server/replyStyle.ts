@@ -3,7 +3,7 @@ import {
   buildReplyRepairPrompt,
   lintProse,
 } from '../src/model/houseStyle'
-import { DEFAULT_OLLAMA_HOST, REPAIR_MODEL, ollamaGenerate } from './ollamaClient'
+import { DEFAULT_OLLAMA_HOST, REPAIR_MODEL, TransportBreaker, ollamaGenerate } from './ollamaClient'
 
 /**
  * House style for the one surface nothing else can reach.
@@ -24,10 +24,21 @@ import { DEFAULT_OLLAMA_HOST, REPAIR_MODEL, ollamaGenerate } from './ollamaClien
  * is the status quo.
  */
 
-/** Long enough for several paragraphs on a slower machine, short enough that a
- * user waiting on a reply does not notice. Past this, saving the original is
- * the better answer. */
-const REPLY_TIMEOUT_MS = 12_000
+/**
+ * This repair sits between the agent's last word and the saved message, and the
+ * annotation stream stays open across it — the thread shows "running" for the
+ * whole wait after the agent has already finished. Six seconds is ample for a
+ * repair that measures around a second on this machine, and cheap to lose: a
+ * timeout saves the agent's own words, which is the status quo.
+ */
+const REPLY_TIMEOUT_MS = 6_000
+
+/**
+ * Shared across replies for the lifetime of the server process. Without it, a
+ * thread on a machine with no Ollama pays the full timeout on every reply that
+ * trips a rule, each one stalling the stream after the answer is already known.
+ */
+const breaker = new TransportBreaker()
 
 export interface ReplyRepair {
   text: string
@@ -51,13 +62,21 @@ export async function repairReply(
   if (!hits.length) return { text, repaired: false, broke: [] }
 
   const broke = [...new Set(hits.map((h) => h.ruleId))]
+  if (breaker.open) return { text, repaired: false, broke }
+
   const raw = await ollamaGenerate({
     host: options.host ?? DEFAULT_OLLAMA_HOST,
     model: options.model ?? REPAIR_MODEL,
     prompt: buildReplyRepairPrompt(text, hits),
     timeoutMs: options.timeoutMs ?? REPLY_TIMEOUT_MS,
   })
-  if (raw === null) return { text, repaired: false, broke }
+  if (raw === null) {
+    if (breaker.recordFailure()) {
+      console.error('[elves] house style: local model unreachable — pausing reply repair for 60s')
+    }
+    return { text, repaired: false, broke }
+  }
+  breaker.recordSuccess()
 
   const candidate = cleanReply(raw)
   const verdict = acceptReplyRepair(text, candidate)
@@ -76,7 +95,11 @@ export function cleanReply(raw: string): string {
   let s = raw.trim()
   s = s.replace(/^(?:edited\s+message|edited|corrected|rewritten|output|answer|result)\s*:\s*/i, '')
   s = s.trim()
-  const wrapped = /^"([\s\S]*)"$/.exec(s) ?? /^“([\s\S]*)”$/.exec(s)
+  // No interior quote mark: a reply that merely begins and ends with a
+  // quotation ("one" and "two") is not a wrapped string, and stripping its
+  // outer marks corrupts it. The character class already spans newlines, so a
+  // genuinely wrapped multi-paragraph reply still unwraps.
+  const wrapped = /^"([^"]*)"$/.exec(s) ?? /^“([^”]*)”$/.exec(s)
   if (wrapped) s = wrapped[1]
   return s.trim()
 }

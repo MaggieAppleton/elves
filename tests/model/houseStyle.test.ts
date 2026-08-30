@@ -94,6 +94,49 @@ for (const note of GOOD_NOTES) {
   })
 }
 
+// Notes a reviewer should be free to write that earlier versions of these rules
+// rejected. Each one was a real false positive: the quantifier mistaken for the
+// cliché, a bare imperative mistaken for throat-clearing, a noun phrase
+// mistaken for praise, an appositive mistaken for a bolted-on tail, and a
+// single hedge mistaken for a pile. A gate that eats these teaches an agent to
+// write worse, not better.
+const MUST_PASS: [string, string][] = [
+  ['the-whole-point', 'The entire second section is unsourced.'],
+  ['the-whole-point', 'Card 3 is the whole argument.'],
+  ['the-whole-point', 'What is the entire point of this section?'],
+  ['the-whole-point', 'This card is the entire basis for the claim.'],
+  ['preamble', 'Consider adding a source for the 73% figure.'],
+  ['preamble', 'Consider whether the opening earns its length.'],
+  ['flattery', 'The strong point here is the ending.'],
+  ['flattery', 'Good work is buried in card 5.'],
+  ['participle-tail', 'The opening, reflecting the draft you sent, is strong.'],
+  ['hedge-stack', 'This might seem redundant next to card 3.'],
+]
+
+for (const [rule, note] of MUST_PASS) {
+  test(`${rule} does not fire on: ${note}`, () => {
+    expect(lintProse(note).map((h) => h.ruleId)).not.toContain(rule)
+  })
+}
+
+// The other half of each of those fixes: narrowing a rule must not blunt it.
+const STILL_CAUGHT: [string, string][] = [
+  ['the-whole-point', "That's the whole point."],
+  ['the-whole-point', 'This is the entire point of the piece.'],
+  ['the-whole-point', 'The entire point of the section is misplaced.'],
+  ['preamble', 'You might consider adding a source here.'],
+  ['preamble', 'You could consider whether this belongs.'],
+  ['flattery', 'Good catch on the ordering.'],
+  ['participle-tail', 'The claim is weak, highlighting the need for a source.'],
+  ['hedge-stack', 'It might arguably be worth cutting.'],
+]
+
+for (const [rule, note] of STILL_CAUGHT) {
+  test(`${rule} still catches: ${note}`, () => {
+    expect(lintProse(note).map((h) => h.ruleId)).toContain(rule)
+  })
+}
+
 test('one hit per rule, however many times the rule is broken', () => {
   const hits = lintProse('We delve into the intricate tapestry of the seamless interplay.')
   expect(hits.filter((h) => h.ruleId === 'ai-vocab')).toHaveLength(1)
