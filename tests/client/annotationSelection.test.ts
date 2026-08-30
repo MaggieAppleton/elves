@@ -8,10 +8,14 @@ import {
   dismissAnnotationPopoverSoon,
   openAnnotationThread,
   promoteAnnotationThread,
+  pruneAnnotationThreads,
+  requestAnnotationClose,
   requestAnnotationOpen,
+  requestAnnotationResolve,
   setAnnotationHover,
   showAnnotationPopover,
   subscribeAnnotationOpen,
+  subscribeAnnotationResolve,
 } from '../../src/client/annotationSelection'
 
 const a = { kind: 'card' as const, cardId: 'shape:a', commentId: 'comment:a' }
@@ -42,6 +46,37 @@ test('open targets are session-only, independent, and ordered by engagement', ()
   promoteAnnotationThread(a)
   expect(annotationOpenTargets()).toEqual([b, a])
   closeAnnotationThread(a)
+  expect(annotationOpenTargets()).toEqual([b])
+})
+
+test('closing one open target leaves the other target open', () => {
+  clearAnnotationPresentations()
+  openAnnotationThread(a)
+  openAnnotationThread(b)
+
+  requestAnnotationClose(a)
+
+  expect(annotationOpenTargets()).toEqual([b])
+})
+
+test('resolve requests notify listeners for only their target', () => {
+  const receive = vi.fn()
+  const unsubscribe = subscribeAnnotationResolve(receive)
+
+  requestAnnotationResolve(a)
+
+  expect(receive).toHaveBeenCalledOnce()
+  expect(receive).toHaveBeenCalledWith(a)
+  unsubscribe()
+})
+
+test('pruning missing targets preserves other open threads', () => {
+  clearAnnotationPresentations()
+  openAnnotationThread(a)
+  openAnnotationThread(b)
+
+  pruneAnnotationThreads((target) => target.kind === 'feedback')
+
   expect(annotationOpenTargets()).toEqual([b])
 })
 

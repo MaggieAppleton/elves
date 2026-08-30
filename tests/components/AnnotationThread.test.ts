@@ -4,7 +4,7 @@ import { expect, test, vi } from 'vitest'
 import { AnnotationPin, AnnotationThread } from '../../src/components/AnnotationThread'
 import { annotationHoverTarget } from '../../src/client/annotationSelection'
 
-test('preview mode renders every message but no interactive control', () => {
+test('preview has no reply, retry, resolve, or close controls', () => {
   const tree = create(createElement(AnnotationThread, {
     comment: {
       id: 'c1', type: 'structure', text: 'Initial finding', resolved: false, author: 'claude',
@@ -14,6 +14,11 @@ test('preview mode renders every message but no interactive control', () => {
       ],
     },
     mode: 'preview',
+    error: 'The reply stopped.',
+    onReply: vi.fn(),
+    onRetry: vi.fn(),
+    onResolve: vi.fn(),
+    onClose: vi.fn(),
   }))
 
   expect(tree.root.findAllByProps({ className: 'elves-annotation-thread__message' })).toHaveLength(2)
@@ -35,24 +40,6 @@ test('open mode exposes reply, retry, resolve, and close actions', () => {
   expect(tree.root.findAllByType('button').some((button) => button.children.includes('Retry'))).toBe(true)
   tree.root.findByProps({ className: 'elves-annotation-thread__close' }).props.onClick()
   expect(onClose).toHaveBeenCalledOnce()
-})
-
-test('legacy popover mode retains read-only preview semantics', () => {
-  const tree = create(createElement(AnnotationThread, {
-    comment: {
-      id: 'c1',
-      type: 'structure',
-      text: 'Give the middle a clearer bridge.',
-      resolved: false,
-      author: 'claude',
-    },
-    mode: 'popover',
-  }))
-
-  expect(tree.root.findAllByProps({ 'data-testid': 'annotation-thread' })).toHaveLength(1)
-  expect(tree.root.findAllByType('textarea')).toHaveLength(0)
-  expect(tree.root.findAllByProps({ className: 'elves-annotation-thread__text' })[0].children).toContain('Give the middle a clearer bridge.')
-  expect(tree.root.findAllByType('button')).toHaveLength(0)
 })
 
 test('thread renders durable replies and only disables its own send control while running', () => {

@@ -1,16 +1,37 @@
-import { useEffect, useState, type KeyboardEvent } from 'react'
-import { useEditor, useValue, type TLShapeId } from 'tldraw'
-import type { CardShape } from '../shapes/CardShapeUtil'
-import type { FeedbackShape } from '../shapes/FeedbackShapeUtil'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEditor, useValue, type Editor, type TLShapeId } from 'tldraw'
+import { placeAnnotationThread, type AnnotationPlacement } from '../client/annotationPlacement'
 import {
-  annotationPopover, annotationRepliesLocked, annotationTargetKey, annotationThreadPresentation,
-  dismissAnnotationPopoverSoon, requestAnnotationReply, requestAnnotationRetry, showAnnotationPopover,
-  subscribeAnnotationPopover, subscribeAnnotationThreadPresentation,
+  annotationHoverTarget, annotationOpenTargets, annotationRepliesLocked, annotationTargetKey,
+  annotationThreadPresentation, dismissAnnotationPopoverSoon, pruneAnnotationThreads,
+  requestAnnotationClose, requestAnnotationReply, requestAnnotationResolve, requestAnnotationRetry,
+  setAnnotationHover, subscribeAnnotationTargets, subscribeAnnotationThreadPresentation,
   type AnnotationTarget,
 } from '../client/annotationSelection'
+import type { CardShape } from '../shapes/CardShapeUtil'
+import type { FeedbackShape } from '../shapes/FeedbackShapeUtil'
 import { AnnotationThread, type AnnotationThreadComment } from './AnnotationThread'
 
 type PopoverContent = { comment: AnnotationThreadComment; attribution?: string }
+
+export type ForegroundEntry = {
+  target: AnnotationTarget
+  mode: 'preview' | 'open'
+  zIndex: number
+}
+
+/** Ordered canvas overlays: promoted threads stay on top, with one hover preview. */
+export function foregroundEntries(
+  open: AnnotationTarget[],
+  hovered: AnnotationTarget | null = null,
+): ForegroundEntry[] {
+  const entries: ForegroundEntry[] = []
+  if (hovered && !open.some((target) => annotationTargetKey(target) === annotationTargetKey(hovered))) {
+    entries.push({ target: hovered, mode: 'preview', zIndex: open.length + 1 })
+  }
+  open.forEach((target, index) => entries.push({ target, mode: 'open', zIndex: index + 1 }))
+  return entries
+}
 
 function contentForTarget(target: AnnotationTarget, shape: unknown): PopoverContent | null {
   if (target.kind === 'card' && (shape as CardShape | null)?.type === 'card') {
@@ -30,66 +51,143 @@ function contentForTarget(target: AnnotationTarget, shape: unknown): PopoverCont
   return null
 }
 
-/** Renders the one expanded annotation above tldraw's shape stack. */
-export function AnnotationPopoverLayer() {
-  const editor = useEditor()
-  const [target, setTarget] = useState<AnnotationTarget | null>(() => annotationPopover())
-  const [, setThreadVersion] = useState(0)
-  const targetKey = target ? annotationTargetKey(target) : ''
+function samePlacement(a: AnnotationPlacement | null, b: AnnotationPlacement): boolean {
+  return a?.left === b.left && a.top === b.top && a.side === b.side
+}
+
+interface AnnotationForegroundItemProps {
+  target: AnnotationTarget
+  mode: ForegroundEntry['mode']
+  zIndex: number
+  editor: Editor
+}
+
+function AnnotationForegroundItem({ target, mode, zIndex, editor }: AnnotationForegroundItemProps) {
+  const targetKey = annotationTargetKey(target)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const [placement, setPlacement] = useState<AnnotationPlacement | null>(null)
   const shape = useValue(
-    'annotation popover target',
-    () => target ? editor.getShape((target.kind === 'card' ? target.cardId : target.feedbackId) as TLShapeId) : null,
+    `annotation foreground target ${targetKey}`,
+    () => editor.getShape((target.kind === 'card' ? target.cardId : target.feedbackId) as TLShapeId),
     [editor, targetKey],
   )
-  // This reactive read keeps the page-space pin and overlay together while panning or zooming.
-  useValue('annotation popover camera', () => editor.getCamera(), [editor])
+  // Pins move in page space as the camera moves, so placement tracks the live camera.
+  const camera = useValue(`annotation foreground camera ${targetKey}`, () => editor.getCamera(), [editor])
+  const content = useMemo(() => contentForTarget(target, shape), [shape, target])
 
-  useEffect(() => subscribeAnnotationPopover(() => setTarget(annotationPopover())), [])
-  useEffect(() => subscribeAnnotationThreadPresentation(() => setThreadVersion((version) => version + 1)), [])
+  useEffect(() => {
+    if (mode !== 'open' || content) return
+    pruneAnnotationThreads((openTarget) => annotationTargetKey(openTarget) !== targetKey)
+  }, [content, mode, targetKey])
 
-  if (!target) return null
-  const content = contentForTarget(target, shape)
-  if (!content || typeof document === 'undefined') return null
-  const pin = [...document.querySelectorAll<HTMLElement>('[data-annotation-target]')]
-    .find((element) => element.dataset.annotationTarget === targetKey)
-  if (!pin) return null
+  useEffect(() => {
+    if (!content) {
+      setPlacement(null)
+      return
+    }
 
-  const pinBounds = pin.getBoundingClientRect()
-  const canvasBounds = editor.getContainer().getBoundingClientRect()
-  const presentation = annotationThreadPresentation(target)
-  const returnFocusToPin = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== 'Tab' || !event.shiftKey || typeof document === 'undefined') return
-    const firstFocusable = event.currentTarget.querySelector<HTMLElement>('textarea:not(:disabled), button:not(:disabled), [href]')
-    if (event.target !== firstFocusable) return
-    event.preventDefault()
-    pin.focus()
+    let frame: number | null = null
+    const updatePlacement = () => {
+      frame = null
+      const panel = panelRef.current
+      const canvas = editor.getContainer()
+      const pin = [...canvas.querySelectorAll<HTMLElement>('[data-annotation-target]')]
+        .find((element) => element.dataset.annotationTarget === targetKey)
+      if (!panel || !pin) {
+        setPlacement(null)
+        return
+      }
+
+      const pinBounds = pin.getBoundingClientRect()
+      const canvasBounds = canvas.getBoundingClientRect()
+      const next = placeAnnotationThread(
+        {
+          left: pinBounds.left - canvasBounds.left,
+          top: pinBounds.top - canvasBounds.top,
+          width: pinBounds.width,
+          height: pinBounds.height,
+        },
+        { width: panel.offsetWidth, height: panel.offsetHeight },
+        { left: 0, top: 0, width: canvasBounds.width, height: canvasBounds.height },
+      )
+      setPlacement((current) => samePlacement(current, next) ? current : next)
+    }
+    const schedulePlacement = () => {
+      if (frame !== null) cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(updatePlacement)
+    }
+
+    schedulePlacement()
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(schedulePlacement)
+    if (panelRef.current) observer?.observe(panelRef.current)
+    observer?.observe(editor.getContainer())
+    window.addEventListener('resize', schedulePlacement)
+    return () => {
+      if (frame !== null) cancelAnimationFrame(frame)
+      observer?.disconnect()
+      window.removeEventListener('resize', schedulePlacement)
+    }
+  }, [camera, content, editor, targetKey])
+
+  if (!content) return null
+
+  const style: CSSProperties = {
+    left: placement?.left ?? 0,
+    top: placement?.top ?? 0,
+    zIndex,
+    visibility: placement ? undefined : 'hidden',
   }
-
+  const preview = mode === 'preview'
   return (
-    <div className="elves-annotation-popover-layer" aria-live="polite">
-      <div
-        className="elves-annotation-popover elves-annotation-popover--front"
-        data-testid="annotation-popover"
-        data-annotation-popover-target={targetKey}
-        style={{ left: pinBounds.left - canvasBounds.left, top: pinBounds.top - canvasBounds.top - 8 }}
-        onPointerEnter={() => showAnnotationPopover(target)}
-        onPointerLeave={() => dismissAnnotationPopoverSoon(target)}
-        onFocus={() => showAnnotationPopover(target)}
-        onBlur={() => dismissAnnotationPopoverSoon(target)}
-        onKeyDown={returnFocusToPin}
-      >
+    <div
+      ref={panelRef}
+      className={`elves-annotation-foreground-item elves-annotation-foreground-item--${mode}`}
+      data-testid="annotation-popover"
+      data-annotation-popover-target={targetKey}
+      style={style}
+      onPointerEnter={preview ? () => setAnnotationHover(target) : undefined}
+      onPointerLeave={preview ? () => dismissAnnotationPopoverSoon(target) : undefined}
+      onFocus={preview ? () => setAnnotationHover(target) : undefined}
+      onBlur={preview ? () => dismissAnnotationPopoverSoon(target) : undefined}
+    >
+      {preview ? (
+        <AnnotationThread comment={content.comment} mode="preview" attribution={content.attribution} />
+      ) : (
         <AnnotationThread
           comment={content.comment}
-          mode="popover"
+          mode="open"
           attribution={content.attribution}
-          running={presentation?.running}
-          streamingText={presentation?.streamingText}
-          error={presentation?.error}
+          running={annotationThreadPresentation(target)?.running}
+          streamingText={annotationThreadPresentation(target)?.streamingText}
+          error={annotationThreadPresentation(target)?.error}
           disabled={annotationRepliesLocked()}
           onReply={(text) => requestAnnotationReply(target, text)}
           onRetry={() => requestAnnotationRetry(target)}
+          onResolve={() => requestAnnotationResolve(target)}
+          onClose={() => requestAnnotationClose(target)}
         />
-      </div>
+      )}
+    </div>
+  )
+}
+
+/** Renders every active annotation above tldraw's shape stack. */
+export function AnnotationPopoverLayer() {
+  const editor = useEditor()
+  const [, setTargetsVersion] = useState(0)
+  const [, setPresentationVersion] = useState(0)
+
+  useEffect(() => subscribeAnnotationTargets(() => setTargetsVersion((version) => version + 1)), [])
+  useEffect(() => subscribeAnnotationThreadPresentation(() => setPresentationVersion((version) => version + 1)), [])
+
+  const entries = foregroundEntries(annotationOpenTargets(), annotationHoverTarget())
+  if (!entries.length) return null
+
+  return (
+    <div className="elves-annotation-popover-layer" aria-live="polite">
+      {entries.map((entry) => (
+        <AnnotationForegroundItem key={annotationTargetKey(entry.target)} {...entry} editor={editor} />
+      ))}
     </div>
   )
 }

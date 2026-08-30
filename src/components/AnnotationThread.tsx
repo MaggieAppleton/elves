@@ -14,8 +14,8 @@ export type AnnotationThreadComment = Pick<Comment, 'id' | 'type' | 'text' | 're
 
 export interface AnnotationThreadProps {
   comment: AnnotationThreadComment
-  /** `popover` and `rail` keep the intermediate canvas migration type-safe. */
-  mode: 'preview' | 'open' | 'popover' | 'rail'
+  /** `rail` keeps the intermediate inspector migration type-safe. */
+  mode: 'preview' | 'open' | 'rail'
   selected?: boolean
   disabled?: boolean
   attribution?: string
@@ -52,7 +52,7 @@ export function AnnotationThread({
   onRetry,
   onClose,
 }: AnnotationThreadProps) {
-  const renderMode = mode === 'popover' ? 'preview' : mode === 'rail' ? 'open' : mode
+  const renderMode = mode === 'rail' ? 'open' : mode
   const preview = renderMode === 'preview'
   const type = annotationType(comment.type)
   const [reply, setReply] = useState('')
