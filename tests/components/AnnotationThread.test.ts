@@ -115,7 +115,13 @@ test('thread header shows its typed icon and actions while messages retain autho
 
 test('reply composer has no resize grip and autosizes from its draft content', () => {
   const onReply = vi.fn()
-  const input = { scrollHeight: 104, style: {} as CSSStyleDeclaration }
+  const input = {
+    value: '',
+    style: {} as CSSStyleDeclaration,
+    get scrollHeight() {
+      return input.value ? 104 : 76
+    },
+  }
   const tree = create(createElement(AnnotationThread, {
     comment: { id: 'c1', type: null, text: 'Needs evidence', resolved: false, author: 'claude' },
     mode: 'open', onReply,
@@ -131,10 +137,12 @@ test('reply composer has no resize grip and autosizes from its draft content', (
   const reply = tree.root.findByProps({ className: 'elves-annotation-thread__reply' })
   expect(reply.findAllByProps({ role: 'separator' })).toHaveLength(0)
   expect(textarea.props.style).not.toHaveProperty('minHeight')
+  expect(input.style.height).toBe('76px')
+  input.value = 'A considered reply'
+  act(() => textarea.props.onChange({ target: input }))
   expect(input.style.height).toBe('104px')
-  act(() => textarea.props.onChange({ target: { value: 'A considered reply' } }))
-  input.scrollHeight = 76
-  act(() => textarea.props.onChange({ target: { value: '' } }))
+  input.value = ''
+  act(() => textarea.props.onChange({ target: input }))
   expect(input.style.height).toBe('76px')
 
   act(() => reply.props.onSubmit({ preventDefault: vi.fn() }))
