@@ -144,6 +144,9 @@ test('reply composer has no resize grip and autosizes from its draft content', (
   input.value = ''
   act(() => textarea.props.onChange({ target: input }))
   expect(input.style.height).toBe('76px')
+  input.value = 'A considered reply'
+  act(() => textarea.props.onChange({ target: input }))
+  expect(input.style.height).toBe('104px')
 
   act(() => reply.props.onSubmit({ preventDefault: vi.fn() }))
   expect(onReply).toHaveBeenCalledWith('A considered reply')
