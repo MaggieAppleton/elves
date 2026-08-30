@@ -127,14 +127,17 @@ test('reply composer has no resize grip and autosizes from its draft content', (
   expect(tree.root.findAllByProps({
     className: 'elves-annotation-thread__reply-resize',
   })).toHaveLength(0)
-  expect(input.style.height).toBe('104px')
   const textarea = tree.root.findByType('textarea')
+  const reply = tree.root.findByProps({ className: 'elves-annotation-thread__reply' })
+  expect(reply.findAllByProps({ role: 'separator' })).toHaveLength(0)
+  expect(textarea.props.style).not.toHaveProperty('minHeight')
+  expect(input.style.height).toBe('104px')
   act(() => textarea.props.onChange({ target: { value: 'A considered reply' } }))
+  input.scrollHeight = 76
   act(() => textarea.props.onChange({ target: { value: '' } }))
   expect(input.style.height).toBe('76px')
 
-  act(() => tree.root.findByProps({ className: 'elves-annotation-thread__reply' })
-    .props.onSubmit({ preventDefault: vi.fn() }))
+  act(() => reply.props.onSubmit({ preventDefault: vi.fn() }))
   expect(onReply).toHaveBeenCalledWith('A considered reply')
   expect(tree.root.findAllByType('textarea')).toHaveLength(0)
 })
