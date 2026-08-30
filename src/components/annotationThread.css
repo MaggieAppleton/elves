@@ -64,10 +64,15 @@
   z-index: calc(var(--layer-canvas-overlays) + 1);
   pointer-events: none;
 }
+.elves-annotation-popover-layer > * { pointer-events: all; }
+.elves-annotation-preview,
+.elves-annotation-thread--open,
 .elves-annotation-popover {
   position: absolute;
   width: min(300px, 72vw);
-  pointer-events: all;
 }
 .elves-annotation-popover--front { transform: translateX(-100%); }
-.elves-annotation-thread--popover { box-shadow: var(--elves-shadow-md); }
+.elves-annotation-thread--preview { box-shadow: var(--elves-shadow-md); }
+.elves-annotation-thread__close { position: absolute; top: 8px; right: 8px; }
+/* The inspector remains in the legacy layout until its migration removes `rail`. */
+.elves-annotation-thread--legacy-rail { position: static; width: auto; }
