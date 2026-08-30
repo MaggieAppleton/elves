@@ -14,9 +14,29 @@ and gives back the whole note.
 
 **These rules are enforced, not suggested.** The Elves MCP server runs every
 agent-authored string through `lintProse` (`src/model/houseStyle.ts`) before it
-touches the canvas. A write that breaks a rule comes back as an error naming the
-rule and underlining the span, and you rewrite and call again. Nothing
-slop-shaped reaches the user's canvas.
+touches the canvas, in two tiers.
+
+**Tier 1 — local repair.** Most offences are a phrase to strike off the front of
+an otherwise good note. A local model (llama3.2 via Ollama, the same one that
+writes card gists) deletes it in about half a second, for nothing, and the write
+goes through. You are told what changed:
+
+```
+add_comment → ok
+
+comment added — house style: comment (didactic-hedge) was tidied by the
+local editor before it landed; write it that way next time
+```
+
+The repair is on a short leash, because the card still carries **your**
+authorship mark. Numbers and quoted spans must survive, almost nothing may be
+invented, the result must itself pass the check, and it may not grow. Anything
+failing that is thrown away rather than shipped — in testing, that caught
+llama3.2 turning "plays a crucial role" into "does what is necessary", which is
+clean against every rule and no longer the note you wrote.
+
+**Tier 2 — rejection.** If repair can't do it safely (or Ollama isn't running),
+the call comes back as an error and you rewrite it yourself:
 
 ```
 add_comment → ERROR
@@ -31,6 +51,10 @@ Rejected: this comment hits 2 house-style rules.
   · inflated-role — "plays a crucial role"
       "Plays a crucial role in …". Say what it does.
 ```
+
+Tier 2 is the expensive one — a rejection adds a turn to a loop whose input is
+the whole conversation so far. Tier 1 exists to make it rare. Writing the note
+plainly the first time avoids both.
 
 ## The rules
 
@@ -112,18 +136,31 @@ That is the whole technique.
 
 ## Where this lives
 
-- `src/model/houseStyle.ts` — `HOUSE_STYLE` (this text, verbatim) and `RULES` /
-  `lintProse` / `formatStyleRejection` (the check). One module, so the rules an
-  agent is told and the rules the server enforces cannot drift apart.
+- `src/model/houseStyle.ts` — `HOUSE_STYLE` (this text, verbatim),
+  `HOUSE_STYLE_BRIEF` (the ~150-token version prompts actually carry), `RULES` /
+  `lintProse` / `formatStyleRejection` (the check), and `buildRepairPrompt` /
+  `acceptRepair` (tier 1's instruction and its leash). One module, so the rules
+  an agent is told and the rules the server enforces cannot drift apart.
+- `mcp/repair.ts` — `OllamaRepairer`. Follows `server/summarize/ollama.ts`'s
+  contract exactly: any failure returns null and the caller proceeds as if the
+  repairer did not exist. Additive, never load-bearing.
 - `mcp/index.ts` — `styleGate()`, applied to `add_comment`, `create_question`,
   `create_feedback`, `create_figure_card` (title and description),
   `create_section`, `edit_section_text`, `edit_card` (title only), and
   `complete_review`.
 - `src/model/reviews.ts` — rule 6 of `SHARED_RULES`, in every review brief.
-- `server/agentRun.ts` — `buildPreamble`, covering agent-box chat and
-  annotation replies, which pass through no tool and so cannot be gated.
+- `server/agentRun.ts` — `buildPreamble`. A chat run gets nothing here (the MCP
+  handshake carries the brief, and its writes are gated); an **annotation
+  reply** gets the full rules, because that run is denied every elves tool, so
+  its prose reaches the user without passing through any gate.
 - `server/summarize/summarizer.ts` — the vocabulary ban in `SUMMARY_PROMPT`,
   for the local model that writes card gists.
+
+Why the prompt carries the short form: `HOUSE_STYLE` is ~620 tokens and rides in
+the system prompt of every call in an agent's loop. That price is worth paying
+only where the prompt is the last line of defence. Where the gate also repairs,
+the prompt just has to aim — hence `HOUSE_STYLE_BRIEF` at ~150 tokens, and the
+full text reserved for the one ungated surface.
 
 The catalogue is adapted from
 [Simon Willison's llm-cliché-highlighter](https://github.com/simonw/tools/blob/main/llm-cliche-highlighter.html),

@@ -590,3 +590,127 @@ Across more than one sentence, also rejected: two questions fired in a row, thre
 Instead: name the specific thing in the specific card, in the plainest words that carry it. "The 73% figure has no source" beats "It's worth noting that this statistic would benefit from a citation." Vary your sentence lengths, trust the reader to get a metaphor without you explaining it, and never end on a line that sounds like a pull-quote.
 
 Quoting the user is exempt: anything inside "double quotes" is skipped by the check, so quote their own words rather than paraphrasing them.`
+
+/**
+ * The short version, for prompts that are backed by the repair pass.
+ *
+ * HOUSE_STYLE is ~620 tokens and rides in the system prompt of every call in an
+ * agent's loop, where prompt caching charges it again (at a tenth of the rate)
+ * on every turn. That is the right price when the prompt is the ONLY defence.
+ * Where a write also passes through the style gate — which now repairs a note
+ * locally before it ever rejects one — the prompt only has to aim the agent in
+ * the right direction; the gate catches the rest for free. So gated surfaces
+ * get this ~150-token version, and the full text is reserved for the one
+ * surface nothing can catch: an annotation reply, which reaches the user as
+ * chat prose without passing through any tool.
+ */
+export const HOUSE_STYLE_BRIEF = `HOUSE STYLE: write like an editor's pencil note — the thing itself, nothing around it. No throat-clearing ("I noticed that", "it's worth noting"), no flattery ("great question"), no model vocabulary (delve, intricate, interplay, seamless, crucial, nuanced, robust, leverage, myriad), no "not just X but Y", no staged reveals ("here's the thing", "turns out"), no tidy closers ("in short", "ultimately", "overall"), no stacked hedges ("perhaps somewhat"), no vague authority ("experts argue", "studies show"). Name the specific thing in the plainest words that carry it. Every note you write is checked: a small local model strips what it can, and anything left is handed back for you to rewrite. Quoting the user in "double quotes" is exempt from the check.`
+
+// ---------------------------------------------------------------------------
+// Repair
+// ---------------------------------------------------------------------------
+
+/**
+ * The instruction handed to the local repair model.
+ *
+ * Written for a small model (llama3.2), so it is blunt and repetitive where a
+ * larger model would need one line. The whole job is DELETION and the smallest
+ * possible substitution: the note's observation is the reviewing agent's, and
+ * the repair pass exists to strip a cliché off it, never to have a second model
+ * re-think what the note says.
+ */
+export function buildRepairPrompt(text: string, hits: StyleHit[]): string {
+  const offences = hits.map((h) => `- Remove "${h.text.trim()}" — ${h.why}`).join('\n')
+  return `You are copy-editing one short editorial note. Remove the cliché phrases listed below and change NOTHING else.
+
+The note:
+${text}
+
+Remove:
+${offences}
+
+Rules:
+- Delete the listed phrases. Keep every other word exactly as it is.
+- Fix only what deletion breaks: capitalise the new first word, keep the final full stop.
+- Keep every number, name, and anything in "double quotes" exactly as written.
+- Do NOT add new ideas, opinions, explanations, or preambles.
+- Do NOT make it longer. One sentence.
+- Reply with ONLY the corrected sentence. No quotes around it, no commentary.
+
+Corrected sentence:`
+}
+
+/** Why a repair was thrown away. Surfaced in logs so a bad model is visible. */
+export type RepairRejection =
+  | 'empty'
+  | 'multi-line'
+  | 'longer'
+  | 'too-short'
+  | 'lost-a-number'
+  | 'lost-a-quote'
+  | 'invented-content'
+  | 'broken-seam'
+  | 'still-breaks-the-rules'
+
+export type RepairVerdict = { ok: true } | { ok: false; reason: RepairRejection }
+
+const words = (s: string) => s.match(/\S+/g) ?? []
+// Curly and straight apostrophes must compare equal, or "that's" and "that’s"
+// read as two different words and an honest repair looks like an invented one.
+const contentWords = (s: string) =>
+  new Set(s.toLowerCase().replace(/[’]/g, "'").match(/[a-z0-9']+/g) ?? [])
+
+/**
+ * The short leash on the repair model.
+ *
+ * A local model is trusted to strike a phrase out, not to have an opinion. The
+ * card that ends up on the canvas still carries the reviewing agent's
+ * authorship mark, so a repair that changes what the note SAYS would put words
+ * under that mark which the agent never wrote. These checks are what make the
+ * difference between copy-editing and ghostwriting, and anything that fails
+ * them is discarded — the gate then rejects to the agent as it did before, so
+ * the cost of a bad local model is a slower path, never a wrong note.
+ */
+export function acceptRepair(original: string, repaired: string): RepairVerdict {
+  const clean = repaired.trim()
+  if (!clean) return { ok: false, reason: 'empty' }
+  if (/\n/.test(clean)) return { ok: false, reason: 'multi-line' }
+
+  // A repair deletes; it never waffles. One word of slack covers a contraction
+  // being spelled out when the phrase in front of it goes.
+  if (words(clean).length > words(original).length + 1) return { ok: false, reason: 'longer' }
+  if (words(clean).length < 3) return { ok: false, reason: 'too-short' }
+
+  // The load-bearing specifics. "The 73% figure has no source" is worth saying;
+  // "The figure has no source" is not the same note.
+  for (const n of original.match(/\d[\d.,:%]*/g) ?? []) {
+    if (!clean.includes(n)) return { ok: false, reason: 'lost-a-number' }
+  }
+  for (const q of original.match(/"[^"]*"|“[^”]*”/g) ?? []) {
+    if (!clean.includes(q)) return { ok: false, reason: 'lost-a-quote' }
+  }
+
+  // Deleting words is the point; inventing them is the risk. Almost every real
+  // repair invents NOTHING — striking "It's worth noting that" off the front
+  // leaves the rest untouched. A word or two of slack lets a genuine
+  // substitution through ("delves into" -> "covers") while catching the failure
+  // this is really here for: the model paraphrasing instead of deleting. Left
+  // at a bare ratio, "plays a crucial role" came back as "does what is
+  // necessary" — clean against every rule, vaguer than what it replaced, and
+  // no longer the reviewer's observation.
+  const before = contentWords(original)
+  const after = contentWords(clean)
+  const invented = [...after].filter((w) => !before.has(w)).length
+  if (invented > 2) return { ok: false, reason: 'invented-content' }
+  if (after.size > 0 && invented / after.size > 0.35) return { ok: false, reason: 'invented-content' }
+
+  // Deletion mid-sentence strands the following clause, and a small model
+  // patches the seam by capitalising it: "The claim is weak; The need for a
+  // source." Clean against every rule, and not a sentence.
+  if (/[;,]\s+(?:The|This|That|These|Those|A|An|It|We|You|They|There)\b/.test(clean)) {
+    return { ok: false, reason: 'broken-seam' }
+  }
+
+  if (lintProse(clean).length) return { ok: false, reason: 'still-breaks-the-rules' }
+  return { ok: true }
+}

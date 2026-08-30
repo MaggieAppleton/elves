@@ -245,7 +245,8 @@ test('the skill file carries HOUSE_STYLE verbatim, so the two cannot drift', () 
 test('every review brief carries the style rules and the fact that they are enforced', () => {
   for (const id of PERSONALITY_IDS) {
     const brief = composeBrief(PERSONALITIES[id], null)
-    expect(brief).toContain('HOUSE STYLE APPLIES TO EVERY WORD')
+    expect(brief).toContain('House style applies to every word')
+    expect(brief).toContain('a small local model strips what it can')
     expect(brief).toContain('double quotes')
   }
 })

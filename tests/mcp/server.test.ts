@@ -1,7 +1,32 @@
-import { expect, test } from 'vitest'
+import { beforeEach, expect, test } from 'vitest'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { createMcpServer } from '../../mcp/index'
+import { createMcpServer, setRepairer } from '../../mcp/index'
+import type { Repairer } from '../../mcp/repair'
+import type { StyleHit } from '../../src/model/houseStyle'
+
+/** A repairer that never repairs — the behaviour when Ollama is not running.
+ * The default is the real OllamaRepairer, which would make this suite depend on
+ * a local model being up, take seconds per case, and vary with the model's
+ * mood. Tests drive the gate through an explicit stub instead. */
+const NO_REPAIR: Repairer = {
+  label: 'test/none',
+  async repair() {
+    return null
+  },
+}
+
+/** A repairer that always succeeds, returning a fixed clean note. */
+function fixedRepair(text: string): Repairer {
+  return {
+    label: 'test/fixed',
+    async repair(_original: string, _hits: StyleHit[]) {
+      return { text, attempts: 1 }
+    },
+  }
+}
+
+beforeEach(() => setRepairer(NO_REPAIR))
 
 test('the MCP server exposes the scoped tools plus list_projects, and no text-editing tool', async () => {
   const server = createMcpServer('http://localhost:5199')
@@ -189,6 +214,47 @@ test('reference fields are never style-checked — those are the source\'s facts
     description: 'A meticulous study of the intricate interplay between seamless systems.',
   })
   expect(text).not.toContain('house-style')
+  await client.close()
+})
+
+test('a note the local model repairs is accepted, not rejected', async () => {
+  setRepairer(fixedRepair('This claim needs a source.'))
+  const client = await connectClient()
+  const { text } = await callText(client, 'add_comment', {
+    project: 'p',
+    cardId: 'c',
+    text: SLOP,
+  })
+  // It got past the gate — the failure is the dead port, not the style check.
+  expect(text).not.toContain('house-style')
+  await client.close()
+})
+
+test('a repair is reported back to the agent rather than made silently', async () => {
+  // The card keeps the agent's authorship mark, so it is told what a different
+  // model changed under it — and, being told, tends not to need telling twice.
+  setRepairer(fixedRepair('The middle sags.'))
+  const client = await connectClient()
+  const { text } = await callText(client, 'create_feedback', {
+    project: 'p', text: "Here's the thing: the middle sags.", x: 0, y: 0,
+  })
+  // The write itself still fails on the dead port; what matters is that the
+  // gate chose to repair, so the message is not a style rejection.
+  expect(text).not.toContain('Rejected:')
+  await client.close()
+})
+
+test('the gate falls back to rejecting when the local model is unreachable', async () => {
+  // Ollama not running is the common case on a fresh machine. The old
+  // behaviour has to survive it intact.
+  setRepairer(NO_REPAIR)
+  const client = await connectClient()
+  const { isError, text } = await callText(client, 'add_comment', {
+    project: 'p', cardId: 'c', text: SLOP,
+  })
+  expect(isError).toBe(true)
+  expect(text).toContain('this comment hits')
+  expect(text).toContain('didactic-hedge')
   await client.close()
 })
 
