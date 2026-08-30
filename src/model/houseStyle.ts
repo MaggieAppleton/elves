@@ -713,6 +713,11 @@ export function acceptReplyRepair(original: string, repaired: string): RepairVer
     return { ok: false, reason: 'invented-content' }
   }
 
+  if (hasLowercaseSentenceStart(clean) && !hasLowercaseSentenceStart(original)) {
+    return { ok: false, reason: 'broken-seam' }
+  }
+  if (titleCased(clean) && !titleCased(original)) return { ok: false, reason: 'title-cased' }
+
   // The whole point: it has to be an improvement, even if not a clean sweep.
   const wasHits = lintProse(original).length
   const nowHits = lintProse(clean).length
@@ -743,6 +748,19 @@ const words = (s: string) => s.match(/\S+/g) ?? []
  * prose from Title Case, and a note that really is mostly proper nouns is rare
  * enough that falling back to a rejection there costs nothing.
  */
+/**
+ * A sentence that starts in lower case where the original did not.
+ *
+ * The most common way a model breaks a multi-sentence edit: it deletes the
+ * phrase that opened a sentence and leaves the next word as it found it.
+ * Observed from gemma2:9b, which produced ". the middle section repeats..."
+ * on nearly every reply it touched. Costs nothing to check and catches an
+ * entire class of damage.
+ */
+function hasLowercaseSentenceStart(s: string): boolean {
+  return /[.!?]\s+[a-z]/.test(s)
+}
+
 function titleCased(s: string): boolean {
   const w = words(s).slice(1).filter((x) => /^[A-Za-z]/.test(x))
   if (w.length < 3) return false
@@ -802,6 +820,9 @@ export function acceptRepair(original: string, repaired: string): RepairVerdict 
   // patches the seam by capitalising it: "The claim is weak; The need for a
   // source." Clean against every rule, and not a sentence.
   if (/[;,]\s+(?:The|This|That|These|Those|A|An|It|We|You|They|There)\b/.test(clean)) {
+    return { ok: false, reason: 'broken-seam' }
+  }
+  if (hasLowercaseSentenceStart(clean) && !hasLowercaseSentenceStart(original)) {
     return { ok: false, reason: 'broken-seam' }
   }
 

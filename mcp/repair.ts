@@ -4,7 +4,7 @@ import {
   type RepairRejection,
   type StyleHit,
 } from '../src/model/houseStyle'
-import { DEFAULT_OLLAMA_HOST, DEFAULT_OLLAMA_MODEL, ollamaGenerate } from '../server/ollamaClient'
+import { DEFAULT_OLLAMA_HOST, REPAIR_MODEL, ollamaGenerate } from '../server/ollamaClient'
 
 /**
  * Local repair of a note that breaks house style.
@@ -70,7 +70,7 @@ export class OllamaRepairer implements Repairer {
 
   constructor(
     private readonly host = DEFAULT_OLLAMA_HOST,
-    private readonly model = DEFAULT_OLLAMA_MODEL,
+    private readonly model = REPAIR_MODEL,
     // Shorter than the summarizer's 20s: a gist is written in the background,
     // but a repair sits in the write path with the agent waiting on the tool
     // result. Past a few seconds, rejecting is the faster answer.

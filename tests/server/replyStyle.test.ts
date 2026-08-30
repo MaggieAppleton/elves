@@ -68,6 +68,15 @@ test('numbers and quoted spans must survive a reply repair too', () => {
     .toEqual({ ok: false, reason: 'lost-a-quote' })
 })
 
+test('a reply left with a lower-case sentence start is refused', () => {
+  // gemma2:9b's signature failure on multi-sentence text: it deletes the phrase
+  // opening a sentence and leaves the next word untouched. It broke both of the
+  // benchmark replies this way, and every other check passed them.
+  expect(acceptReplyRepair(SLOPPY,
+    'The opening covers three separate claims. only the first has a source.'))
+    .toEqual({ ok: false, reason: 'broken-seam' })
+})
+
 test('an empty reply is refused', () => {
   expect(acceptReplyRepair(SLOPPY, '   ')).toEqual({ ok: false, reason: 'empty' })
 })

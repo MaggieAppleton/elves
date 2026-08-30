@@ -153,8 +153,37 @@ That is the whole technique.
   handshake carries the brief, and its writes are gated); an **annotation
   reply** gets the full rules, because that run is denied every elves tool, so
   its prose reaches the user without passing through any gate.
+- `server/replyStyle.ts` — the same treatment for an agent's **chat reply** in
+  an annotation thread, which passes through no tool and so cannot be gated.
+  This path fails open: if the local model is missing, slow, or unconvincing,
+  the agent's own words are saved.
+- `server/ollamaClient.ts` — the shared transport, and `ELVES_REPAIR_MODEL`.
 - `server/summarize/summarizer.ts` — the vocabulary ban in `SUMMARY_PROMPT`,
   for the local model that writes card gists.
+
+## Which local model
+
+`llama3.2` (2GB), and deliberately not something bigger. Measured on an M1 Pro
+against twenty real notes (`bench/repairModels.ts`):
+
+| model | repaired | bad repairs | per note |
+|---|---|---|---|
+| **llama3.2** (2GB) | 12/20 | **0** | 0.8s |
+| qwen2.5:7b (4.7GB) | 14/20 | 2 | 1.3s |
+| gemma2:9b (5.4GB) | 15/20 | ~4 | 5.1s |
+| gemma2:27b (15GB) | — | — | 100s to load, 221s per repair |
+
+Bigger models repair more notes and break more of them: *"The card stands
+argument"*, *"The Third Card Repeats The First"*, a sentence resuming in lower
+case. The count that matters is not how many it fixes but how many it gets
+wrong, because a bad repair lands on the canvas under the agent's mark while a
+missed one just costs a rejection. The job here is deletion, and a larger model
+is more inclined to improve the sentence instead — which is exactly the thing
+being guarded against.
+
+The `title-cased` and `broken-seam` checks in `acceptRepair` exist because of
+what those models produced. Override with `ELVES_REPAIR_MODEL`, and re-run the
+benchmark first — reading every line, not the summary counts.
 
 Why the prompt carries the short form: `HOUSE_STYLE` is ~620 tokens and rides in
 the system prompt of every call in an agent's loop. That price is worth paying

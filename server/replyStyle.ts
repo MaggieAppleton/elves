@@ -3,11 +3,7 @@ import {
   buildReplyRepairPrompt,
   lintProse,
 } from '../src/model/houseStyle'
-import {
-  DEFAULT_OLLAMA_HOST,
-  DEFAULT_OLLAMA_MODEL,
-  ollamaGenerate,
-} from './ollamaClient'
+import { DEFAULT_OLLAMA_HOST, REPAIR_MODEL, ollamaGenerate } from './ollamaClient'
 
 /**
  * House style for the one surface nothing else can reach.
@@ -57,7 +53,7 @@ export async function repairReply(
   const broke = [...new Set(hits.map((h) => h.ruleId))]
   const raw = await ollamaGenerate({
     host: options.host ?? DEFAULT_OLLAMA_HOST,
-    model: options.model ?? DEFAULT_OLLAMA_MODEL,
+    model: options.model ?? REPAIR_MODEL,
     prompt: buildReplyRepairPrompt(text, hits),
     timeoutMs: options.timeoutMs ?? REPLY_TIMEOUT_MS,
   })

@@ -74,6 +74,28 @@ test('a stranded clause patched with a mid-sentence capital is refused', () => {
     .toEqual({ ok: false, reason: 'broken-seam' })
 })
 
+test('a Title Cased repair is refused', () => {
+  // Observed from qwen2.5:7b, which answers a copy-editing request by title
+  // casing the result. Every word is the original's and it passes every other
+  // check, so it has to be caught on the shape.
+  expect(acceptRepair('I noticed that the third card repeats the first.',
+    'The Third Card Repeats The First.'))
+    .toEqual({ ok: false, reason: 'title-cased' })
+})
+
+test('a note that is legitimately capitalised is not mistaken for Title Case', () => {
+  expect(acceptRepair('I noticed that Ink and Switch published this in March.',
+    'Ink and Switch published this in March.')).toEqual({ ok: true })
+})
+
+test('a deletion that leaves the next sentence in lower case is refused', () => {
+  // Observed from gemma2:9b, which deletes the phrase opening a sentence and
+  // leaves the following word exactly as it found it.
+  expect(acceptRepair('Here\'s the thing: the middle sags. The ending lands.',
+    'The middle sags. the ending lands.'))
+    .toEqual({ ok: false, reason: 'broken-seam' })
+})
+
 test('a repair that grows the note is refused', () => {
   expect(acceptRepair('The middle sags.',
     'The middle of the piece sags considerably in several places.').ok).toBe(false)
