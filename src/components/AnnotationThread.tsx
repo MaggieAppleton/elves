@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent } from 'react'
 import {
   ArrowBendUpLeft, ArrowsLeftRight, Buildings, ChartLineDown, ChatCircleDots, Checks, ImageSquare,
   Link, PaperPlaneRight, Question, Scissors, Warning, X,
@@ -57,10 +57,8 @@ export function AnnotationThread({
   const TypeIcon = PIN_ICONS[token.icon]
   const [reply, setReply] = useState('')
   const [composerOpen, setComposerOpen] = useState(false)
-  const [replyMinimumHeight, setReplyMinimumHeight] = useState(REPLY_MIN_HEIGHT)
   const sending = useRef(false)
   const replyInputRef = useRef<HTMLTextAreaElement>(null)
-  const replyResize = useRef<{ pointerId: number, startY: number, startHeight: number } | null>(null)
   const messages = threadMessages(comment)
   useEffect(() => {
     if (!running) sending.current = false
@@ -69,42 +67,14 @@ export function AnnotationThread({
     const input = replyInputRef.current
     if (!composerOpen || !input) return
     input.style.height = 'auto'
-    input.style.height = `${Math.max(input.scrollHeight, replyMinimumHeight)}px`
-  }, [composerOpen, reply, replyMinimumHeight])
-
-  const beginReplyResize = (event: PointerEvent<HTMLDivElement>) => {
-    if (disabled || running) return
-    const inputHeight = replyInputRef.current?.getBoundingClientRect().height ?? replyMinimumHeight
-    replyResize.current = {
-      pointerId: event.pointerId,
-      startY: event.clientY,
-      startHeight: Math.max(REPLY_MIN_HEIGHT, inputHeight),
-    }
-    event.currentTarget.setPointerCapture(event.pointerId)
-  }
-  const resizeReply = (event: PointerEvent<HTMLDivElement>) => {
-    if (disabled || running) return
-    const resize = replyResize.current
-    if (!resize || resize.pointerId !== event.pointerId) return
-    setReplyMinimumHeight(Math.max(REPLY_MIN_HEIGHT, resize.startHeight + event.clientY - resize.startY))
-  }
-  const endReplyResize = (event: PointerEvent<HTMLDivElement>) => {
-    if (disabled || running) return
-    if (replyResize.current?.pointerId === event.pointerId) replyResize.current = null
-  }
-  const resizeReplyWithKeyboard = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (disabled || running) return
-    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
-    event.preventDefault()
-    setReplyMinimumHeight((height) => Math.max(REPLY_MIN_HEIGHT, height + (event.key === 'ArrowDown' ? 8 : -8)))
-  }
+    input.style.height = `${Math.max(input.scrollHeight, REPLY_MIN_HEIGHT)}px`
+  }, [composerOpen, reply])
   const send = (event: FormEvent) => {
     event.preventDefault()
     const text = reply.trim()
     if (!text || disabled || running || sending.current || !onReply) return
     sending.current = true
     setReply('')
-    setReplyMinimumHeight(REPLY_MIN_HEIGHT)
     setComposerOpen(false)
     onReply(text)
   }
@@ -158,23 +128,7 @@ export function AnnotationThread({
           value={reply}
           disabled={disabled || running}
           onChange={(event) => setReply(event.target.value)}
-          style={{ minHeight: `${replyMinimumHeight}px` }}
-        />
-        <div
-          role="separator"
-          className="elves-annotation-thread__reply-resize"
-          aria-label="Resize reply editor"
-          aria-orientation="horizontal"
-          aria-valuemin={REPLY_MIN_HEIGHT}
-          aria-valuenow={replyMinimumHeight}
-          aria-valuetext={`${replyMinimumHeight} pixels`}
-          aria-disabled={disabled || running}
-          tabIndex={disabled || running ? -1 : 0}
-          onPointerDown={beginReplyResize}
-          onPointerMove={resizeReply}
-          onPointerUp={endReplyResize}
-          onPointerCancel={endReplyResize}
-          onKeyDown={resizeReplyWithKeyboard}
+          style={{}}
         />
         <button
           type="submit"
@@ -230,7 +184,7 @@ export function AnnotationPin({ comment, offsetY = 0, zoom = 1, className, targe
     left: className?.includes('elves-feedback-pin') ? 0 : undefined,
     '--annotation-pin-scale': scale,
   } as CSSProperties
-  const stopPointer = (event: PointerEvent) => stopEvent(event)
+  const stopPointer = (event: PropagationEvent) => stopEvent(event)
   const open = (event: MouseEvent) => {
     stopEvent(event)
     if (target) requestAnnotationOpen(target)
@@ -269,7 +223,9 @@ export function AnnotationPin({ comment, offsetY = 0, zoom = 1, className, targe
   )
 }
 
-function stopEvent(event: PointerEvent | MouseEvent) {
+type PropagationEvent = { stopPropagation: () => void }
+
+function stopEvent(event: PropagationEvent | MouseEvent) {
   event.stopPropagation()
 }
 
