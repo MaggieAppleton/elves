@@ -391,6 +391,40 @@ test('a failed foreground reply retries its persisted user turn once', async ({ 
   }).toEqual({ users: 1, answers: 1, linked: true })
 })
 
+test('a long annotation transcript remains inside the canvas and scrolls internally', async ({ page, request }) => {
+  await page.setViewportSize({ width: 800, height: 420 })
+  const cardId = await addCardAndComment(page, request, { type: 'structure', text: 'Keep this full annotation inside the stage.' })
+  const commentId = (await cardRecord(request, cardId)).props.comments[0].id
+  const response = await request.post(`${BASE}/projects/${projectId}/changeset`, {
+    data: {
+      id: `long-annotation-${Date.now()}`,
+      author: 'claude',
+      ops: Array.from({ length: 28 }, (_, index) => ({
+        kind: 'append_annotation_message',
+        target: { kind: 'card', cardId, commentId },
+        message: {
+          id: `long-annotation-message-${index}`,
+          author: index % 2 ? 'user' : 'claude',
+          text: `Long annotation message ${index}: this deliberately wraps across multiple lines so the transcript must scroll within the bounded foreground panel.`,
+          createdAt: `2026-08-30T10:${String(index).padStart(2, '0')}:00.000Z`,
+        },
+      })),
+    },
+  })
+  expect(response.ok()).toBe(true)
+
+  await page.getByTestId('annotation-pin').click()
+  const thread = page.getByTestId('annotation-thread')
+  const transcript = thread.locator('.elves-annotation-thread__messages')
+  await expectThreadWithinCanvas(page, thread)
+  expect(await transcript.evaluate((element) => ({
+    overflowY: getComputedStyle(element).overflowY,
+    scrollable: element.scrollHeight > element.clientHeight,
+  }))).toEqual({ overflowY: 'auto', scrollable: true })
+  await transcript.locator('.elves-annotation-thread__message').last().scrollIntoViewIfNeeded()
+  expect(await transcript.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
+})
+
 test('a foreground thread follows its pin through pan, zoom, and card movement', async ({ page, request }) => {
   const cardId = await addCardAndComment(page, request, { type: 'structure', text: 'Keep this thread aligned with its card.' })
   const pin = page.locator(`[data-shape-id="${cardId}"] [data-testid="annotation-pin"]`)

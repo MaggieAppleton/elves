@@ -178,6 +178,35 @@ test('a canvas lock disables a populated reply form without discarding its draft
   expect(tree.root.findByProps({ className: 'elves-annotation-thread__send' }).props.disabled).toBe(true)
 })
 
+test('retry is unavailable while its thread is running or canvas mutations are locked', () => {
+  const onRetry = vi.fn()
+  const tree = create(createElement(AnnotationThread, {
+    comment: { id: 'c1', type: null, text: 'Needs evidence', resolved: false, author: 'claude' },
+    mode: 'open', error: 'The reply stopped.', onRetry,
+    running: true,
+  }))
+  const retry = () => tree.root.findAllByType('button').find((button) => button.children.includes('Retry'))!
+
+  expect(retry().props.disabled).toBe(true)
+  retry().props.onClick()
+  expect(onRetry).not.toHaveBeenCalled()
+  act(() => tree.update(createElement(AnnotationThread, {
+    comment: { id: 'c1', type: null, text: 'Needs evidence', resolved: false, author: 'claude' },
+    mode: 'open', error: 'The reply stopped.', onRetry: vi.fn(),
+    disabled: true,
+  })))
+  expect(retry().props.disabled).toBe(true)
+})
+
+test('a foreground thread accepts the stage-relative height cap that bounds its transcript', () => {
+  const tree = create(createElement(AnnotationThread, {
+    comment: { id: 'c1', type: null, text: 'Needs evidence', resolved: false, author: 'claude' },
+    mode: 'open', maxHeight: 404,
+  }))
+
+  expect(tree.root.findByProps({ 'data-testid': 'annotation-thread' }).props.style).toMatchObject({ maxHeight: 404 })
+})
+
 test('a pin name includes a bounded gist of the annotation text', () => {
   const tree = create(createElement(AnnotationPin, {
     comment: { id: 'c1', type: null, text: 'Name the causal bridge explicitly.', resolved: false, author: 'claude' },

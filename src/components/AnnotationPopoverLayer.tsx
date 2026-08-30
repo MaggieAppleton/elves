@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type SyntheticEvent } from 'react'
 import { useEditor, useValue, type Editor, type TLShapeId } from 'tldraw'
-import { placeAnnotationThread, type AnnotationPlacement } from '../client/annotationPlacement'
+import { annotationThreadMaxHeight, placeAnnotationThread, type AnnotationPlacement } from '../client/annotationPlacement'
 import {
   annotationHoverTarget, annotationOpenTargets, annotationRepliesLocked, annotationTargetKey,
   annotationThreadPresentation, dismissAnnotationPopoverSoon, pruneAnnotationThreads,
@@ -62,6 +62,10 @@ interface AnnotationForegroundItemProps {
   editor: Editor
 }
 
+function stopForegroundEvent(event: SyntheticEvent): void {
+  event.stopPropagation()
+}
+
 /** Build the controls for exactly one foreground target. Presentation state is
  * keyed by the target, so simultaneous annotation runs never borrow another
  * thread's loading, error, or retry state. */
@@ -85,6 +89,7 @@ function AnnotationForegroundItem({ target, mode, zIndex, editor }: AnnotationFo
   const targetKey = annotationTargetKey(target)
   const panelRef = useRef<HTMLDivElement>(null)
   const [placement, setPlacement] = useState<AnnotationPlacement | null>(null)
+  const [stageMaxHeight, setStageMaxHeight] = useState<number | null>(null)
   const shape = useValue(
     `annotation foreground target ${targetKey}`,
     () => editor.getShape((target.kind === 'card' ? target.cardId : target.feedbackId) as TLShapeId),
@@ -110,6 +115,9 @@ function AnnotationForegroundItem({ target, mode, zIndex, editor }: AnnotationFo
       frame = null
       const panel = panelRef.current
       const canvas = editor.getContainer()
+      const canvasBounds = canvas.getBoundingClientRect()
+      const nextMaxHeight = annotationThreadMaxHeight(canvasBounds.height)
+      setStageMaxHeight((current) => current === nextMaxHeight ? current : nextMaxHeight)
       const pin = [...canvas.querySelectorAll<HTMLElement>('[data-annotation-target]')]
         .find((element) => element.dataset.annotationTarget === targetKey)
       if (!panel || !pin) {
@@ -118,7 +126,6 @@ function AnnotationForegroundItem({ target, mode, zIndex, editor }: AnnotationFo
       }
 
       const pinBounds = pin.getBoundingClientRect()
-      const canvasBounds = canvas.getBoundingClientRect()
       const next = placeAnnotationThread(
         {
           left: pinBounds.left - canvasBounds.left,
@@ -164,18 +171,27 @@ function AnnotationForegroundItem({ target, mode, zIndex, editor }: AnnotationFo
       data-testid="annotation-popover"
       data-annotation-popover-target={targetKey}
       style={style}
+      onPointerDown={stopForegroundEvent}
+      onClick={stopForegroundEvent}
+      onKeyDown={stopForegroundEvent}
       onPointerEnter={preview ? () => setAnnotationHover(target) : undefined}
       onPointerLeave={preview ? () => dismissAnnotationPopoverSoon(target) : undefined}
       onFocus={preview ? () => setAnnotationHover(target) : undefined}
       onBlur={preview ? () => dismissAnnotationPopoverSoon(target) : undefined}
     >
       {preview ? (
-        <AnnotationThread comment={content.comment} mode="preview" attribution={content.attribution} />
+        <AnnotationThread
+          comment={content.comment}
+          mode="preview"
+          attribution={content.attribution}
+          maxHeight={stageMaxHeight ?? undefined}
+        />
       ) : (
         <AnnotationThread
           comment={content.comment}
           mode="open"
           attribution={content.attribution}
+          maxHeight={stageMaxHeight ?? undefined}
           {...foregroundThreadProps(target)}
         />
       )}
