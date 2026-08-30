@@ -5,7 +5,7 @@ import {
 } from 'tldraw'
 import { FEEDBACK_DEFAULT_H, FEEDBACK_DEFAULT_W, makeFeedbackProps } from '../model/feedback'
 import { AnnotationPin } from '../components/AnnotationThread'
-import { requestAnnotationOpen, requestAnnotationReply, requestAnnotationRetry } from '../client/annotationSelection'
+import { requestAnnotationOpen } from '../client/annotationSelection'
 import './feedback.css'
 
 export type FeedbackShape = TLBaseShape<'feedback', ReturnType<typeof makeFeedbackProps>>
@@ -54,11 +54,8 @@ export class FeedbackShapeUtil extends ShapeUtil<FeedbackShape> {
           className="elves-feedback-pin"
           comment={{ id: shape.id, type: shape.props.type, text: shape.props.text, resolved: false, author: shape.props.authoredBy, messages: shape.props.messages }}
           zoom={this.editor.getZoomLevel()}
-          attribution={shape.props.reviewer?.replaceAll('-', ' ')}
           target={{ kind: 'feedback', feedbackId: shape.id }}
           onOpen={() => requestAnnotationOpen({ kind: 'feedback', feedbackId: shape.id })}
-          onReply={requestAnnotationReply}
-          onRetry={requestAnnotationRetry}
         />
       </HTMLContainer>
     )

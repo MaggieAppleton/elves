@@ -2,7 +2,7 @@ import { createElement } from 'react'
 import { act, create } from 'react-test-renderer'
 import { expect, test, vi } from 'vitest'
 import { AnnotationPin, AnnotationThread } from '../../src/components/AnnotationThread'
-import { setAnnotationThreadPresentation } from '../../src/client/annotationSelection'
+import { annotationPopover, hideAnnotationPopover } from '../../src/client/annotationSelection'
 
 test('popover exposes the complete read-only thread without a reply input', () => {
   const onResolve = vi.fn()
@@ -58,52 +58,21 @@ test('a restored card retains a comment action name', () => {
     .toBe('Restore Needs evidence comment')
 })
 
-test('pin popover receives thread-local progress, error, and retry state', () => {
-  const retry = vi.fn()
-  const target = { kind: 'card' as const, cardId: 'shape:card', commentId: 'c1' }
-  setAnnotationThreadPresentation(target, {
-    running: true, streamingText: 'Looking for the source…', error: 'The run stopped.',
-  })
+test('hovering a targeted pin promotes its expanded thread to the front canvas layer', () => {
+  const target = { kind: 'feedback' as const, feedbackId: 'shape:feedback' }
   const tree = create(createElement(AnnotationPin, {
-    comment: { id: 'c1', type: null, text: 'Needs evidence', resolved: false, author: 'claude' },
+    comment: { id: 'feedback', type: 'weak-argument', text: 'Name the causal bridge.', resolved: false, author: 'claude' },
     target,
     onOpen: vi.fn(),
-    onReply: vi.fn(),
-    onRetry: retry,
   }))
 
-  const popover = tree.root.findByProps({ 'data-testid': 'annotation-popover' })
-  expect(JSON.stringify(tree.toJSON())).toContain('Looking for the source…')
-  expect(JSON.stringify(tree.toJSON())).toContain('The run stopped.')
-  expect(popover.findByProps({ className: 'elves-annotation-thread__send' }).props.disabled).toBe(true)
-  popover.findAllByType('button').find((button) => button.children.includes('Retry'))!.props.onClick()
-  expect(retry).toHaveBeenCalledWith(target)
-  setAnnotationThreadPresentation(target, null)
-})
-
-test('two active targets keep the first popover disabled when the second starts', () => {
-  const a = { kind: 'card' as const, cardId: 'shape:card-a', commentId: 'a' }
-  const b = { kind: 'card' as const, cardId: 'shape:card-b', commentId: 'b' }
-  act(() => {
-    setAnnotationThreadPresentation(a, { running: true })
-    setAnnotationThreadPresentation(b, { running: true })
-  })
-  const tree = create(createElement('div', {},
-    createElement(AnnotationPin, {
-      comment: { id: 'a', type: null, text: 'A', resolved: false, author: 'claude' }, target: a,
-      onOpen: vi.fn(), onReply: vi.fn(),
-    }),
-    createElement(AnnotationPin, {
-      comment: { id: 'b', type: null, text: 'B', resolved: false, author: 'claude' }, target: b,
-      onOpen: vi.fn(), onReply: vi.fn(),
-    }),
-  ))
-
-  const sends = tree.root.findAllByProps({ className: 'elves-annotation-thread__send' })
-  expect(sends).toHaveLength(2)
-  expect(sends.every((send) => send.props.disabled)).toBe(true)
-  setAnnotationThreadPresentation(a, null)
-  setAnnotationThreadPresentation(b, null)
+  const pin = tree.root.findByProps({ className: 'elves-annotation-pin-wrap' })
+  expect(pin.props.onPointerEnter).toEqual(expect.any(Function))
+  expect(pin.props.onKeyDown).toEqual(expect.any(Function))
+  act(() => pin.props.onPointerEnter())
+  expect(annotationPopover()).toEqual(target)
+  expect(tree.root.findAllByProps({ 'data-testid': 'annotation-popover' })).toHaveLength(0)
+  hideAnnotationPopover()
 })
 
 test('a canvas lock disables a populated reply form without discarding its draft', () => {

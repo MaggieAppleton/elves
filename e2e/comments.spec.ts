@@ -139,9 +139,30 @@ test('focus exposes a complete thread without opening the rail', async ({ page, 
 
   const pin = page.getByTestId('annotation-pin')
   await pin.focus()
-  await expect(page.getByTestId('annotation-popover')).toBeVisible()
-  await expect(page.getByTestId('annotation-popover')).toContainText('A comment that must become a marker.')
+  const popover = page.getByTestId('annotation-popover')
+  await expect(popover).toBeVisible()
+  await expect(popover).toContainText('A comment that must become a marker.')
+  // Shape children are indexed only within their transformed `.tl-shape`
+  // parent. The expanded thread must instead be in tldraw's front canvas layer.
+  expect(await popover.evaluate((element) => element.closest('.tl-shape'))).toBeNull()
+  const stacking = await popover.evaluate((element) => ({
+    popover: Number(getComputedStyle(element.parentElement!).zIndex),
+    shapes: Number(getComputedStyle(document.querySelector('.tl-shapes')!).zIndex),
+  }))
+  expect(stacking.popover).toBeGreaterThan(stacking.shapes)
   await expect(page.getByTestId('annotation-rail')).toHaveCount(0)
+})
+
+test('Tab from a pin reaches that pin’s front-layer thread before another canvas annotation', async ({ page, request }) => {
+  await addTwoComments(page, request)
+
+  const pins = page.getByTestId('annotation-pin')
+  await pins.nth(0).focus()
+  await page.keyboard.press('Tab')
+
+  await expect(page.getByTestId('annotation-popover').getByLabel('Reply to annotation')).toBeFocused()
+  await page.keyboard.press('Shift+Tab')
+  await expect(pins.nth(0)).toBeFocused()
 })
 
 test('a mouse can travel from a pin into its hover popover and use the reply controls', async ({ page, request }) => {
