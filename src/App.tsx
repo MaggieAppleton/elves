@@ -41,10 +41,9 @@ import type { Review, PersonalityId } from './model/reviews'
 import { LinkPrompt } from './components/LinkPrompt'
 import { AgentBox } from './components/AgentBox'
 import { DraftPane } from './components/DraftPane'
-import { AnnotationRail } from './components/AnnotationRail'
 import { AnnotationPopoverLayer } from './components/AnnotationPopoverLayer'
 import {
-  clearAnnotationPopover, clearAnnotationThreadPresentations, setAnnotationRepliesLocked, setAnnotationThreadPresentation, subscribeAnnotationOpen, subscribeAnnotationReply, subscribeAnnotationRetry,
+  clearAnnotationPresentations, requestAnnotationClose, setAnnotationRepliesLocked, setAnnotationThreadPresentation, subscribeAnnotationReply, subscribeAnnotationResolve, subscribeAnnotationRetry,
   type AnnotationTarget,
 } from './client/annotationSelection'
 import {
@@ -123,6 +122,23 @@ const DEFAULT_SPLIT = 0.6 // canvas gets 60% in split by default
 const MIN_SPLIT = 0.18
 const MAX_SPLIT = 0.82
 
+function resolveAnnotationRecord(editor: Editor, target: AnnotationTarget): void {
+  if (target.kind === 'card') {
+    const shape = editor.getShape(target.cardId as TLShapeId) as CardShape | undefined
+    if (!shape || shape.type !== 'card') return
+    editor.updateShape<CardShape>({
+      id: shape.id, type: 'card',
+      props: { comments: shape.props.comments.map((comment) =>
+        comment.id === target.commentId ? { ...comment, resolved: true } : comment) },
+    })
+    return
+  }
+  const shape = editor.getShape(target.feedbackId as TLShapeId) as FeedbackShape | undefined
+  if (shape?.type === 'feedback') editor.updateShape<FeedbackShape>({
+    id: shape.id, type: 'feedback', props: { resolved: true },
+  })
+}
+
 function realtimeStatusLabel(status: RealtimeStatus): string {
   if (status === 'connected') return 'Connected — live agent updates are active'
   if (status === 'connecting') return 'Connecting live agent updates…'
@@ -191,16 +207,11 @@ export default function App() {
   const [view, setView] = useState<ViewState>('canvas')
   const [split, setSplit] = useState(DEFAULT_SPLIT)
   const [dragging, setDragging] = useState(false)
-  const [annotationTarget, setAnnotationTarget] = useState<AnnotationTarget | null>(null)
   type AnnotationThreadState = {
     key: string; target: AnnotationThreadTarget; running: boolean; streamingText: string; error: string | null; messageId: string | null
   }
   const [annotationThreadStates, setAnnotationThreadStates] = useState<Record<string, AnnotationThreadState>>({})
   const publishedAnnotationThreadStates = useRef<Record<string, AnnotationThreadState>>({})
-  const viewBeforeAnnotation = useRef<ViewState | null>(null)
-  const annotationProjectId = useRef<string | null>(null)
-  const viewRef = useRef<ViewState>('canvas')
-  const currentProjectIdRef = useRef<string | null>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const canvasPaneRef = useRef<HTMLDivElement>(null)
   const dividerDragRef = useRef<PointerDragManager | null>(null)
@@ -421,68 +432,16 @@ export default function App() {
     )
   }, [currentProjectId])
 
-  useEffect(() => {
-    viewRef.current = view
-  }, [view])
-
-  useEffect(() => {
-    currentProjectIdRef.current = currentProjectId
-  }, [currentProjectId])
-
   const changeView = (next: ViewState) => {
     setView(next)
     if (currentProjectId) localStorage.setItem(viewKey(currentProjectId), next)
   }
 
-  const openAnnotation = (target: AnnotationTarget) => {
-    setAnnotationTarget((current) => {
-      if (!current) {
-        viewBeforeAnnotation.current = viewRef.current
-        annotationProjectId.current = currentProjectIdRef.current
-      }
-      return target
-    })
-  }
-
-  useEffect(() => subscribeAnnotationOpen(openAnnotation), [])
-
-  const closeAnnotation = () => {
-    const previous = viewBeforeAnnotation.current
-    setAnnotationTarget(null)
-    // Closing the inspector is only a presentation change. In-flight reply
-    // state must remain published to its pin so a close/reopen cannot submit a
-    // second reply before the server settles the first one.
-    // A project transition discards annotation state before mounting the new
-    // canvas. This guard also makes a delayed close harmless: never write the
-    // old project's saved view into the incoming project's localStorage key.
-    if (previous && annotationProjectId.current === currentProjectId) changeView(previous)
-    viewBeforeAnnotation.current = null
-    annotationProjectId.current = null
-  }
-
-  const resolveAnnotation = (target: AnnotationTarget, commentId?: string) => {
+  useEffect(() => subscribeAnnotationResolve((target) => {
     if (canvasMutationsLocked || !editor) return
-    if (target.kind === 'card' && commentId) {
-      const shape = editor.getShape(target.cardId as TLShapeId) as CardShape | undefined
-      if (!shape || shape.type !== 'card') return
-      editor.updateShape<CardShape>({
-        id: shape.id,
-        type: 'card',
-        props: { comments: shape.props.comments.map((comment) => comment.id === commentId
-          ? { ...comment, resolved: !comment.resolved } : comment) },
-      })
-      return
-    }
-    if (target.kind === 'feedback') {
-      const shape = editor.getShape(target.feedbackId as TLShapeId)
-      if (!shape || shape.type !== 'feedback') return
-      editor.updateShape<FeedbackShape>({
-        id: target.feedbackId as TLShapeId,
-        type: 'feedback',
-        props: { resolved: true },
-      })
-    }
-  }
+    resolveAnnotationRecord(editor, target)
+    requestAnnotationClose(target)
+  }), [canvasMutationsLocked, editor])
 
   // Shape ids are only project-local. Keep transient reply presentation scoped
   // to the mounted project as well, so copied/imported ids cannot inherit an
@@ -588,22 +547,7 @@ export default function App() {
     }
     publishedAnnotationThreadStates.current = annotationThreadStates
   }, [annotationThreadStates])
-  useEffect(() => () => {
-    for (const state of Object.values(publishedAnnotationThreadStates.current)) {
-      setAnnotationThreadPresentation(state.target, null)
-    }
-  }, [])
-
-  const restoreFeedback = (feedbackId: string) => {
-    if (canvasMutationsLocked || !editor) return
-    const shape = editor.getShape(feedbackId as TLShapeId)
-    if (!shape || shape.type !== 'feedback') return
-    editor.updateShape<FeedbackShape>({
-      id: feedbackId as TLShapeId,
-      type: 'feedback',
-      props: { resolved: false },
-    })
-  }
+  useEffect(() => () => clearAnnotationPresentations(), [])
 
   // The drawer moves one step at a time: « widens toward draft, » narrows
   // toward canvas. Both clamp at the ends of the sequence.
@@ -948,15 +892,8 @@ export default function App() {
       editorRef.current = null
       setEditor(null)
     }
-    // The rail is a view of live shapes in the current project. Clear its
-    // retained target and pre-rail view before `currentProjectId` changes so
-    // neither can leak into the next project's persisted view state.
-    setAnnotationTarget(null)
     setAnnotationThreadStates({})
-    clearAnnotationThreadPresentations()
-    clearAnnotationPopover()
-    viewBeforeAnnotation.current = null
-    annotationProjectId.current = null
+    clearAnnotationPresentations()
     localStorage.setItem(LAST_PROJECT_KEY, id)
     setCurrentProjectId(id)
     setCanvasMountKey((key) => key + 1)
@@ -1064,9 +1001,7 @@ export default function App() {
   // Pane widths for the three states. tldraw stays mounted; draft-only just
   // collapses the canvas pane to 0 (and vice-versa), and CSS transitions the
   // width so moving between states feels continuous rather than modal.
-  // The inspector is a visual right pane only: preserve the stored view so a
-  // close returns precisely where the reader was (including draft-only).
-  const visualView: ViewState = annotationTarget ? 'split' : view
+  const visualView = view
   const canvasWidth = visualView === 'canvas' ? '100%' : visualView === 'draft' ? '0%' : `${split * 100}%`
   const draftWidth = visualView === 'canvas' ? '0%' : visualView === 'draft' ? '100%' : `${(1 - split) * 100}%`
   const writeStatusLabel = canvasWriteStatusLabel(canvasWriteStatus)
@@ -1151,7 +1086,6 @@ export default function App() {
           onSummon={handleSummonReview}
           onDismiss={handleDismissReview}
           onRetry={handleRetryReview}
-          onOpenAnnotation={openAnnotation}
         />
         <ProjectSwitcher
           projects={projects}
@@ -1233,7 +1167,7 @@ export default function App() {
             </div>
           )}
         </div>
-        {visualView === 'split' && !annotationTarget && (
+        {visualView === 'split' && (
           <div
             className="elves-divider"
             style={{ left: `${split * 100}%` }}
@@ -1249,26 +1183,14 @@ export default function App() {
           style={{ width: draftWidth }}
           aria-hidden={visualView === 'canvas'}
         >
-          {annotationTarget ? (
-            <AnnotationRail
-              target={annotationTarget}
-              editor={editor}
-              disabled={canvasMutationsLocked}
-              onClose={closeAnnotation}
-              onResolve={resolveAnnotation}
-              onRestore={restoreFeedback}
-              threadState={annotationThreadStates[annotationKey(annotationTarget)]}
-              onReply={replyToAnnotation}
-              onRetry={retryAnnotation}
-            />
-          ) : <DraftPane editor={editor} readOnly={canvasMutationsLocked} onSelectCard={onSelectCard} />}
+          <DraftPane editor={editor} readOnly={canvasMutationsLocked} onSelectCard={onSelectCard} />
         </div>
-        {!annotationTarget && <DraftDrawerControls
+        <DraftDrawerControls
           view={view}
           split={split}
           onExpand={expandDraft}
           onCollapse={collapseDraft}
-        />}
+        />
       </div>
     </div>
   )

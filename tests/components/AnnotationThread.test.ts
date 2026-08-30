@@ -51,7 +51,7 @@ test('thread renders durable replies and only disables its own send control whil
         { id: 'user-1', author: 'user', text: 'Which source?', createdAt: '2026-08-29T12:00:00.000Z' },
       ],
     },
-    mode: 'rail',
+    mode: 'open',
     running: true,
     onResolve: vi.fn(),
     onReply: vi.fn(),
@@ -66,7 +66,7 @@ test('thread renders durable replies and only disables its own send control whil
 test('a restored card retains a comment action name', () => {
   const tree = create(createElement(AnnotationThread, {
     comment: { id: 'c1', type: 'needs-evidence', text: 'Needs a source', resolved: true, author: 'claude' },
-    mode: 'rail', actionLabel: 'Restore comment', onResolve: vi.fn(),
+    mode: 'open', actionLabel: 'Restore comment', onResolve: vi.fn(),
   }))
 
   expect(tree.root.findByProps({ className: 'elves-annotation-thread__resolve' }).props['aria-label'])
@@ -101,13 +101,13 @@ test('a targeted pin clears its temporary preview after pointer or focus leaves'
 test('a canvas lock disables a populated reply form without discarding its draft', () => {
   const tree = create(createElement(AnnotationThread, {
     comment: { id: 'c1', type: null, text: 'Needs evidence', resolved: false, author: 'claude' },
-    mode: 'rail', onResolve: vi.fn(), onReply: vi.fn(),
+    mode: 'open', onResolve: vi.fn(), onReply: vi.fn(),
   }))
   const textarea = tree.root.findByType('textarea')
   act(() => textarea.props.onChange({ target: { value: 'My saved draft' } }))
   act(() => tree.update(createElement(AnnotationThread, {
     comment: { id: 'c1', type: null, text: 'Needs evidence', resolved: false, author: 'claude' },
-    mode: 'rail', disabled: true, onResolve: vi.fn(), onReply: vi.fn(),
+    mode: 'open', disabled: true, onResolve: vi.fn(), onReply: vi.fn(),
   })))
   expect(tree.root.findByType('textarea').props).toMatchObject({ value: 'My saved draft', disabled: true })
   expect(tree.root.findByProps({ className: 'elves-annotation-thread__send' }).props.disabled).toBe(true)
