@@ -9,7 +9,6 @@ import {
 } from '../../src/client/annotationSelection'
 import { foregroundThreadProps } from '../../src/components/AnnotationPopoverLayer'
 import { annotationPin } from '../../src/model/annotationPins'
-
 const openComposer = (tree: ReactTestRenderer, index = 0) => {
   act(() => tree.root
     .findAllByProps({ className: 'elves-annotation-thread__reply-trigger' })[index]
@@ -391,7 +390,6 @@ test('annotation pin icons use a centred fixed wrapper without a transform nudge
     expect(typeRule).toMatch(new RegExp(`border-color:\\s*var\\(--elves-cc-${token}-label\\)`))
   }
 })
-
 test('thread controls use the embedded composer and typed header layout', () => {
   const css = readFileSync('src/components/annotationThread.css', 'utf8')
   expect(css).toMatch(/\.elves-annotation-thread__header\s*\{[^}]*justify-content:\s*space-between/s)
