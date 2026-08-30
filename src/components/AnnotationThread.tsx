@@ -24,6 +24,8 @@ export interface AnnotationThreadProps {
   onReply?: (text: string) => void
   onRetry?: () => void
   onClose?: () => void
+  /** Pixel cap measured from the live tldraw stage by the foreground owner. */
+  maxHeight?: number
 }
 
 function annotationType(type: CommentType | null): string {
@@ -46,6 +48,7 @@ export function AnnotationThread({
   onReply,
   onRetry,
   onClose,
+  maxHeight,
 }: AnnotationThreadProps) {
   const preview = mode === 'preview'
   const type = annotationType(comment.type)
@@ -67,6 +70,7 @@ export function AnnotationThread({
     <article
       className={`elves-annotation-thread elves-annotation-thread--${mode}`}
       data-testid="annotation-thread"
+      style={maxHeight === undefined ? undefined : { maxHeight }}
     >
       <div className="elves-annotation-thread__meta">
         <span className="elves-annotation-thread__type">{type}</span>
@@ -93,7 +97,15 @@ export function AnnotationThread({
           {running ? 'Replying…' : 'Send reply'}
         </button>
       </form>}
-      {!preview && error && <div className="elves-annotation-thread__error" role="alert">{error} {onRetry && <button type="button" onClick={onRetry}>Retry</button>}</div>}
+      {!preview && error && <div className="elves-annotation-thread__error" role="alert">{error} {onRetry && <button
+        type="button"
+        disabled={disabled || running}
+        onClick={() => {
+          if (!disabled && !running) onRetry()
+        }}
+      >
+        Retry
+      </button>}</div>}
       {!preview && onResolve && <button
         type="button"
         className="elves-annotation-thread__resolve"

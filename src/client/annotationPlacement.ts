@@ -5,6 +5,11 @@ export interface AnnotationPlacement { left: number; top: number; side: 'left' |
 const GAP = 12
 const EDGE = 8
 
+/** Keep an anchored foreground surface within the same inset as its placement. */
+export function annotationThreadMaxHeight(stageHeight: number): number {
+  return Math.max(0, stageHeight - EDGE * 2)
+}
+
 export function clamp(value: number, minimum: number, maximum: number): number {
   if (maximum < minimum) return minimum
   return Math.min(maximum, Math.max(minimum, value))

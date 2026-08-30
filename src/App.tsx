@@ -122,6 +122,16 @@ const DEFAULT_SPLIT = 0.6 // canvas gets 60% in split by default
 const MIN_SPLIT = 0.18
 const MAX_SPLIT = 0.82
 
+/** A retry only replays a durable reply while its canvas can safely mutate. */
+export function retryAnnotationCanRun(
+  projectId: string | null,
+  messageId: string | null,
+  canvasMutationsLocked: boolean,
+  running: boolean,
+): messageId is string {
+  return !!projectId && !!messageId && !canvasMutationsLocked && !running
+}
+
 function resolveAnnotationRecord(editor: Editor, target: AnnotationTarget): void {
   if (target.kind === 'card') {
     const shape = editor.getShape(target.cardId as TLShapeId) as CardShape | undefined
@@ -526,8 +536,9 @@ export default function App() {
 
   const retryAnnotation = (target: AnnotationThreadTarget) => {
     const key = annotationKey(target)
-    const messageId = annotationThreadStates[key]?.messageId ?? null
-    if (!currentProjectId || !messageId) return
+    const state = annotationThreadStates[key]
+    const messageId = state?.messageId ?? null
+    if (!retryAnnotationCanRun(currentProjectId, messageId, canvasMutationsLocked, !!state?.running)) return
     startAnnotationRun(target, messageId)
   }
 
@@ -536,7 +547,7 @@ export default function App() {
     setAnnotationRepliesLocked(canvasMutationsLocked)
     return () => setAnnotationRepliesLocked(false)
   }, [canvasMutationsLocked])
-  useEffect(() => subscribeAnnotationRetry(retryAnnotation), [currentProjectId, annotationThreadStates])
+  useEffect(() => subscribeAnnotationRetry(retryAnnotation), [currentProjectId, annotationThreadStates, canvasMutationsLocked])
   useEffect(() => {
     const previous = publishedAnnotationThreadStates.current
     for (const [key, state] of Object.entries(previous)) {

@@ -1,5 +1,9 @@
 .elves-annotation-thread {
-  display: grid;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 100%;
   gap: 10px;
   padding: 13px;
   border: 1px solid var(--elves-border);
@@ -8,7 +12,7 @@
 }
 .elves-annotation-thread__meta { display: flex; flex-wrap: wrap; gap: 5px 8px; color: var(--elves-ink-faint); font-size: 11px; font-weight: 550; text-transform: capitalize; }
 .elves-annotation-thread__type { color: var(--elves-primary-strong); }
-.elves-annotation-thread__messages { display: grid; gap: 8px; }
+.elves-annotation-thread__messages { display: grid; flex: 1 1 auto; min-height: 0; gap: 8px; overflow-y: auto; overscroll-behavior: contain; }
 .elves-annotation-thread__message { margin: 0; color: var(--elves-ink); font-size: 14px; line-height: 1.52; white-space: pre-wrap; overflow-wrap: anywhere; }
 .elves-annotation-thread__message[data-author="user"] { padding-left: 10px; border-left: 2px solid var(--elves-primary); }
 .elves-annotation-thread__message-author { display: block; margin-bottom: 2px; color: var(--elves-ink-faint); font-size: 11px; font-weight: 600; }
@@ -60,12 +64,15 @@
 .elves-annotation-popover-layer {
   position: absolute;
   inset: 0;
-  z-index: calc(var(--layer-canvas-overlays) + 1);
+  /* InFrontOfTheCanvas establishes the global canvas stacking context. */
+  z-index: 0;
   pointer-events: none;
 }
 .elves-annotation-foreground-item {
   position: absolute;
-  width: min(300px, 72vw);
+  box-sizing: border-box;
+  width: min(300px, calc(100% - 16px));
+  max-height: calc(100% - 16px);
   pointer-events: all;
 }
 .elves-annotation-thread--preview { box-shadow: var(--elves-shadow-md); }

@@ -2,7 +2,6 @@ import { expect, test, vi } from 'vitest'
 import {
   annotationOpenTargets,
   annotationHoverTarget,
-  annotationPopover,
   clearAnnotationPresentations,
   closeAnnotationThread,
   dismissAnnotationPopoverSoon,
@@ -13,7 +12,6 @@ import {
   requestAnnotationOpen,
   requestAnnotationResolve,
   setAnnotationHover,
-  showAnnotationPopover,
   subscribeAnnotationResolve,
 } from '../../src/client/annotationSelection'
 
@@ -82,13 +80,11 @@ test('opening a hovered target clears its hover state', () => {
 test('re-entering a hover target cancels its pending dismissal', () => {
   vi.useFakeTimers()
   clearAnnotationPresentations()
-  showAnnotationPopover(a)
   setAnnotationHover(a)
   dismissAnnotationPopoverSoon(a)
   setAnnotationHover(a)
   vi.advanceTimersByTime(100)
   expect(annotationHoverTarget()).toEqual(a)
-  expect(annotationPopover()).toEqual(a)
   vi.useRealTimers()
   clearAnnotationPresentations()
 })

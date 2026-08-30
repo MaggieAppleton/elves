@@ -26,7 +26,7 @@ vi.mock('../../src/client/reviews', () => ({
   fetchReviews: vi.fn().mockResolvedValue([]), summonReview: vi.fn(), dismissReview: vi.fn(), retryReview: vi.fn(),
 }))
 
-import App from '../../src/App'
+import App, { retryAnnotationCanRun } from '../../src/App'
 import { clearAnnotationPresentations, requestAnnotationOpen } from '../../src/client/annotationSelection'
 
 const storage = new Map<string, string>()
@@ -66,4 +66,10 @@ test('opening an annotation pin leaves the canvas-only view and draft divider un
   expect(stage().props['data-view']).toBe('canvas')
   expect(tree.root.findAllByProps({ 'data-testid': 'draft-divider' })).toHaveLength(0)
   await act(async () => { tree.unmount() })
+})
+
+test('canvas mutation locks and active runs reject annotation retries before dispatch', () => {
+  expect(retryAnnotationCanRun('essay', 'message-1', true, false)).toBe(false)
+  expect(retryAnnotationCanRun('essay', 'message-1', false, true)).toBe(false)
+  expect(retryAnnotationCanRun('essay', 'message-1', false, false)).toBe(true)
 })
