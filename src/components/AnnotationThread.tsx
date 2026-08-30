@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent, type PointerEvent } from 'react'
+import {
+  ArrowsLeftRight, Buildings, ChartLineDown, ChatCircleDots, ImageSquare,
+  Link, Question, Scissors, Warning,
+} from '@phosphor-icons/react'
 import { agentInfo } from '../shapes/agents'
-import { annotationPin, PIN_SIZE } from '../model/annotationPins'
+import { annotationPin, PIN_SIZE, type AnnotationPinIcon } from '../model/annotationPins'
 import { threadMessages } from '../model/comments'
 import { commentGist } from '../model/summary'
 import type { Comment, CommentType } from '../model/types'
@@ -120,11 +124,16 @@ export function AnnotationThread({
   )
 }
 
-function pinGlyph(icon: string): string {
-  return ({
-    quote: '“', warning: '!', link: '↗', image: '▧', arrows: '↔',
-    scissors: '✂', question: '?', branch: '⌘', message: '•',
-  } as Record<string, string>)[icon] ?? '•'
+const PIN_ICONS: Record<AnnotationPinIcon, typeof Warning> = {
+  comment: ChatCircleDots,
+  warning: Warning,
+  'chart-down': ChartLineDown,
+  link: Link,
+  image: ImageSquare,
+  arrows: ArrowsLeftRight,
+  scissors: Scissors,
+  question: Question,
+  buildings: Buildings,
 }
 
 export interface AnnotationPinProps {
@@ -138,6 +147,7 @@ export interface AnnotationPinProps {
 /** A compact target that opens its shared foreground thread on demand. */
 export function AnnotationPin({ comment, offsetY = 0, zoom = 1, className, target }: AnnotationPinProps) {
   const token = annotationPin(comment.type)
+  const Icon = PIN_ICONS[token.icon]
   const scale = 1 / zoom
   const style = {
     top: offsetY * scale,
@@ -176,7 +186,9 @@ export function AnnotationPin({ comment, offsetY = 0, zoom = 1, className, targe
         aria-label={`Open ${token.label} comment from ${agentName(comment.author)}: ${commentGist(comment as Comment)}`}
         onClick={open}
       >
-        <span aria-hidden="true" className="elves-annotation-pin__icon">{pinGlyph(token.icon)}</span>
+        <span aria-hidden="true" className="elves-annotation-pin__icon">
+          <Icon aria-hidden="true" size={15} weight="bold" />
+        </span>
       </button>
     </div>
   )
