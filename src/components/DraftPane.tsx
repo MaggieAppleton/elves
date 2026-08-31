@@ -1,16 +1,16 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import {
+  Fragment, useEffect, useRef, useState,
+} from 'react'
 import { createShapeId, useValue, type Editor } from 'tldraw'
 import type { CardShape } from '../shapes/CardShapeUtil'
 import type { SectionShape } from '../shapes/SectionShapeUtil'
-import { visibleComments } from '../model/comments'
 import { reattribute, USER_AUTHOR } from '../model/attribution'
 import { makeProseCardProps } from '../model/cards'
 import { CANVAS_GAP } from '../model/layout'
-import {
-  compileDraft, draftToMarkdown, type DraftBlock, type DraftCardInput, type DraftSectionInput,
-} from '../model/draft'
-import { assetUrl } from '../client/assets'
-import { tokenizeInlineMarkdown } from './inlineMarkdown'
+import { draftToMarkdown, type DraftBlock } from '../model/draft'
+import { compileEditorDraft } from '../client/editorDraft'
+import { useDraftImageInsertion, type DraftImageInserter } from './useDraftImageInsertion'
+import { DraftItemView } from './DraftItemView'
 import './draft.css'
 
 /**
@@ -29,45 +29,17 @@ export function DraftPane({
   editor,
   readOnly = false,
   onSelectCard,
+  onInsertImages,
 }: {
   editor: Editor | null
   readOnly?: boolean
   /** Entering edit on a paragraph → select/centre its card on the canvas. */
   onSelectCard: (cardId: string) => void
+  onInsertImages?: DraftImageInserter
 }) {
   const blocks = useValue<DraftBlock[]>(
     'draft-blocks',
-    () => {
-      if (!editor) return []
-      const cards: DraftCardInput[] = []
-      const sections: DraftSectionInput[] = []
-      for (const shape of editor.getCurrentPageShapes()) {
-        // Page bounds resolve grouping/rotation to the card's real footprint,
-        // so band assignment matches what the user sees on the board.
-        const bounds = editor.getShapePageBounds(shape.id)
-        if (!bounds) continue
-        if (shape.type === 'card') {
-          const p = (shape as CardShape).props
-          cards.push({
-            id: shape.id,
-            kind: p.kind,
-            noteKind: p.noteKind,
-            x: bounds.x, y: bounds.y, w: bounds.w, h: bounds.h,
-            text: p.text,
-            assetId: p.assetId,
-            figureTitle: p.figureTitle,
-            figureStatus: p.figureStatus,
-            mergedInto: p.mergedInto,
-            draftExcluded: p.draftExcluded,
-            unresolvedComments: visibleComments(p.comments).length,
-          })
-        } else if (shape.type === 'section') {
-          const p = (shape as SectionShape).props
-          sections.push({ id: shape.id, x: bounds.x, text: p.text, authoredBy: p.authoredBy })
-        }
-      }
-      return compileDraft(cards, sections)
-    },
+    () => editor ? compileEditorDraft(editor) : [],
     [editor],
   )
 
@@ -75,6 +47,7 @@ export function DraftPane({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null)
   const [editingAtStartId, setEditingAtStartId] = useState<string | null>(null)
+  const draftImages = useDraftImageInsertion({ blocks, editor, readOnly, onInsertImages })
 
   useEffect(() => {
     if (readOnly) {
@@ -181,7 +154,13 @@ export function DraftPane({
   const empty = blocks.length === 0
 
   return (
-    <div className="elves-draft" data-testid="draft-pane">
+    <div
+      className="elves-draft"
+      data-testid="draft-pane"
+      onPasteCapture={draftImages.onPasteCapture}
+      onFocusCapture={draftImages.onFocusCapture}
+      onBlurCapture={draftImages.onBlurCapture}
+    >
       <header className="elves-draft__bar">
         <span className="elves-draft__label">Draft</span>
         <button
@@ -194,15 +173,32 @@ export function DraftPane({
           {copyStatus === 'copied' ? 'Copied' : copyStatus === 'error' ? 'Copy failed' : 'Copy as Markdown'}
         </button>
       </header>
-      <div className="elves-draft__scroll">
+      {draftImages.imageError && (
+        <div className="elves-draft__image-error" role="alert" data-testid="draft-image-error">
+          {draftImages.imageError}
+        </div>
+      )}
+      <div
+        className="elves-draft__scroll"
+        onDragOver={draftImages.onDragOver}
+        onDrop={draftImages.onDrop}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+            draftImages.clearDropTarget()
+          }
+        }}
+      >
         {empty ? (
-          <p className="elves-draft__blank" data-testid="draft-empty">
-            Nothing to read yet. Prose cards you write on the canvas appear here as a
-            continuous draft, in the order they'll be read. Click any paragraph to edit it.
-          </p>
+          <>
+            <DraftDropGap blockIndex={0} index={0} active={draftImages.dropTarget?.index === 0} />
+            <p className="elves-draft__blank" data-testid="draft-empty">
+              Nothing to read yet. Prose cards you write on the canvas appear here as a
+              continuous draft, in the order they'll be read. Click any paragraph to edit it.
+            </p>
+          </>
         ) : (
           <article className="elves-draft__body">
-            {blocks.map((block) => (
+            {blocks.map((block, blockIndex) => (
               <section key={block.sectionId ?? '__opening__'} className="elves-draft__section">
                 {block.section !== null && (
                   <div className="elves-draft__heading-row">
@@ -231,82 +227,36 @@ export function DraftPane({
                     </h2>
                   </div>
                 )}
-                {block.items.map((item) => {
-                  if (item.type === 'figure') {
-                    return (
-                      <figure key={item.id} className="elves-draft__figure" data-testid="draft-figure">
-                        <figcaption
-                          className="elves-draft__figure-title"
-                          data-testid="draft-figure-title"
-                        >
-                          {!readOnly && editor && editingTitleId === item.id ? (
-                            <FigureTitleEditor
-                              editor={editor}
-                              cardId={item.id}
-                              initialText={item.title}
-                              onDone={() => setEditingTitleId(null)}
-                            />
-                          ) : !readOnly ? (
-                            <button
-                              type="button"
-                              className="elves-draft__title-edit-target"
-                              aria-label="Edit figure title"
-                              onClick={() => setEditingTitleId(item.id)}
-                            >
-                              {item.title.trim() || 'Untitled figure'}
-                            </button>
-                          ) : item.title.trim() || 'Untitled figure'}
-                          {item.status ? (
-                            <span className="elves-draft__figure-status">{item.status}</span>
-                          ) : null}
-                        </figcaption>
-                        {item.description.trim() ? (
-                          <p className="elves-draft__figure-desc">{item.description}</p>
-                        ) : null}
-                      </figure>
-                    )
-                  }
-                  if (item.type === 'image') {
-                    return (
-                      <figure key={item.id} className="elves-draft__image-wrap" data-testid="draft-image-block">
-                        <img
-                          className="elves-draft__image"
-                          data-testid="draft-image"
-                          src={assetUrl(item.assetId)}
-                          alt=""
-                        />
-                      </figure>
-                    )
-                  }
-                  return !readOnly && editor && editingId === item.id ? (
-                    <div
-                      key={item.id}
-                      className="elves-draft__prose-row"
-                      data-testid="draft-para"
-                    >
-                      <ProseEditor
-                        editor={editor}
-                        cardId={item.id}
-                        initialText={item.text}
-                        focusAtStart={editingAtStartId === item.id}
-                        onSplit={splitProse}
-                        onDone={() => {
-                          setEditingAtStartId(null)
-                          setEditingId(null)
-                        }}
-                      />
-                    </div>
-                  ) : (
-                    <DraftProse
-                      key={item.id}
-                      cardId={item.id}
-                      text={item.text}
-                      unresolvedComments={item.unresolvedComments}
-                      readOnly={readOnly}
-                      onEdit={startEditing}
+                {block.items.map((item, itemIndex) => (
+                  <Fragment key={item.id}>
+                    <DraftDropGap
+                      blockIndex={blockIndex}
+                      index={itemIndex}
+                      active={draftImages.dropTarget?.blockIndex === blockIndex && draftImages.dropTarget.index === itemIndex}
                     />
-                  )
-                })}
+                    <DraftItemView
+                      item={item}
+                      editor={editor}
+                      readOnly={readOnly}
+                      editingId={editingId}
+                      editingTitleId={editingTitleId}
+                      focusAtStartId={editingAtStartId}
+                      onEdit={startEditing}
+                      onEditTitle={setEditingTitleId}
+                      onSplit={splitProse}
+                      onFinishEditing={() => {
+                        setEditingAtStartId(null)
+                        setEditingId(null)
+                      }}
+                      onFinishTitle={() => setEditingTitleId(null)}
+                    />
+                  </Fragment>
+                ))}
+                <DraftDropGap
+                  blockIndex={blockIndex}
+                  index={block.items.length}
+                  active={draftImages.dropTarget?.blockIndex === blockIndex && draftImages.dropTarget.index === block.items.length}
+                />
               </section>
             ))}
           </article>
@@ -316,142 +266,23 @@ export function DraftPane({
   )
 }
 
-/**
- * Reading-mode prose keeps navigation and editing as sibling interactions:
- * anchors remain real links, while a separate native button opens raw Markdown.
- */
-function DraftProse({
-  cardId,
-  text,
-  unresolvedComments,
-  readOnly,
-  onEdit,
+function DraftDropGap({
+  blockIndex,
+  index,
+  active,
 }: {
-  cardId: string
-  text: string
-  unresolvedComments?: number
-  readOnly: boolean
-  onEdit: (cardId: string) => void
+  blockIndex: number
+  index: number
+  active: boolean
 }) {
-  const empty = !text.trim()
   return (
     <div
-      className={`elves-draft__prose-row${empty ? ' elves-draft__prose-row--empty' : ''}${readOnly ? ' elves-draft__prose-row--read-only' : ''}`}
-      data-testid="draft-para"
-    >
-      <div className="elves-draft__prose-content">
-        {!readOnly ? (
-          <button
-            type="button"
-            className="elves-draft__edit-target"
-            aria-label="Edit paragraph"
-            title="Click to edit — updates the card on the canvas"
-            onClick={() => onEdit(cardId)}
-          />
-        ) : null}
-        <p className="elves-draft__para">
-          {empty ? 'Empty card' : tokenizeInlineMarkdown(text).map((token, index) => (
-            token.type === 'text' ? token.value : (
-              <a
-                key={`${token.href}-${index}`}
-                className="elves-draft__link"
-                href={token.href}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {token.label}
-              </a>
-            )
-          ))}
-          {unresolvedComments ? (
-            <span
-              className="elves-draft__comments"
-              data-testid="draft-comment-marker"
-              title={`${unresolvedComments} unresolved comment${unresolvedComments === 1 ? '' : 's'}`}
-              aria-label={`${unresolvedComments} unresolved comments`}
-            >
-              {unresolvedComments}
-            </span>
-          ) : null}
-        </p>
-      </div>
-    </div>
-  )
-}
-
-/**
- * A paragraph opened for editing: a textarea over the card's source text. The
- * write path mirrors the on-canvas card editor exactly (see CardShapeUtil) —
- * `text` plus a `reattribute` pass so per-character authorship stays correct —
- * so editing here and editing on the board are the same operation on one shape.
- */
-function ProseEditor({
-  editor,
-  cardId,
-  initialText,
-  focusAtStart,
-  onSplit,
-  onDone,
-}: {
-  editor: Editor
-  cardId: string
-  initialText: string
-  focusAtStart: boolean
-  onSplit: (cardId: string, text: string, cursor: number) => void
-  onDone: () => void
-}) {
-  const ref = useRef<HTMLTextAreaElement>(null)
-
-  // Grow the field to its content so the reading column never sprouts an inner
-  // scrollbar — it reads like the paragraph it replaces, just taller as you type.
-  const fit = (el: HTMLTextAreaElement) => {
-    el.style.height = 'auto'
-    el.style.height = `${el.scrollHeight}px`
-  }
-
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    fit(el)
-    const caret = focusAtStart ? 0 : el.value.length
-    el.setSelectionRange(caret, caret)
-  }, [])
-
-  return (
-    <textarea
-      ref={ref}
-      className="elves-draft__editor"
-      data-testid="draft-editor"
-      autoFocus
-      defaultValue={initialText}
-      placeholder="Write prose…"
-      onChange={(e) => {
-        const value = e.currentTarget.value
-        fit(e.currentTarget)
-        const id = cardId as CardShape['id']
-        const prev = editor.getShape<CardShape>(id)
-        if (!prev) return
-        editor.updateShape<CardShape>({
-          id,
-          type: 'card',
-          props: {
-            text: value,
-            authoredBy: null,
-            attribution: reattribute(prev.props.text, value, prev.props.attribution, USER_AUTHOR),
-          },
-        })
-      }}
-      onBlur={onDone}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault()
-          onSplit(cardId, e.currentTarget.value, e.currentTarget.selectionStart)
-        } else if (e.key === 'Escape') {
-          e.preventDefault()
-          e.currentTarget.blur()
-        }
-        e.stopPropagation()
-      }}
+      className="elves-draft__drop-gap"
+      data-draft-gap=""
+      data-block-index={blockIndex}
+      data-index={index}
+      data-active={active}
+      aria-hidden="true"
     />
   )
 }
@@ -480,35 +311,6 @@ function SectionTitleEditor({
         if (event.currentTarget.value.trim() === '') editor.deleteShape(sectionId as SectionShape['id'])
         onDone()
       }}
-      onKeyDown={(event) => {
-        if (event.key === 'Escape') event.currentTarget.blur()
-        event.stopPropagation()
-      }}
-    />
-  )
-}
-
-function FigureTitleEditor({
-  editor, cardId, initialText, onDone,
-}: {
-  editor: Editor
-  cardId: string
-  initialText: string
-  onDone: () => void
-}) {
-  return (
-    <textarea
-      className="elves-draft__title-editor elves-draft__figure-editor"
-      data-testid="draft-figure-editor"
-      autoFocus
-      defaultValue={initialText}
-      onClick={(event) => event.stopPropagation()}
-      onChange={(event) => editor.updateShape<CardShape>({
-        id: cardId as CardShape['id'],
-        type: 'card',
-        props: { figureTitle: event.currentTarget.value, authoredBy: null },
-      })}
-      onBlur={onDone}
       onKeyDown={(event) => {
         if (event.key === 'Escape') event.currentTarget.blur()
         event.stopPropagation()

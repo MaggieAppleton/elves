@@ -39,6 +39,7 @@ const editor = {
     },
   }],
   getShapePageBounds: () => ({ x: 0, y: 0, w: 240, h: 120 }),
+  getViewportPageBounds: () => ({ center: { x: 500, y: 300 } }),
 } as unknown as Editor
 
 const visualEditor = {
@@ -104,6 +105,7 @@ const visualEditor = {
     }
     return { x: 0, y: y[id] ?? 0, w: 240, h: 120 }
   },
+  getViewportPageBounds: () => ({ center: { x: 500, y: 300 } }),
 } as unknown as Editor
 
 const titleEditor = {
@@ -190,6 +192,27 @@ function enterText(input: HTMLTextAreaElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
   setter?.call(input, value)
   input.dispatchEvent(new Event('input', { bubbles: true }))
+}
+
+function pasteFiles(target: Element, files: File[]) {
+  const event = new Event('paste', { bubbles: true, cancelable: true })
+  Object.defineProperty(event, 'clipboardData', {
+    value: { files, items: files.map((file) => ({ kind: 'file', getAsFile: () => file })) },
+  })
+  target.dispatchEvent(event)
+  return event
+}
+
+function dragFiles(target: Element, type: 'dragover' | 'drop', files: File[], clientY: number) {
+  const event = new Event(type, { bubbles: true, cancelable: true })
+  Object.defineProperties(event, {
+    clientY: { value: clientY },
+    dataTransfer: {
+      value: { files, types: ['Files'], dropEffect: 'none' },
+    },
+  })
+  target.dispatchEvent(event)
+  return event
 }
 
 beforeEach(() => {
@@ -342,6 +365,141 @@ test('renders figures and images between prose in draft order', () => {
   const image = renderer.container.querySelector<HTMLImageElement>('[data-testid="draft-image"]')
   expect(image?.src).toContain('/assets/loop.png')
 
+  unmount(renderer)
+})
+
+test('pastes clipboard images after the focused prose item', async () => {
+  const onInsertImages = vi.fn(async () => ({ createdIds: ['shape:image'], failures: [] }))
+  const renderer = render(createElement(DraftPane, {
+    editor,
+    onSelectCard: vi.fn(),
+    onInsertImages,
+  }))
+  const paragraph = renderer.container.querySelector<HTMLButtonElement>(
+    'button[aria-label="Edit paragraph"]',
+  )!
+  act(() => { paragraph.focus() })
+  const image = new File(['pixels'], 'clipboard.png', { type: 'image/png' })
+
+  let event!: Event
+  await act(async () => {
+    event = pasteFiles(paragraph, [image])
+    await Promise.resolve()
+  })
+
+  expect(event.defaultPrevented).toBe(true)
+  expect(onInsertImages).toHaveBeenCalledWith([image], {
+    kind: 'draft',
+    sectionId: null,
+    beforeId: 'shape:card-1',
+    afterId: null,
+    fallbackPoint: { x: 500, y: 300 },
+  })
+  unmount(renderer)
+})
+
+test('leaves ordinary text paste to the prose editor', () => {
+  const onInsertImages = vi.fn()
+  const renderer = render(createElement(DraftPane, {
+    editor,
+    onSelectCard: vi.fn(),
+    onInsertImages,
+  }))
+
+  const event = pasteFiles(renderer.container.querySelector('[data-testid="draft-pane"]')!, [])
+
+  expect(event.defaultPrevented).toBe(false)
+  expect(onInsertImages).not.toHaveBeenCalled()
+  unmount(renderer)
+})
+
+test('drops images at the draft gap nearest the pointer', async () => {
+  const onInsertImages = vi.fn(async () => ({ createdIds: ['shape:new-image'], failures: [] }))
+  const renderer = render(createElement(DraftPane, {
+    editor: visualEditor,
+    onSelectCard: vi.fn(),
+    onInsertImages,
+  }))
+  const gaps = [...renderer.container.querySelectorAll<HTMLElement>('[data-draft-gap]')]
+  expect(gaps).toHaveLength(5)
+  gaps.forEach((gap, index) => {
+    gap.getBoundingClientRect = () => ({
+      x: 0, y: index * 100, width: 400, height: 0,
+      top: index * 100, right: 400, bottom: index * 100, left: 0,
+      toJSON: () => ({}),
+    })
+  })
+  const scroll = renderer.container.querySelector<HTMLElement>('.elves-draft__scroll')!
+  const image = new File(['pixels'], 'dropped.png', { type: 'image/png' })
+
+  act(() => { dragFiles(scroll, 'dragover', [image], 205) })
+  expect(gaps[2].dataset.active).toBe('true')
+
+  await act(async () => {
+    dragFiles(scroll, 'drop', [image], 205)
+    await Promise.resolve()
+  })
+  expect(onInsertImages).toHaveBeenCalledWith([image], {
+    kind: 'draft',
+    sectionId: null,
+    beforeId: 'shape:figure',
+    afterId: 'shape:image',
+    fallbackPoint: { x: 500, y: 300 },
+  })
+  expect(gaps[2].dataset.active).toBe('false')
+  unmount(renderer)
+})
+
+test('prevents unsupported file drops and reports the ingestion failure', async () => {
+  const onInsertImages = vi.fn(async () => ({
+    createdIds: [],
+    failures: [{ fileName: 'notes.txt', message: 'Unsupported image format' }],
+  }))
+  const renderer = render(createElement(DraftPane, {
+    editor,
+    onSelectCard: vi.fn(),
+    onInsertImages,
+  }))
+  const scroll = renderer.container.querySelector<HTMLElement>('.elves-draft__scroll')!
+  const file = new File(['notes'], 'notes.txt', { type: 'text/plain' })
+
+  let event!: Event
+  await act(async () => {
+    event = dragFiles(scroll, 'drop', [file], 0)
+    await Promise.resolve()
+  })
+
+  expect(event.defaultPrevented).toBe(true)
+  expect(renderer.container.querySelector('[data-testid="draft-image-error"]')?.textContent)
+    .toContain('Unsupported image format')
+  unmount(renderer)
+})
+
+test('ignores an insertion failure from a previous editor lifecycle', async () => {
+  const pending = deferred<{ createdIds: string[]; failures: never[] }>()
+  const onInsertImages = vi.fn(() => pending.promise)
+  const renderer = render(createElement(DraftPane, {
+    editor,
+    onSelectCard: vi.fn(),
+    onInsertImages,
+  }))
+  const image = new File(['pixels'], 'old.png', { type: 'image/png' })
+
+  act(() => { pasteFiles(renderer.container, [image]) })
+  const nextEditor = { ...editor } as Editor
+  act(() => {
+    renderer.root.render(createElement(DraftPane, {
+      editor: nextEditor,
+      onSelectCard: vi.fn(),
+      onInsertImages,
+    }))
+  })
+  await act(async () => {
+    pending.reject(new Error('stale project'))
+    await pending.promise.catch(() => undefined)
+  })
+
+  expect(renderer.container.querySelector('[data-testid="draft-image-error"]')).toBeNull()
   unmount(renderer)
 })
 

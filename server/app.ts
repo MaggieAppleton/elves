@@ -20,6 +20,7 @@ import { enrichSelection, type SelectionStore } from './selection'
 import type { AgentConversationMessage, AgentRunner, AgentEvent, AgentRunReservation } from './agentRun'
 import { reconcileCanvasFile, type Summarizer } from './summarize'
 import { extForMime, saveAsset, resolveAssetPath } from './assets'
+import { MAX_IMAGE_ASSET_BYTES } from '../src/model/imageAssets'
 import { unfurl, type UnfurlDeps, type FetchedImage } from './unfurl'
 import { safeFetch } from './ssrf'
 import { getAllowedOrigins, isOriginAllowed } from './origins'
@@ -1286,7 +1287,7 @@ export function createServer(
 
   app.post(
     '/projects/:id/assets',
-    express.raw({ type: ['image/*'], limit: '25mb' }),
+    express.raw({ type: ['image/*'], limit: MAX_IMAGE_ASSET_BYTES }),
     wrap(async (req, res) => {
       const result = await withProjectMutation(
         req.params.id,
