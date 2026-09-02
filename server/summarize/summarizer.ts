@@ -12,10 +12,22 @@ export interface Summarizer {
   readonly label: string
 }
 
-/** The instruction every backend sends. Kept here so backends stay identical. */
+/**
+ * The instruction every backend sends. Kept here so backends stay identical.
+ *
+ * The vocabulary ban is the house style (src/model/houseStyle.ts) cut down to
+ * what a small local model can actually hold: a gist is twelve words shown on
+ * every zoomed-out card, so the only slop that fits is a single inflated word,
+ * and naming the words outright works better here than a page of principles.
+ * A gist is generated, not written through a tool, so nothing rejects it —
+ * this prompt is the only lever.
+ */
 export const SUMMARY_PROMPT =
   'Summarize this note in one short phrase of at most 12 words. ' +
-  'Reply with only the phrase — no preamble, no quotation marks, no trailing period.\n\nNote:\n'
+  'Reply with only the phrase — no preamble, no quotation marks, no trailing period. ' +
+  'Use plain, concrete words from the note itself. Never use: delve, tapestry, ' +
+  'intricate, interplay, underscore, pivotal, crucial, seamless, nuanced, robust, ' +
+  'multifaceted, leverage, holistic, realm, landscape, or "explores the".\n\nNote:\n'
 
 /** Tidy a raw model reply into a single clean phrase. */
 export function cleanSummary(raw: string): string | null {

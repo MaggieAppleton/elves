@@ -100,6 +100,30 @@ describe('helpers', () => {
     expect(buildPreamble('my-essay', false)).toContain('read_map')
   })
 
+  test('a chat preamble does not restate house style — the MCP handshake carries it', () => {
+    // A chat run connects the elves server, so it already has the short rules
+    // from the initialize handshake, and every write it makes passes the style
+    // gate. A second copy in the same system prompt would buy nothing and be
+    // re-read on every call in the loop.
+    const chat = buildPreamble('my-essay', false, 'chat')
+    expect(chat).not.toContain('HOUSE STYLE')
+    expect(chat).toContain('my-essay')
+  })
+
+  test('an annotation-reply preamble carries the full house style', () => {
+    // That run is denied every elves tool, so it writes nothing through a tool
+    // and the gate never sees its output — the reply is rendered in the thread
+    // exactly as the model wrote it. This prompt is the only lever there is.
+    const reply = buildPreamble('my-essay', false, 'annotation-reply')
+    expect(reply).toContain('HOUSE STYLE')
+    expect(reply).toContain("it's worth noting")
+    expect(reply).toContain('governs your REPLY here')
+  })
+
+  test('buildPreamble defaults to the chat profile', () => {
+    expect(buildPreamble('my-essay', false)).toBe(buildPreamble('my-essay', false, 'chat'))
+  })
+
   test('buildPrompt frames prior turns as context before the current request', () => {
     expect(buildPrompt('Add them below the card', [
       { role: 'user', text: 'Find quotes about this card' },

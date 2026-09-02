@@ -1,4 +1,5 @@
 import { spawn as nodeSpawn } from 'node:child_process'
+import { HOUSE_STYLE } from '../src/model/houseStyle'
 
 /**
  * Bridge from the in-app chat box to a headless agent CLI.
@@ -71,12 +72,34 @@ const PERMISSION_MODE = 'dontAsk'
  * and whether to scope to the current selection or the whole canvas. House
  * rules (one sentence; never write prose) are NOT restated — the elves MCP
  * server injects those to every agent that connects, in the initialize
- * handshake, so a headless run inherits them for free. */
-export function buildPreamble(projectId: string, hasSelection: boolean): string {
+ * handshake, so a headless run inherits them for free. The same goes for house
+ * style: a chat run gets the short form from that handshake, and every write it
+ * makes passes the style gate, which repairs a note locally before rejecting
+ * it. Restating the rules here would put a second copy of them in the same
+ * system prompt and buy nothing.
+ *
+ * An ANNOTATION REPLY is the exception, and gets the full rules. That run is
+ * denied every elves tool outright (REPLY_DISALLOWED_TOOLS), so it writes
+ * nothing through a tool and the gate cannot see it at all — its output is
+ * chat prose, rendered in the thread beside the user's draft exactly as the
+ * model wrote it. Nothing downstream can repair or reject that, which makes
+ * this system prompt the only lever there is, and the reason it is worth
+ * paying for the long form on this one path. */
+export function buildPreamble(
+  projectId: string,
+  hasSelection: boolean,
+  profile: 'chat' | 'annotation-reply' = 'chat',
+): string {
   const scope = hasSelection
     ? 'The user has cards selected on the canvas — call read_selection to see them and scope your work to those cards.'
     : 'The user has nothing selected — call read_map to see the whole canvas and work across it.'
-  return `You are running inside the Elves app, triggered from the canvas by the user. Operate on the project with id "${projectId}". ${scope}`
+  const base = `You are running inside the Elves app, triggered from the canvas by the user. Operate on the project with id "${projectId}". ${scope}`
+  if (profile !== 'annotation-reply') return base
+  return `${base}
+
+${HOUSE_STYLE}
+
+This governs your REPLY here, not just what you write onto the canvas — your words appear in the thread beside the user's draft exactly as you type them.`
 }
 
 /** Each in-app request starts a fresh CLI process, so earlier completed turns
@@ -191,7 +214,7 @@ export const claudeAdapter: CliAdapter = {
         // stream-json in print mode requires --verbose to emit per-turn events.
         '--verbose',
         '--append-system-prompt',
-        buildPreamble(input.projectId, input.hasSelection),
+        buildPreamble(input.projectId, input.hasSelection, input.profile ?? 'chat'),
         // Use ONLY the elves server from this config (--strict-mcp-config), so
         // the child never picks up the user's global/other MCP servers — it gets
         // the canvas and nothing else.

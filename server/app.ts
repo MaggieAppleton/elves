@@ -19,6 +19,7 @@ import {
 import { enrichSelection, type SelectionStore } from './selection'
 import type { AgentConversationMessage, AgentRunner, AgentEvent, AgentRunReservation } from './agentRun'
 import { reconcileCanvasFile, type Summarizer } from './summarize'
+import { repairReply } from './replyStyle'
 import { extForMime, saveAsset, resolveAssetPath } from './assets'
 import { MAX_IMAGE_ASSET_BYTES } from '../src/model/imageAssets'
 import { unfurl, type UnfurlDeps, type FetchedImage } from './unfurl'
@@ -1264,9 +1265,18 @@ export function createServer(
       send({ type: 'error', message: 'the annotation run failed unexpectedly' })
     }).then(async () => {
       if (finalReply.trim()) {
+        // The last surface house style could not reach. This run was denied
+        // every elves tool, so nothing it says passes the MCP gate — the reply
+        // is saved and shown beside the user's draft exactly as written. Tidy
+        // it here instead, fail-open: if the local model is missing, slow, or
+        // unconvincing, `text` comes back as the agent wrote it.
+        const tidied = await repairReply(finalReply)
+        if (tidied.repaired) {
+          console.error(`[elves] house style: repaired an annotation reply [${tidied.broke.join(', ')}]`)
+        }
         const message: AnnotationMessage = {
           id: `${messageId}:claude`, author: 'claude',
-          text: boundedAnnotationText(finalReply, MAX_ANNOTATION_MESSAGE_CHARS),
+          text: boundedAnnotationText(tidied.text, MAX_ANNOTATION_MESSAGE_CHARS),
           createdAt: new Date().toISOString(), inReplyToMessageId: messageId,
         }
         if (!await appendAnnotationMessage(req.params.id, res, target, message, `annotation-reply:${messageId}:claude`)) {
