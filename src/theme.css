@@ -476,6 +476,21 @@ body {
   box-shadow: var(--elves-shadow-md), var(--elves-highlight);
 }
 .elves-toolbar::-webkit-scrollbar { display: none; }
+.elves-image-error {
+  position: absolute;
+  top: 56px;
+  left: 50%;
+  z-index: 400;
+  max-width: min(420px, calc(100% - 32px));
+  transform: translateX(-50%);
+  padding: 7px 10px;
+  border: 1px solid color-mix(in oklch, var(--elves-danger, #b42318) 40%, var(--elves-border));
+  border-radius: 8px;
+  background: var(--elves-surface);
+  color: var(--elves-danger, #b42318);
+  box-shadow: var(--elves-shadow-md);
+  font: 500 12px/1.35 var(--elves-card-font);
+}
 .elves-toolbar button {
   flex: 0 0 auto;
   display: inline-flex;

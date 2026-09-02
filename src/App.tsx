@@ -15,8 +15,7 @@ import { feedbackIsHidden } from './model/feedback'
 import { appendThreadMessage } from './model/comments'
 import type { AnnotationMessage } from './model/types'
 import {
-  makeProseCardProps, makeNoteCardProps, makeImageNoteCardProps, makeReferenceCardProps,
-  makeFigureCardProps,
+  makeProseCardProps, makeNoteCardProps, makeReferenceCardProps, makeFigureCardProps,
 } from './model/cards'
 import { makeSectionProps } from './model/sections'
 import { cascadeOffset } from './model/layout'
@@ -29,7 +28,8 @@ import {
   renameProject,
   type Project,
 } from './client/persistence'
-import { uploadAsset, useAssetProject } from './client/assets'
+import { useAssetProject } from './client/assets'
+import { useImageInsertion } from './client/useImageInsertion'
 import { isSummaryOp } from './model/changeset'
 import { connectRealtime, RealtimeStatus } from './client/realtime'
 import { trackSelection } from './client/selection'
@@ -64,6 +64,7 @@ import {
   createAppCanvasMount,
   flushCanvasMountForSwitch,
   requestOwnedRemoteSync,
+  AppCanvasMountStaleError,
   type AppCanvasMount,
 } from './client/appCanvasMount'
 import { createPointerDragManager, type PointerDragManager } from './client/dividerDrag'
@@ -189,6 +190,12 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const editorRef = useRef<Editor | null>(null)
   const canvasMountRef = useRef<AppCanvasMount | null>(null)
+  const {
+    canvasError: imageError,
+    insertCanvasImages: addCanvasImageFiles,
+    insertDraftImages: addDraftImageFiles,
+    registerCanvasImageHandler,
+  } = useImageInsertion(canvasMountRef, currentProjectId)
   const transitionRef = useRef<Promise<void> | null>(null)
   const reviewMutationControllersRef = useRef(new Set<AbortController>())
   const canvasMutationsLocked = !editor || transitioning ||
@@ -661,36 +668,6 @@ export default function App() {
     focusCard(cardId)
   }
 
-  const addImageCard = (
-    mount: AppCanvasMount,
-    file: File,
-    point?: { x: number; y: number },
-  ) => mount.runCommand(async ({ projectId, assertCurrent }) => {
-    let aspect = 0.7
-    try {
-      const bmp = await createImageBitmap(file)
-      if (bmp.width > 0) aspect = bmp.height / bmp.width
-      bmp.close?.()
-    } catch {
-      /* keep default aspect */
-    }
-    assertCurrent()
-    const w = 280
-    const h = Math.max(80, Math.round(w * aspect))
-    const assetId = await uploadAsset(projectId, file)
-    assertCurrent()
-    const at = point ?? mount.editor.getViewportPageBounds().center
-    const id = createShapeId()
-    mount.editor.createShape<CardShape>({
-      id,
-      type: 'card',
-      x: at.x - w / 2,
-      y: at.y - h / 2,
-      props: { ...makeImageNoteCardProps(assetId), w, h },
-    })
-    mount.editor.select(id)
-  })
-
   // Turn a url into a reference card: unfurl it (title/site/favicon/hero, cached
   // as local assets) and drop the type-adaptive card at the given point.
   const addReferenceFromUrl = (
@@ -713,6 +690,17 @@ export default function App() {
     mount.editor.select(id)
   })
 
+  const registerExternalContentHandlers = (mount: AppCanvasMount) => {
+    const ed = mount.editor
+    registerCanvasImageHandler(mount)
+    ed.registerExternalContentHandler('url', async ({ url, point }) => {
+      if (!mount.initialized) return
+      await addReferenceFromUrl(mount, url, point).catch((err) =>
+        console.error('Elves: dropped link command failed', err),
+      )
+    })
+  }
+
   const activateCanvasMount = (mount: AppCanvasMount) => {
     setCanvasWriteStatus('loading')
     void mount.initialize()
@@ -723,19 +711,6 @@ export default function App() {
         mount.restartSelection(() =>
           trackSelection(ed, { getProjectId: () => mount.project.id }),
         )
-        ed.registerExternalContentHandler('files', async ({ files, point }) => {
-          for (const file of files) {
-            if (!file.type.startsWith('image/')) continue
-            await addImageCard(mount, file, point).catch((err) =>
-              console.error('Elves: dropped image command failed', err),
-            )
-          }
-        })
-        ed.registerExternalContentHandler('url', async ({ url, point }) => {
-          await addReferenceFromUrl(mount, url, point).catch((err) =>
-            console.error('Elves: dropped link command failed', err),
-          )
-        })
         editorRef.current = ed
         setEditor(ed)
       })
@@ -795,6 +770,7 @@ export default function App() {
       listen: (listener) => ed.store.listen(listener, { source: 'user', scope: 'document' }),
     })
     canvasMountRef.current = mount
+    registerExternalContentHandlers(mount)
     activateCanvasMount(mount)
 
     return () => {
@@ -1122,6 +1098,11 @@ export default function App() {
             getShapeVisibility={getShapeVisibility}
             onMount={handleMount}
           />
+          {imageError && (
+            <div className="elves-image-error" role="alert" data-testid="image-error">
+              {imageError}
+            </div>
+          )}
           {/* Creation toolbar lives inside the canvas pane and scrolls internally
               when that pane is narrow, so it never spills in front of the prose. */}
           {visualView !== 'draft' && (
@@ -1168,9 +1149,11 @@ export default function App() {
                   const file = e.target.files?.[0]
                   const mount = canvasMountRef.current
                   if (file && mount) {
-                    void addImageCard(mount, file).catch((err) =>
-                      console.error('Elves: failed to add image', err),
-                    )
+                    void addCanvasImageFiles(mount, [file]).catch((err) => {
+                      if (!(err instanceof AppCanvasMountStaleError)) {
+                        console.error('Elves: failed to add image', err)
+                      }
+                    })
                   }
                   e.target.value = ''
                 }}
@@ -1194,7 +1177,12 @@ export default function App() {
           style={{ width: draftWidth }}
           aria-hidden={visualView === 'canvas'}
         >
-          <DraftPane editor={editor} readOnly={canvasMutationsLocked} onSelectCard={onSelectCard} />
+          <DraftPane
+            editor={editor}
+            readOnly={canvasMutationsLocked}
+            onSelectCard={onSelectCard}
+            onInsertImages={addDraftImageFiles}
+          />
         </div>
         <DraftDrawerControls
           view={view}
