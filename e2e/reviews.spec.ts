@@ -88,19 +88,6 @@ test('Escape closes the review menu and returns focus to its trigger', async ({ 
   await expect(reviewMenu).toHaveCount(0)
   await expect(reviewButton).toBeFocused()
 
-  await page.route('**/projects/*/reviews', async (route) => {
-    if (route.request().method() === 'POST') {
-      await route.fulfill({ status: 503, body: 'review service unavailable' })
-      return
-    }
-    await route.continue()
-  })
-  await reviewButton.click()
-  await menuControl.click()
-  await expect(reviewButton).toHaveAttribute('aria-disabled', 'true')
-  await page.keyboard.press('Escape')
-  await expect(reviewMenu).toHaveCount(0)
-  await expect(reviewButton).toBeFocused()
 })
 
 // Summoning now spawns a headless agent SERVER-SIDE (server/app.ts's

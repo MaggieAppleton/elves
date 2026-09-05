@@ -29,3 +29,14 @@ test('review panel has no resolved annotation stack', () => {
 
   expect(tree.root.findAllByProps({ 'data-feedback-stack': true })).toHaveLength(0)
 })
+
+test('disabled review trigger uses the native disabled control semantics', () => {
+  const tree = create(createElement(ReviewPanel, {
+    projectId: 'essay', editor: null, reviews: [], disabled: true,
+    onSummon: vi.fn(), onDismiss: vi.fn(), onRetry: vi.fn(),
+  }))
+
+  const trigger = tree.root.findByProps({ 'data-testid': 'review-button' })
+  expect(trigger.props.disabled).toBe(true)
+  expect(trigger.props['aria-disabled']).toBeUndefined()
+})

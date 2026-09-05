@@ -105,7 +105,7 @@ export function ReviewPanel({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setOpen(false)
-        triggerRef.current?.focus()
+        if (!disabled) triggerRef.current?.focus()
       }
     }
     document.addEventListener('mousedown', onDown)
@@ -114,7 +114,7 @@ export function ReviewPanel({
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
     }
-  }, [open])
+  }, [disabled, open])
 
   const visible = reviews.filter((r) => r.status !== 'dismissed')
   // `failed` stays in the active group (not recentDone) so it's visible with
@@ -165,10 +165,8 @@ export function ReviewPanel({
         aria-label="Review"
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-disabled={disabled || undefined}
-        onClick={() => {
-          if (!disabled) setOpen((v) => !v)
-        }}
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
       >
         <EyeglassesIcon />
         <span>Review</span>
