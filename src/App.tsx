@@ -1238,12 +1238,14 @@ export default function App() {
           style={{ width: draftWidth }}
           aria-hidden={visualView === 'canvas'}
         >
-          <DraftPane
-            editor={editor}
-            readOnly={canvasMutationsLocked}
-            onSelectCard={onSelectCard}
-            onInsertImages={addDraftImageFiles}
-          />
+          {visualView !== 'canvas' && (
+            <DraftPane
+              editor={editor}
+              readOnly={canvasMutationsLocked}
+              onSelectCard={onSelectCard}
+              onInsertImages={addDraftImageFiles}
+            />
+          )}
         </div>
         <DraftDrawerControls
           view={view}
