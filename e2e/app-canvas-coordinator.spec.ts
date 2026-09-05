@@ -332,6 +332,37 @@ test('a failed outgoing flush keeps the current project mounted', async ({ page,
   await expect(page.locator('.elves-card--prose')).toHaveCount(1)
 })
 
+test('an initialized editor exposes Retry save and persists after a transient failure', async ({ page, request }) => {
+  await page.addInitScript(() => { Math.random = () => 1 })
+  let saveAttempts = 0
+  await page.goto('/')
+  await expect(page.getByTestId('new-prose')).toBeEnabled()
+  await page.route(
+    (url) => url.pathname === `/projects/${projectId}/canvas`,
+    async (route) => {
+      if (route.request().method() !== 'POST') return route.continue()
+      saveAttempts += 1
+      if (saveAttempts === 1) return route.fulfill({ status: 503, body: 'temporary outage' })
+      await route.continue()
+    },
+  )
+  await page.getByTestId('new-prose').click()
+  const text = `Retry save persists ${Date.now()}`
+  await page.locator('.elves-card__editor').fill(text)
+  await page.keyboard.press('Escape')
+
+  const retry = page.getByRole('button', { name: 'Retry save' })
+  await expect(retry).toBeVisible()
+  await expect(page.getByRole('status', { name: /local changes remain unsaved/i })).toBeVisible()
+  await retry.click()
+  await expect.poll(() => saveAttempts).toBe(2)
+  await expect(retry).toHaveCount(0)
+  await expect.poll(async () => {
+    const snapshot = await (await request.get(`${BASE}/projects/${projectId}/canvas`)).json()
+    return JSON.stringify(snapshot).includes(text)
+  }).toBe(true)
+})
+
 test('a same-tick edit is admitted before a successful project switch', async ({ page, request }) => {
   const projects = await (await request.get(`${BASE}/projects`)).json() as Array<{
     id: string

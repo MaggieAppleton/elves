@@ -13,6 +13,7 @@ import {
   state,
   tick,
 } from './canvasWriteCoordinatorInitializationHarness'
+import { createRecoveryEntry, MemoryCanvasRecoveryStore } from '../../src/client/canvasRecovery'
 
 test('owns read-only state synchronously and unlocks after loading the full initial snapshot', async () => {
   const held = deferred<CanvasVersionedState>()
@@ -110,6 +111,46 @@ test('uses each pending token stamp in server order and saves before unlocking',
   h.coordinator.markDirty()
   await h.coordinator.flushOrThrow()
   expect(h.save.mock.calls[1][2]).toBe(6)
+})
+
+test('materializes pending server work before merging a local recovery journal', async () => {
+  const store = new MemoryCanvasRecoveryStore()
+  const recovery = {
+    store,
+    serverOrigin: 'http://localhost:5199',
+    sessionId: 'tab-a',
+    now: () => '2026-09-05T12:00:00.000Z',
+  }
+  await store.put(createRecoveryEntry({
+    serverOrigin: recovery.serverOrigin,
+    storageId: 'storage-one',
+    projectId: 'essay',
+    sessionId: recovery.sessionId,
+    generation: 1,
+    createdAt: recovery.now(),
+    updatedAt: recovery.now(),
+    baseRevision: 7,
+    baseEpoch: 'epoch-a',
+    baseDocument: document('remote'),
+    localDocument: document('local recovery'),
+    localSnapshot: { document: document('local recovery') },
+  }))
+  const h = initHarness({
+    recovery,
+    storageId: 'storage-one',
+    load: async () => state(document('remote'), 7, [pendingNote]),
+  })
+
+  await h.coordinator.initialize()
+  await h.coordinator.flushOrThrow()
+
+  expect(h.document.page).toMatchObject({ name: 'local recovery' })
+  expect(Object.values(h.document)).toContainEqual(expect.objectContaining({
+    type: 'card',
+    meta: expect.objectContaining({ [CHANGE_SET_STAMP_META_KEY]: changeSetTokenStamp(pendingNote.token) }),
+  }))
+  expect(h.save).toHaveBeenCalledTimes(2)
+  expect(store.entries.size).toBe(0)
 })
 
 test('a materialization conflict reloads and resets before reapplying pending work', async () => {

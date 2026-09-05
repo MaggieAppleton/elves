@@ -1,10 +1,12 @@
 import { expect, test, vi } from 'vitest'
 import {
   annotationClosingTargets,
+  annotationReplyDraft,
   annotationOpenTargets,
   annotationHoverOrigin,
   annotationHoverTarget,
   clearAnnotationPresentations,
+  clearAnnotationReplyDraft,
   closeAnnotationThread,
   dismissAnnotationPopoverSoon,
   openAnnotationThread,
@@ -13,6 +15,7 @@ import {
   requestAnnotationClose,
   requestAnnotationOpen,
   requestAnnotationResolve,
+  setAnnotationReplyDraft,
   setAnnotationHover,
   suppressNextAnnotationFocus,
   subscribeAnnotationResolve,
@@ -40,6 +43,23 @@ test('closing one open target leaves the other target open', () => {
   requestAnnotationClose(a)
 
   expect(annotationOpenTargets()).toEqual([b])
+})
+
+test('reply drafts are session-only and isolated by exact annotation target', () => {
+  clearAnnotationPresentations()
+  setAnnotationReplyDraft(a, 'Card draft')
+  setAnnotationReplyDraft(b, 'Feedback draft')
+
+  expect(annotationReplyDraft(a)).toBe('Card draft')
+  expect(annotationReplyDraft(b)).toBe('Feedback draft')
+  closeAnnotationThread(a)
+  expect(annotationReplyDraft(a)).toBe('Card draft')
+  clearAnnotationReplyDraft(a)
+  expect(annotationReplyDraft(a)).toBe('')
+  expect(annotationReplyDraft(b)).toBe('Feedback draft')
+
+  clearAnnotationPresentations()
+  expect(annotationReplyDraft(b)).toBe('')
 })
 
 test('resolve requests notify listeners for only their target', () => {
