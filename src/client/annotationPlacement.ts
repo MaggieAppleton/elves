@@ -19,6 +19,11 @@ export interface AnnotationArrangementItem {
   preservePlacement?: AnnotationPlacement
 }
 
+export interface AnnotationArrangementOptions {
+  /** Visible pins that must remain selectable while threads are open. */
+  pinObstacles?: AnnotationRect[]
+}
+
 const GAP = 12
 const EDGE = 8
 const VISIBLE_EDGE = 32
@@ -156,9 +161,10 @@ export function placeAnnotationThread(
 export function arrangeAnnotationThreads(
   items: AnnotationArrangementItem[],
   viewport: AnnotationViewport,
+  options: AnnotationArrangementOptions = {},
 ): Record<string, AnnotationPlacement> {
   const placements: Record<string, AnnotationPlacement> = {}
-  const obstacles: AnnotationRect[] = []
+  const obstacles: AnnotationRect[] = [...(options.pinObstacles ?? [])]
   for (const item of items) {
     const preserved = item.preservePlacement && { ...item.preservePlacement, ...item.thread }
     if (preserved &&

@@ -101,6 +101,19 @@ function sameRect(a: AnnotationRect, b: AnnotationRect): boolean {
   return a.left === b.left && a.top === b.top && a.width === b.width && a.height === b.height
 }
 
+function visibleAnnotationPinObstacles(canvas: HTMLElement): AnnotationRect[] {
+  const canvasBounds = canvas.getBoundingClientRect()
+  return [...canvas.querySelectorAll<HTMLElement>('[data-annotation-target]')].flatMap((pin) => {
+    const bounds = pin.getBoundingClientRect()
+    return bounds.width > 0 && bounds.height > 0 ? [{
+      left: bounds.left - canvasBounds.left,
+      top: bounds.top - canvasBounds.top,
+      width: bounds.width,
+      height: bounds.height,
+    }] : []
+  })
+}
+
 function sameGeometry(a: ForegroundGeometry | undefined, b: ForegroundGeometry): boolean {
   return !!a && sameRect(a.anchor, b.anchor) && sameRect(a.source, b.source) &&
     a.thread.width === b.thread.width && a.thread.height === b.thread.height &&
@@ -345,7 +358,9 @@ export function AnnotationPopoverLayer() {
     const viewport = priority.map((entry) => geometries[annotationTargetKey(entry.target)]?.viewport)
       .find((value): value is AnnotationViewport => !!value)
     if (!viewport) return {}
-    const arranged = arrangeAnnotationThreads(items, viewport)
+    const arranged = arrangeAnnotationThreads(items, viewport, {
+      pinObstacles: visibleAnnotationPinObstacles(editor.getContainer()),
+    })
     for (const item of items) {
       const previous = rememberedPlacements.current.get(item.key)
       const anchorsMatch = previous && sameRect(previous.anchor, item.anchor) && sameRect(previous.source, item.source)

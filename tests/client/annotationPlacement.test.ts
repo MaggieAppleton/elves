@@ -82,6 +82,26 @@ test('arranges two colliding panels with a visible selectable edge', () => {
   expect(Math.abs(placements.active.top - placements.prior.top)).toBeGreaterThanOrEqual(32)
 })
 
+test('keeps visible inactive pins clear of an open thread', () => {
+  const geometry = {
+    key: 'active',
+    anchor: { left: 500, top: 220, width: 28, height: 28 },
+    source: { left: 300, top: 120, width: 120, height: 260 },
+    thread,
+  }
+  const unprotected = arrangeAnnotationThreads([geometry], viewport).active
+  const pin = { left: unprotected.left + 12, top: unprotected.top + 12, width: 28, height: 28 }
+  const protectedPlacement = arrangeAnnotationThreads([geometry], viewport, { pinObstacles: [pin] }).active
+
+  expect(protectedPlacement).not.toEqual(unprotected)
+  expect(
+    protectedPlacement.left + thread.width <= pin.left ||
+    protectedPlacement.left >= pin.left + pin.width ||
+    protectedPlacement.top + thread.height <= pin.top ||
+    protectedPlacement.top >= pin.top + pin.height,
+  ).toBe(true)
+})
+
 test('keeps a safe preview placement when the same target expands in place', () => {
   const geometry = {
     key: 'preview',

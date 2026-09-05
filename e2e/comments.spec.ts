@@ -445,6 +445,59 @@ test('pointer close is briefly inert while keyboard and reduced-motion close are
   await expect(popover).toHaveCount(0)
 })
 
+test('attached and floating threads share compact neutral action chrome', async ({ page, request }) => {
+  const cardId = await addCardAndComment(page, request, {
+    type: 'needs-evidence', text: 'Keep the source visible.',
+  })
+  await createFeedbackTool(BASE, projectId, {
+    text: 'Keep this floating note quiet.', x: 780, y: 260,
+    type: 'weak-argument', reviewer: 'architect',
+  })
+  const { feedback } = await readMapTool(BASE, projectId)
+  const feedbackId = feedback.find((item: any) => item.text === 'Keep this floating note quiet.')!.id
+
+  await page.locator(`[data-shape-id="${cardId}"] [data-testid="annotation-pin"]`).click()
+  await page.locator(`[data-annotation-target="feedback:${feedbackId}"]`).click()
+  const threads = page.getByTestId('annotation-thread')
+  await expect(threads).toHaveCount(2)
+
+  const faces: Array<{ background: string; border: string; shadow: string }> = []
+  for (let index = 0; index < 2; index += 1) {
+    const thread = threads.nth(index)
+    const resolve = thread.getByRole('button', { name: /^Resolve .* comment$/ })
+    const close = thread.getByRole('button', { name: 'Close annotation thread' })
+    const resolveTooltip = thread.getByRole('tooltip', { name: /^Resolve .* comment$/, includeHidden: true })
+    const closeTooltip = thread.getByRole('tooltip', { name: 'Close annotation thread', includeHidden: true })
+    await expect(resolve).toHaveAttribute('aria-describedby', await resolveTooltip.getAttribute('id'))
+    await expect(close).toHaveAttribute('aria-describedby', await closeTooltip.getAttribute('id'))
+    await expect(resolveTooltip).toBeHidden()
+    await resolve.focus()
+    await expect(resolveTooltip).toBeVisible()
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+    await close.hover()
+    await expect(closeTooltip).toBeVisible()
+    await expect(resolve).toHaveText('')
+    for (const control of [resolve, close]) {
+      await expect(control).toHaveCSS('width', '28px')
+      await expect(control).toHaveCSS('height', '28px')
+      await expect(control.locator('svg')).toHaveAttribute('width', '16')
+      await expect(control.locator('svg')).toHaveAttribute('height', '16')
+    }
+    faces.push(await thread.evaluate((element) => {
+      const style = getComputedStyle(element)
+      return {
+        background: style.backgroundColor,
+        border: style.borderColor,
+        shadow: style.boxShadow,
+      }
+    }))
+  }
+
+  expect(faces[0]).toEqual(faces[1])
+  expect(faces[0].background).not.toBe('rgba(0, 0, 0, 0)')
+  expect(faces[0].shadow).not.toBe('none')
+})
+
 test('foreground threads promote independently, persist resolution, and prune only a deleted anchor', async ({ page, request }) => {
   const proseCardId = await addCardAndComment(page, request, { type: 'needs-evidence', text: 'Resolve this card comment.' })
   const proseCommentId = (await cardRecord(request, proseCardId)).props.comments[0].id
