@@ -63,7 +63,7 @@ test('open mode exposes reply, retry, resolve, and close actions', () => {
     .toBe('Close annotation thread')
   const resolve = tree.root.findByProps({ className: 'elves-annotation-thread__resolve' })
   expect(resolve.props['aria-label']).toBe('Resolve Comment comment')
-  expect(resolve.props.title).toBe('Resolve Comment comment')
+  expect(resolve.props.title).toBeUndefined()
   expect(resolve.children.filter((child) => typeof child === 'string' && child.trim() !== '')).toHaveLength(0)
   const retry = tree.root.findAllByType('button').find((button) => button.children.includes('Retry'))
   expect(retry).toBeTruthy()
@@ -72,6 +72,53 @@ test('open mode exposes reply, retry, resolve, and close actions', () => {
   expect(onResolve).toHaveBeenCalledOnce()
   tree.root.findByProps({ className: 'elves-annotation-thread__close' }).props.onClick()
   expect(onClose).toHaveBeenCalledOnce()
+})
+
+test('compact action tooltips are associated and appear on focus or hover, including disabled Resolve', () => {
+  const tree = create(createElement(AnnotationThread, {
+    comment: { id: 'c1', type: 'needs-evidence', text: 'Needs evidence', resolved: false, author: 'claude' },
+    mode: 'open', disabled: true, onResolve: vi.fn(), onClose: vi.fn(),
+  }))
+
+  const resolve = tree.root.findByProps({ className: 'elves-annotation-thread__resolve' })
+  const close = tree.root.findByProps({ className: 'elves-annotation-thread__close' })
+  const anchors = tree.root.findAllByProps({ className: 'elves-annotation-thread__action-tooltip' })
+  const resolveAnchor = anchors.find((anchor) => anchor.findAllByProps({ className: 'elves-annotation-thread__resolve' }).length === 1)!
+  const closeAnchor = anchors.find((anchor) => anchor.findAllByProps({ className: 'elves-annotation-thread__close' }).length === 1)!
+  const resolveTooltip = resolveAnchor.findByProps({ role: 'tooltip' })
+  const closeTooltip = closeAnchor.findByProps({ role: 'tooltip' })
+
+  expect(resolve.props.disabled).toBe(true)
+  expect(resolve.props['aria-describedby']).toBe(resolveTooltip.props.id)
+  expect(close.props['aria-describedby']).toBe(closeTooltip.props.id)
+  expect(resolveTooltip.children.join('')).toBe('Resolve Needs evidence comment')
+  expect(closeTooltip.children.join('')).toBe('Close annotation thread')
+  expect(resolveTooltip.props['data-state']).toBe('closed')
+
+  act(() => resolveAnchor.props.onPointerEnter())
+  expect(resolveAnchor.findByProps({ role: 'tooltip' }).props['data-state']).toBe('open')
+  act(() => resolveAnchor.props.onPointerLeave())
+  act(() => closeAnchor.props.onFocusCapture())
+  expect(closeAnchor.findByProps({ role: 'tooltip' }).props['data-state']).toBe('open')
+
+  const replyTree = create(createElement(AnnotationThread, {
+    comment: { id: 'c2', type: null, text: 'Reply context', resolved: false, author: 'claude' },
+    mode: 'open', onReply: vi.fn(),
+  }))
+  const reply = replyTree.root.findByProps({ className: 'elves-annotation-thread__reply-trigger' })
+  const replyAnchor = replyTree.root.findAllByProps({ className: 'elves-annotation-thread__action-tooltip' })[0]
+  const replyTooltip = replyAnchor.findByProps({ role: 'tooltip' })
+  expect(reply.props['aria-describedby']).toBe(replyTooltip.props.id)
+  act(() => replyAnchor.props.onFocusCapture())
+  expect(replyAnchor.findByProps({ role: 'tooltip' }).props['data-state']).toBe('open')
+
+  act(() => reply.props.onClick())
+  const send = replyTree.root.findByProps({ className: 'elves-annotation-thread__send' })
+  const sendAnchor = replyTree.root.findAllByProps({ className: 'elves-annotation-thread__action-tooltip' })[0]
+  const sendTooltip = sendAnchor.findByProps({ role: 'tooltip' })
+  expect(send.props['aria-describedby']).toBe(sendTooltip.props.id)
+  act(() => sendAnchor.props.onPointerEnter())
+  expect(sendAnchor.findByProps({ role: 'tooltip' }).props['data-state']).toBe('open')
 })
 
 test('thread header shows its typed icon and actions while messages retain author provenance', () => {
@@ -98,20 +145,20 @@ test('thread header shows its typed icon and actions while messages retain autho
     .toHaveLength(0)
 
   const actions = header.findByProps({ className: 'elves-annotation-thread__actions' })
-  const directButtons = actions.children.filter((child) => typeof child !== 'string')
-  expect(directButtons.map((button) => button.props.className)).toEqual([
+  const actionButtons = actions.findAllByType('button')
+  expect(actionButtons.map((button) => button.props.className)).toEqual([
     'elves-annotation-thread__resolve', 'elves-annotation-thread__close',
   ])
-  const resolve = directButtons[0]
-  const close = directButtons[1]
+  const resolve = actionButtons[0]
+  const close = actionButtons[1]
   expect(resolve.findAllByType('svg')).toHaveLength(1)
   expect(resolve.findByType('svg').props).toMatchObject({ width: 16, height: 16 })
   expect(resolve.children.filter((child) => typeof child === 'string').join('')).toBe('')
-  expect(resolve.props.title).toBe('Resolve Needs evidence comment')
+  expect(resolve.props.title).toBeUndefined()
   expect(close.findAllByType('svg')).toHaveLength(1)
   expect(close.findByType('svg').props).toMatchObject({ width: 16, height: 16 })
   expect(close.children.filter((child) => typeof child === 'string').join('')).toBe('')
-  expect(close.props.title).toBe('Close annotation thread')
+  expect(close.props.title).toBeUndefined()
 
   expect(tree.root.findAllByProps({ className: 'elves-annotation-thread__message-author' }).map((node) => node.children.join('')))
     .toEqual(['Claude', 'You'])

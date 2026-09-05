@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent, type ReactNode } from 'react'
 import {
   ArrowBendUpLeft, ArrowsLeftRight, Buildings, ChartLineDown, ChatCircleDots, Check, ImageSquare,
   Link, PaperPlaneRight, Question, Scissors, Warning, X,
@@ -93,12 +93,16 @@ export function AnnotationThread({
           {attribution && <span>{attribution}</span>}
         </div>
         {!preview && (onResolve || onClose) && <div className="elves-annotation-thread__actions">
-          {onResolve && <button type="button" className="elves-annotation-thread__resolve" aria-label={`Resolve ${token.label} comment`} title={`Resolve ${token.label} comment`} disabled={disabled} onClick={onResolve}>
-            <Check aria-hidden="true" size={16} weight="bold" />
-          </button>}
-          {onClose && <button type="button" className="elves-annotation-thread__close" aria-label="Close annotation thread" title="Close annotation thread" onClick={onClose}>
-            <X aria-hidden="true" size={16} weight="bold" />
-          </button>}
+          {onResolve && <ActionTooltip label={`Resolve ${token.label} comment`}>
+            {(tooltipId) => <button type="button" className="elves-annotation-thread__resolve" aria-label={`Resolve ${token.label} comment`} aria-describedby={tooltipId} disabled={disabled} onClick={onResolve}>
+              <Check aria-hidden="true" size={16} weight="bold" />
+            </button>}
+          </ActionTooltip>}
+          {onClose && <ActionTooltip label="Close annotation thread">
+            {(tooltipId) => <button type="button" className="elves-annotation-thread__close" aria-label="Close annotation thread" aria-describedby={tooltipId} onClick={onClose}>
+              <X aria-hidden="true" size={16} weight="bold" />
+            </button>}
+          </ActionTooltip>}
         </div>}
       </header>
       <div className="elves-annotation-thread__messages">
@@ -110,16 +114,18 @@ export function AnnotationThread({
         ))}
         {streamingText && <p className="elves-annotation-thread__message" data-author="claude"><span className="elves-annotation-thread__message-author">{agentName('claude')}</span><span className="elves-annotation-thread__text">{streamingText}</span></p>}
       </div>
-      {!preview && onReply && !composerOpen && <button
-        type="button"
-        className="elves-annotation-thread__reply-trigger"
-        aria-label="Reply to annotation"
-        title="Reply to annotation"
-        disabled={disabled || running}
-        onClick={() => setComposerOpen(true)}
-      >
-        <ArrowBendUpLeft aria-hidden="true" size={16} weight="bold" />
-      </button>}
+      {!preview && onReply && !composerOpen && <ActionTooltip label="Reply to annotation">
+        {(tooltipId) => <button
+          type="button"
+          className="elves-annotation-thread__reply-trigger"
+          aria-label="Reply to annotation"
+          aria-describedby={tooltipId}
+          disabled={disabled || running}
+          onClick={() => setComposerOpen(true)}
+        >
+          <ArrowBendUpLeft aria-hidden="true" size={16} weight="bold" />
+        </button>}
+      </ActionTooltip>}
       {!preview && onReply && composerOpen && <form className="elves-annotation-thread__reply" onSubmit={send}>
         <textarea
           aria-label="Reply to annotation"
@@ -130,15 +136,17 @@ export function AnnotationThread({
           onChange={(event) => setReply(event.target.value)}
           style={{}}
         />
-        <button
-          type="submit"
-          className="elves-annotation-thread__send"
-          aria-label={running ? 'Replying to annotation' : 'Send reply'}
-          title={running ? 'Replying to annotation' : 'Send reply'}
-          disabled={disabled || running || !reply.trim()}
-        >
-          <PaperPlaneRight aria-hidden="true" size={16} weight="bold" />
-        </button>
+        <ActionTooltip label={running ? 'Replying to annotation' : 'Send reply'}>
+          {(tooltipId) => <button
+            type="submit"
+            className="elves-annotation-thread__send"
+            aria-label={running ? 'Replying to annotation' : 'Send reply'}
+            aria-describedby={tooltipId}
+            disabled={disabled || running || !reply.trim()}
+          >
+            <PaperPlaneRight aria-hidden="true" size={16} weight="bold" />
+          </button>}
+        </ActionTooltip>
       </form>}
       {!preview && error && <div className="elves-annotation-thread__error" role="alert">
         <div className="elves-annotation-thread__error-message">
@@ -157,6 +165,23 @@ export function AnnotationThread({
         </button>}
       </div>}
     </article>
+  )
+}
+
+function ActionTooltip({ label, children }: { label: string; children: (tooltipId: string) => ReactNode }) {
+  const tooltipId = useId()
+  const [visible, setVisible] = useState(false)
+  return (
+    <span
+      className="elves-annotation-thread__action-tooltip"
+      onPointerEnter={() => setVisible(true)}
+      onPointerLeave={() => setVisible(false)}
+      onFocusCapture={() => setVisible(true)}
+      onBlurCapture={() => setVisible(false)}
+    >
+      {children(tooltipId)}
+      <span id={tooltipId} role="tooltip" className="elves-annotation-thread__tooltip" data-state={visible ? 'open' : 'closed'}>{label}</span>
+    </span>
   )
 }
 
