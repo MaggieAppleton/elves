@@ -595,6 +595,14 @@ body {
   font: 500 12px/1 var(--elves-card-font);
   cursor: pointer;
 }
+.elves-project-list-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--elves-danger, #b42318);
+  font: 500 12px/1 var(--elves-card-font);
+  white-space: nowrap;
+}
 
 /* Compositor-only pulse (opacity + scale) so the frame loop never triggers
    layout or paint. */

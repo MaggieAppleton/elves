@@ -95,6 +95,7 @@ export function ReviewPanel({
   const [open, setOpen] = useState(false)
   const [focus, setFocus] = useState('')
   const ref = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     if (!open) return
@@ -102,7 +103,10 @@ export function ReviewPanel({
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
+      if (e.key === 'Escape') {
+        setOpen(false)
+        if (!disabled) triggerRef.current?.focus()
+      }
     }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
@@ -110,7 +114,7 @@ export function ReviewPanel({
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
     }
-  }, [open])
+  }, [disabled, open])
 
   const visible = reviews.filter((r) => r.status !== 'dismissed')
   // `failed` stays in the active group (not recentDone) so it's visible with
@@ -155,6 +159,7 @@ export function ReviewPanel({
   return (
     <div className="elves-review" ref={ref}>
       <button
+        ref={triggerRef}
         className="elves-review__button"
         data-testid="review-button"
         aria-label="Review"
