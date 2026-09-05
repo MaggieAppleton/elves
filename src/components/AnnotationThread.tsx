@@ -10,7 +10,7 @@ import { commentGist } from '../model/summary'
 import type { Comment } from '../model/types'
 import {
   annotationTargetKey, dismissAnnotationPopoverSoon, requestAnnotationOpen,
-  setAnnotationHover, type AnnotationTarget,
+  setAnnotationHover, type AnnotationInteractionOrigin, type AnnotationTarget,
 } from '../client/annotationSelection'
 import './annotationThread.css'
 
@@ -32,7 +32,7 @@ export interface AnnotationThreadProps {
   onDiscardDraft?: () => void
   onReply?: (text: string) => void
   onRetry?: () => void
-  onClose?: (origin?: 'pointer' | 'keyboard') => void
+  onClose?: (origin?: AnnotationInteractionOrigin) => void
   /** Pixel cap measured from the live tldraw stage by the foreground owner. */
   maxHeight?: number
 }
@@ -87,6 +87,8 @@ export function AnnotationThread({
     if (draft === undefined) setLocalReply(text)
     onDraftChange?.(text)
   }
+  const initialMessage = messages[0]
+  const replyCount = Math.max(0, messages.length - 1)
   useEffect(() => {
     if (!running) sending.current = false
   }, [running])
@@ -134,6 +136,33 @@ export function AnnotationThread({
     else setReply('')
     restoreFocus.current = true
     setComposerOpen(false)
+  }
+  if (preview) {
+    const previewAuthor = attribution ?? agentName(initialMessage.author)
+    const previewName = `Annotation preview: ${token.label} from ${previewAuthor}: ${initialMessage.text}${replyCount ? ` ${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}` : ''}`
+    return (
+      <article
+        className="elves-annotation-thread elves-annotation-thread--preview"
+        data-testid="annotation-thread"
+        aria-label={previewName}
+        style={maxHeight === undefined ? undefined : { maxHeight }}
+      >
+        <header className="elves-annotation-thread__header">
+          <div className="elves-annotation-thread__meta">
+            <span className="elves-annotation-thread__type" data-type={token.tone}>
+              <TypeIcon aria-hidden="true" size={14} weight="bold" />
+              {token.label}
+            </span>
+            <span>{previewAuthor}</span>
+          </div>
+          {replyCount > 0 && <span className="elves-annotation-thread__reply-count" aria-label={`${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}`}>
+            <ChatCircleDots aria-hidden="true" size={13} weight="bold" />
+            {replyCount}
+          </span>}
+        </header>
+        <p className="elves-annotation-thread__preview-excerpt">{initialMessage.text}</p>
+      </article>
+    )
   }
   return (
     <article
@@ -305,10 +334,13 @@ export function AnnotationPin({ comment, offsetY = 0, zoom = 1, className, targe
   const stopPointer = (event: PropagationEvent) => stopEvent(event)
   const open = (event: MouseEvent) => {
     stopEvent(event)
-    if (target) requestAnnotationOpen(target)
+    if (target) requestAnnotationOpen(target, event.detail === 0 ? 'keyboard' : 'pointer')
   }
-  const show = () => {
-    if (target) setAnnotationHover(target)
+  const showPointer = () => {
+    if (target) setAnnotationHover(target, 'pointer')
+  }
+  const showKeyboard = () => {
+    if (target) setAnnotationHover(target, 'keyboard')
   }
   const hide = () => {
     if (target) dismissAnnotationPopoverSoon(target)
@@ -319,9 +351,9 @@ export function AnnotationPin({ comment, offsetY = 0, zoom = 1, className, targe
       className={`elves-annotation-pin-wrap${className ? ` ${className}` : ''}`}
       style={style}
       onPointerDown={stopPointer}
-      onPointerEnter={show}
+      onPointerEnter={showPointer}
       onPointerLeave={hide}
-      onFocus={show}
+      onFocus={showKeyboard}
       onBlur={hide}
     >
       <button

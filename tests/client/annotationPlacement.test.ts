@@ -82,6 +82,39 @@ test('arranges two colliding panels with a visible selectable edge', () => {
   expect(Math.abs(placements.active.top - placements.prior.top)).toBeGreaterThanOrEqual(32)
 })
 
+test('keeps a safe preview placement when the same target expands in place', () => {
+  const geometry = {
+    key: 'preview',
+    anchor: { left: 600, top: 180, width: 28, height: 28 },
+    source: { left: 500, top: 8, width: 200, height: 584 },
+  }
+  const preview = arrangeAnnotationThreads([{ ...geometry, thread: { width: 300, height: 80 } }], viewport).preview
+  const expanded = arrangeAnnotationThreads([{
+    ...geometry,
+    thread: { width: 300, height: 180 },
+    preservePlacement: preview,
+  }], viewport).preview
+
+  expect(expanded).toEqual(preview)
+})
+
+test('relocates a preview position that would cover its source after expansion', () => {
+  const geometry = {
+    key: 'preview',
+    anchor: { left: 340, top: 180, width: 28, height: 28 },
+    source: { left: 300, top: 120, width: 100, height: 220 },
+  }
+  const preview = arrangeAnnotationThreads([{ ...geometry, thread: { width: 180, height: 80 } }], viewport).preview
+  const expanded = arrangeAnnotationThreads([{
+    ...geometry,
+    thread: { width: 240, height: 140 },
+    preservePlacement: preview,
+  }], viewport).preview
+
+  expect(preview).toEqual({ left: 264, top: 28, side: 'above' })
+  expect(expanded).toEqual({ left: 412, top: 180, side: 'right' })
+})
+
 test('clamps an edge anchor and an over-sized panel into the viewport', () => {
   expect(placeAnnotationThread({ left: 760, top: 560, width: 28, height: 28 }, { width: 900, height: 700 }, viewport))
     .toMatchObject({ left: 0, top: 0 })

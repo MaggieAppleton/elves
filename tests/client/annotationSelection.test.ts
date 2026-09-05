@@ -1,7 +1,9 @@
 import { expect, test, vi } from 'vitest'
 import {
+  annotationClosingTargets,
   annotationReplyDraft,
   annotationOpenTargets,
+  annotationHoverOrigin,
   annotationHoverTarget,
   clearAnnotationPresentations,
   clearAnnotationReplyDraft,
@@ -15,6 +17,7 @@ import {
   requestAnnotationResolve,
   setAnnotationReplyDraft,
   setAnnotationHover,
+  suppressNextAnnotationFocus,
   subscribeAnnotationResolve,
 } from '../../src/client/annotationSelection'
 
@@ -87,6 +90,41 @@ test('hover target is temporary and separate from open targets', () => {
   expect(annotationOpenTargets()).toEqual([])
   setAnnotationHover(null)
   expect(annotationHoverTarget()).toBeNull()
+})
+
+test('interaction origin distinguishes pointer motion from immediate keyboard presentation', () => {
+  clearAnnotationPresentations()
+  setAnnotationHover(a, 'keyboard')
+  expect(annotationHoverOrigin()).toBe('keyboard')
+  requestAnnotationOpen(a, 'keyboard')
+  expect(annotationOpenTargets()).toEqual([a])
+})
+
+test('a programmatic close-focus return does not recreate a keyboard preview', () => {
+  clearAnnotationPresentations()
+
+  suppressNextAnnotationFocus(a)
+  setAnnotationHover(a, 'keyboard')
+
+  expect(annotationHoverTarget()).toBeNull()
+  setAnnotationHover(a, 'keyboard')
+  expect(annotationHoverTarget()).toEqual(a)
+})
+
+test('pointer close removes semantic state immediately and retains one inert visual exit snapshot', () => {
+  vi.useFakeTimers()
+  clearAnnotationPresentations()
+  openAnnotationThread(a, 'pointer')
+
+  requestAnnotationClose(a, 'pointer')
+  expect(annotationOpenTargets()).toEqual([])
+  expect(annotationClosingTargets()).toEqual([{ target: a, origin: 'pointer' }])
+  vi.advanceTimersByTime(99)
+  expect(annotationClosingTargets()).toHaveLength(1)
+  vi.advanceTimersByTime(1)
+  expect(annotationClosingTargets()).toEqual([])
+
+  vi.useRealTimers()
 })
 
 test('opening a hovered target clears its hover state', () => {

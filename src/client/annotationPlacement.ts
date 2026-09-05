@@ -15,6 +15,8 @@ export interface AnnotationArrangementItem {
   source: AnnotationRect
   thread: Pick<AnnotationRect, 'width' | 'height'>
   preferredSide?: AnnotationPlacementSide
+  /** A pointer preview may expand without jumping when its former position is still safe. */
+  preservePlacement?: AnnotationPlacement
 }
 
 const GAP = 12
@@ -158,6 +160,15 @@ export function arrangeAnnotationThreads(
   const placements: Record<string, AnnotationPlacement> = {}
   const obstacles: AnnotationRect[] = []
   for (const item of items) {
+    const preserved = item.preservePlacement && { ...item.preservePlacement, ...item.thread }
+    if (preserved &&
+      intersectionArea(preserved, item.source) === 0 &&
+      viewportOverflow(preserved, viewport) === 0 &&
+      obstacles.every((obstacle) => intersectionArea(preserved, obstacle) === 0)) {
+      placements[item.key] = item.preservePlacement!
+      obstacles.push(preserved)
+      continue
+    }
     const placement = placeAnnotationThread(item.anchor, item.thread, viewport, {
       source: item.source,
       obstacles,

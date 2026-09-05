@@ -321,7 +321,7 @@ test('an annotation draft survives close, reopen, and view changes until explici
   await expect(thread.getByRole('textbox', { name: 'Reply to annotation' })).toHaveValue('')
 })
 
-test('hover and keyboard focus show a complete read-only preview', async ({ page, request }) => {
+test('hover and keyboard focus show a compact read-only preview', async ({ page, request }) => {
   const cardId = await addCardAndComment(page, request, { type: 'structure', text: 'The complete conversation is readable here.' })
   const commentId = (await cardRecord(request, cardId)).props.comments[0].id
   const response = await request.post(`${BASE}/projects/${projectId}/changeset`, {
@@ -349,8 +349,14 @@ test('hover and keyboard focus show a complete read-only preview', async ({ page
   const preview = page.getByTestId('annotation-popover')
   await expect(preview).toHaveClass(/elves-annotation-foreground-item--preview/)
   await expect(preview).toContainText('The complete conversation is readable here.')
-  await expect(preview).toContainText('Which evidence should support this?')
-  await expect(preview).toContainText('Use the original source.')
+  await expect(preview).not.toContainText('Which evidence should support this?')
+  await expect(preview).not.toContainText('Use the original source.')
+  await expect(preview.locator('.elves-annotation-thread__reply-count')).toHaveAttribute('aria-label', '2 replies')
+  await expect(preview.locator('.elves-annotation-thread__messages')).toHaveCount(0)
+  await expect(preview.getByTestId('annotation-thread')).toHaveAttribute(
+    'aria-label',
+    /Annotation preview: Structure from Claude: The complete conversation is readable here\. 2 replies/,
+  )
   await expect(preview.getByRole('button')).toHaveCount(0)
   await expect(preview.locator('textarea')).toHaveCount(0)
   expect(await preview.evaluate((element) => element.closest('.tl-shape'))).toBeNull()
@@ -362,24 +368,81 @@ test('hover and keyboard focus show a complete read-only preview', async ({ page
   await expect(preview).toHaveCount(0)
   await pin.focus()
   await expect(preview).toBeVisible()
+  await expect(preview).not.toHaveAttribute('data-motion')
 })
 
-test('clicking a pin replaces its preview with an interactive thread', async ({ page, request }) => {
-  await addCardAndComment(page, request, { type: 'needs-evidence', text: 'Open this conversation deliberately.' })
+test('clicking a pointer preview expands into the complete thread without covering its source', async ({ page, request }) => {
+  const cardId = await addCardAndComment(page, request, { type: 'needs-evidence', text: 'Open this conversation deliberately.' })
+  const commentId = (await cardRecord(request, cardId)).props.comments[0].id
+  await request.post(`${BASE}/projects/${projectId}/changeset`, { data: {
+    id: `preview-open-${Date.now()}`, author: 'user', ops: [{
+      kind: 'append_annotation_message', target: { kind: 'card', cardId, commentId },
+      message: { id: 'preview-open-user', author: 'user', text: 'Show this after opening.', createdAt: '2026-09-05T09:00:00Z' },
+    }],
+  } })
 
   const pin = page.getByTestId('annotation-pin')
   const popover = page.getByTestId('annotation-popover')
   await pin.hover()
   await expect(popover).toBeVisible()
+  await expect(popover).toHaveAttribute('data-motion', 'enter')
+  const placementSide = await popover.getAttribute('data-placement-side')
   await expect(popover.getByRole('button')).toHaveCount(0)
+  const animationStart = await popover.evaluate((element) => element.getAnimations()[0]?.startTime)
 
-  await pin.click()
+  await popover.click()
   await expect(popover).toHaveClass(/elves-annotation-foreground-item--open/)
+  await expect(popover).toHaveAttribute('data-motion', 'enter')
+  await expect(popover).toHaveAttribute('data-placement-side', placementSide!)
+  expect(await popover.evaluate((element) => element.getAnimations()[0]?.startTime)).toBe(animationStart)
+  const after = await popover.boundingBox()
+  const source = await page.locator(`[data-shape-id="${cardId}"]`).boundingBox()
+  expect(after).not.toBeNull()
+  expect(source).not.toBeNull()
+  expect(overlapArea(after!, source!)).toBe(0)
   const thread = popover.getByTestId('annotation-thread')
+  await expect(thread).toContainText('Open this conversation deliberately.')
+  await expect(thread).toContainText('Show this after opening.')
   await expect(thread.getByLabel('Reply to annotation')).toBeEnabled()
+  await thread.getByLabel('Reply to annotation').click()
   await expect(thread.getByRole('button', { name: 'Send reply' })).toBeVisible()
   await expect(thread.getByRole('button', { name: /^Resolve .* comment$/ })).toBeVisible()
   await expect(thread.getByLabel('Close annotation thread')).toBeVisible()
+})
+
+test('pointer close is briefly inert while keyboard and reduced-motion close are immediate', async ({ page, request }) => {
+  await addCardAndComment(page, request, { type: 'needs-evidence', text: 'Close this thread deliberately.' })
+  const pin = page.getByTestId('annotation-pin')
+  await pin.click()
+  let popover = page.getByTestId('annotation-popover')
+  const closingState = await popover.getByLabel('Close annotation thread').evaluate(async (button: HTMLButtonElement) => {
+    const target = button.closest<HTMLElement>('[data-testid="annotation-popover"]')?.dataset.annotationPopoverTarget
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }))
+    await new Promise(requestAnimationFrame)
+    const panel = document.querySelector<HTMLElement>(`[data-annotation-popover-target="${target}"]`)
+    return { motion: panel?.dataset.motion, pointerEvents: panel && getComputedStyle(panel).pointerEvents }
+  })
+  expect(closingState).toEqual({ motion: 'exit', pointerEvents: 'none' })
+  await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('data-annotation-target')))
+    .toBe(await pin.getAttribute('data-annotation-target'))
+  await expect(popover).toHaveCount(0)
+
+  await pin.focus()
+  await page.keyboard.press('Enter')
+  popover = page.getByTestId('annotation-popover')
+  await expect(popover).toHaveClass(/--open/)
+  await popover.getByLabel('Close annotation thread').focus()
+  await page.keyboard.press('Enter')
+  await expect(popover).toHaveClass(/--preview/)
+
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await pin.click()
+  popover = page.getByTestId('annotation-popover')
+  await expect(popover).toHaveCSS('animation-name', 'none')
+  await popover.getByLabel('Close annotation thread').click()
+  await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('data-annotation-target')))
+    .toBe(await pin.getAttribute('data-annotation-target'))
+  await expect(popover).toHaveCount(0)
 })
 
 test('foreground threads promote independently, persist resolution, and prune only a deleted anchor', async ({ page, request }) => {

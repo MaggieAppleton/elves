@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type SyntheticEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type SyntheticEvent } from 'react'
 import { useEditor, useValue, type Editor, type TLShapeId } from 'tldraw'
 import {
   annotationThreadMaxHeight,
@@ -8,13 +8,15 @@ import {
   type AnnotationViewport,
 } from '../client/annotationPlacement'
 import {
-  annotationHoverTarget, annotationOpenTargets, annotationRepliesLocked, annotationReplyDraft, annotationTargetKey,
+  annotationClosingTargets, annotationHoverOrigin, annotationHoverTarget, annotationOpenOrigin,
+  annotationOpenTargets, annotationRepliesLocked, annotationReplyDraft, annotationTargetKey,
   annotationThreadPresentation, dismissAnnotationPopoverSoon, pruneAnnotationThreads,
-  requestAnnotationClose, requestAnnotationReply, requestAnnotationResolve, requestAnnotationRetry,
+  requestAnnotationClose, requestAnnotationOpen, requestAnnotationReply, requestAnnotationResolve, requestAnnotationRetry,
   clearAnnotationReplyDraft, setAnnotationHover, setAnnotationReplyDraft,
-  subscribeAnnotationTargets, subscribeAnnotationThreadPresentation,
-  type AnnotationTarget,
+  subscribeAnnotationTargets, subscribeAnnotationThreadPresentation, suppressNextAnnotationFocus,
+  type AnnotationInteractionOrigin, type AnnotationTarget, type ClosingAnnotationTarget,
 } from '../client/annotationSelection'
+import { prefersReducedMotion } from '../client/motion'
 import type { CardShape } from '../shapes/CardShapeUtil'
 import type { FeedbackShape } from '../shapes/FeedbackShapeUtil'
 import { AnnotationThread, type AnnotationThreadComment, type AnnotationThreadProps } from './AnnotationThread'
@@ -23,20 +25,42 @@ type PopoverContent = { comment: AnnotationThreadComment; attribution?: string }
 
 export type ForegroundEntry = {
   target: AnnotationTarget
-  mode: 'preview' | 'open'
+  mode: 'preview' | 'open' | 'closing'
+  origin: AnnotationInteractionOrigin
   zIndex: number
+}
+
+export function annotationPopoverMotion(
+  mode: ForegroundEntry['mode'],
+  origin: AnnotationInteractionOrigin,
+  placementReady: boolean,
+  entranceReady: boolean,
+): 'pending' | 'enter' | 'exit' | undefined {
+  if (mode === 'closing') return 'exit'
+  if (origin !== 'pointer') return undefined
+  return placementReady && entranceReady ? 'enter' : 'pending'
 }
 
 /** Ordered canvas overlays: promoted threads stay on top, with one hover preview. */
 export function foregroundEntries(
   open: AnnotationTarget[],
   hovered: AnnotationTarget | null = null,
+  closing: ClosingAnnotationTarget[] = [],
 ): ForegroundEntry[] {
   const entries: ForegroundEntry[] = []
   if (hovered && !open.some((target) => annotationTargetKey(target) === annotationTargetKey(hovered))) {
-    entries.push({ target: hovered, mode: 'preview', zIndex: open.length + 1 })
+    entries.push({ target: hovered, mode: 'preview', origin: annotationHoverOrigin(), zIndex: open.length + 1 })
   }
-  open.forEach((target, index) => entries.push({ target, mode: 'open', zIndex: index + 1 }))
+  open.forEach((target, index) => entries.push({
+    target, mode: 'open', origin: annotationOpenOrigin(target), zIndex: index + 1,
+  }))
+  closing
+    .filter(({ target }) => {
+      const key = annotationTargetKey(target)
+      return !open.some((openTarget) => annotationTargetKey(openTarget) === key) &&
+        (!hovered || annotationTargetKey(hovered) !== key)
+    })
+    .forEach(({ target, origin }, index) => entries.push({ target, mode: 'closing', origin, zIndex: open.length + index + 1 }))
   return entries
 }
 
@@ -65,6 +89,14 @@ interface ForegroundGeometry {
   viewport: AnnotationViewport
 }
 
+interface RememberedPlacement {
+  placement: AnnotationPlacement
+  anchor: AnnotationRect
+  source: AnnotationRect
+  mode: ForegroundEntry['mode']
+  preserveWhileAnchored: boolean
+}
+
 function sameRect(a: AnnotationRect, b: AnnotationRect): boolean {
   return a.left === b.left && a.top === b.top && a.width === b.width && a.height === b.height
 }
@@ -78,6 +110,7 @@ function sameGeometry(a: ForegroundGeometry | undefined, b: ForegroundGeometry):
 interface AnnotationForegroundItemProps {
   target: AnnotationTarget
   mode: ForegroundEntry['mode']
+  origin: AnnotationInteractionOrigin
   zIndex: number
   editor: Editor
   placement?: AnnotationPlacement
@@ -110,12 +143,15 @@ export function foregroundThreadProps(target: AnnotationTarget): Pick<Annotation
     onRetry: () => requestAnnotationRetry(target),
     onResolve: () => requestAnnotationResolve(target),
     onClose: (origin = 'keyboard') => {
-      requestAnnotationClose(target)
-      if (origin !== 'keyboard') return
+      requestAnnotationClose(
+        target,
+        origin === 'pointer' && !prefersReducedMotion() ? 'pointer' : 'keyboard',
+      )
       requestAnimationFrame(() => {
         const key = annotationTargetKey(target)
         const pin = [...document.querySelectorAll<HTMLElement>('[data-annotation-target]')]
           .find((element) => element.dataset.annotationTarget === key)
+        if (origin !== 'keyboard') suppressNextAnnotationFocus(target)
         pin?.focus()
       })
     },
@@ -123,11 +159,13 @@ export function foregroundThreadProps(target: AnnotationTarget): Pick<Annotation
 }
 
 function AnnotationForegroundItem({
-  target, mode, zIndex, editor, placement, onGeometry,
+  target, mode, origin, zIndex, editor, placement, onGeometry,
 }: AnnotationForegroundItemProps) {
   const targetKey = annotationTargetKey(target)
   const panelRef = useRef<HTMLDivElement>(null)
   const [stageMaxHeight, setStageMaxHeight] = useState<number | null>(null)
+  const entered = useRef(false)
+  const [entranceReady, setEntranceReady] = useState(false)
   const shape = useValue(
     `annotation foreground target ${targetKey}`,
     () => editor.getShape((target.kind === 'card' ? target.cardId : target.feedbackId) as TLShapeId),
@@ -204,6 +242,12 @@ function AnnotationForegroundItem({
     }
   }, [camera, content, editor, onGeometry, targetKey])
 
+  useLayoutEffect(() => {
+    if (!placement || origin !== 'pointer' || mode === 'closing' || entered.current) return
+    entered.current = true
+    setEntranceReady(true)
+  }, [mode, origin, placement])
+
   if (!content) return null
 
   const style: CSSProperties = {
@@ -213,19 +257,27 @@ function AnnotationForegroundItem({
     visibility: placement ? undefined : 'hidden',
   }
   const preview = mode === 'preview'
+  const closing = mode === 'closing'
+  const motion = annotationPopoverMotion(mode, origin, !!placement, entranceReady)
   return (
     <div
       ref={panelRef}
       className={`elves-annotation-foreground-item elves-annotation-foreground-item--${mode}`}
       data-testid="annotation-popover"
       data-annotation-popover-target={targetKey}
+      data-motion={motion}
+      data-placement-side={placement?.side}
+      aria-hidden={closing || undefined}
       style={style}
-      onPointerDown={stopForegroundEvent}
-      onClick={stopForegroundEvent}
-      onKeyDown={stopForegroundEvent}
-      onPointerEnter={preview ? () => setAnnotationHover(target) : undefined}
+      onPointerDown={closing ? undefined : stopForegroundEvent}
+      onClick={closing ? undefined : preview ? (event) => {
+        stopForegroundEvent(event)
+        requestAnnotationOpen(target, 'pointer')
+      } : stopForegroundEvent}
+      onKeyDown={closing ? undefined : stopForegroundEvent}
+      onPointerEnter={preview ? () => setAnnotationHover(target, 'pointer') : undefined}
       onPointerLeave={preview ? () => dismissAnnotationPopoverSoon(target) : undefined}
-      onFocus={preview ? () => setAnnotationHover(target) : undefined}
+      onFocus={preview ? () => setAnnotationHover(target, 'keyboard') : undefined}
       onBlur={preview ? () => dismissAnnotationPopoverSoon(target) : undefined}
     >
       {preview ? (
@@ -241,7 +293,7 @@ function AnnotationForegroundItem({
           mode="open"
           attribution={content.attribution}
           maxHeight={stageMaxHeight ?? undefined}
-          {...foregroundThreadProps(target)}
+          {...(closing ? {} : foregroundThreadProps(target))}
         />
       )}
     </div>
@@ -254,12 +306,12 @@ export function AnnotationPopoverLayer() {
   const [, setTargetsVersion] = useState(0)
   const [, setPresentationVersion] = useState(0)
   const [geometries, setGeometries] = useState<Record<string, ForegroundGeometry>>({})
-  const preferredSides = useRef(new Map<string, AnnotationPlacement['side']>())
+  const rememberedPlacements = useRef(new Map<string, RememberedPlacement>())
 
   useEffect(() => subscribeAnnotationTargets(() => setTargetsVersion((version) => version + 1)), [])
   useEffect(() => subscribeAnnotationThreadPresentation(() => setPresentationVersion((version) => version + 1)), [])
 
-  const entries = foregroundEntries(annotationOpenTargets(), annotationHoverTarget())
+  const entries = foregroundEntries(annotationOpenTargets(), annotationHoverTarget(), annotationClosingTargets())
   const reportGeometry = useCallback((targetKey: string, geometry: ForegroundGeometry | null) => {
     setGeometries((current) => {
       if (!geometry) {
@@ -276,19 +328,36 @@ export function AnnotationPopoverLayer() {
     const items = priority.flatMap((entry) => {
       const key = annotationTargetKey(entry.target)
       const geometry = geometries[key]
+      const remembered = rememberedPlacements.current.get(key)
       return geometry ? [{
         key,
         anchor: geometry.anchor,
         source: geometry.source,
         thread: geometry.thread,
-        preferredSide: preferredSides.current.get(key),
+        preferredSide: remembered?.placement.side,
+        preservePlacement: remembered && (remembered.preserveWhileAnchored ||
+          (remembered.mode === 'preview' && entry.mode === 'open')) &&
+          sameRect(remembered.anchor, geometry.anchor) && sameRect(remembered.source, geometry.source)
+          ? remembered.placement
+          : undefined,
       }] : []
     })
     const viewport = priority.map((entry) => geometries[annotationTargetKey(entry.target)]?.viewport)
       .find((value): value is AnnotationViewport => !!value)
     if (!viewport) return {}
     const arranged = arrangeAnnotationThreads(items, viewport)
-    for (const [key, placement] of Object.entries(arranged)) preferredSides.current.set(key, placement.side)
+    for (const item of items) {
+      const previous = rememberedPlacements.current.get(item.key)
+      const anchorsMatch = previous && sameRect(previous.anchor, item.anchor) && sameRect(previous.source, item.source)
+      rememberedPlacements.current.set(item.key, {
+        placement: arranged[item.key],
+        anchor: item.anchor,
+        source: item.source,
+        mode: priority.find((entry) => annotationTargetKey(entry.target) === item.key)!.mode,
+        preserveWhileAnchored: !!anchorsMatch && (previous?.preserveWhileAnchored ||
+          (previous?.mode === 'preview' && priority.find((entry) => annotationTargetKey(entry.target) === item.key)!.mode === 'open')),
+      })
+    }
     return arranged
   }, [entries, geometries])
   if (!entries.length) return null
