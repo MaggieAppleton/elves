@@ -576,11 +576,15 @@ body {
 }
 .elves-canvas-write-status[data-write-status='loading']::before,
 .elves-canvas-write-status[data-write-status='saving']::before,
+.elves-canvas-write-status[data-write-status='retrying']::before,
 .elves-canvas-write-status[data-write-status='renaming']::before { background: #d9a441; }
 .elves-canvas-write-status[data-write-status='unsaved']::before { background: #b8843e; }
 .elves-canvas-write-status[data-write-status='syncing']::before { background: #527da8; }
 .elves-canvas-write-status[data-write-status='conflict']::before,
+.elves-canvas-write-status[data-write-status='recovery-conflict']::before,
+.elves-canvas-write-status[data-write-status='recovery-unavailable']::before,
 .elves-canvas-write-status[data-write-status='error']::before { background: #d9534f; }
+.elves-recovery-actions { display: inline-flex; align-items: center; gap: 6px; }
 .elves-canvas-write-status[data-write-status='rename-ambiguous']::before { background: #8b62a8; }
 .elves-status-action {
   border: 1px solid var(--elves-border);
@@ -590,6 +594,14 @@ body {
   padding: 5px 8px;
   font: 500 12px/1 var(--elves-card-font);
   cursor: pointer;
+}
+.elves-project-list-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--elves-danger, #b42318);
+  font: 500 12px/1 var(--elves-card-font);
+  white-space: nowrap;
 }
 
 /* Compositor-only pulse (opacity + scale) so the frame loop never triggers

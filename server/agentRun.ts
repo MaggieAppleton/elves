@@ -301,6 +301,8 @@ export interface AgentRunner {
   cancelAndWait(key: string, runId: string): Promise<AgentCancelResult>
   /** Atomically exclude new runs for a project while a structural transition runs. */
   tryLockProject(projectId: string): (() => void) | null
+  /** Stop admitting work, cancel every active child, and resolve after they exit. */
+  shutdown?(): Promise<void>
 }
 
 export type AgentCancelResult =
@@ -357,6 +359,7 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
   const nowMs = deps.nowMs ?? Date.now
   const preparedTtlMs = deps.preparedTtlMs ?? 10 * 60_000
   const preparedLimit = deps.preparedLimit ?? 1_024
+  let shuttingDown = false
 
   const admissionKey = (key: string, runId: string) => `${key}\0${runId}`
   const prunePrepared = () => {
@@ -368,7 +371,7 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
 
   const reserveProjectRun = (projectId: string, key?: string, runId?: string): AgentRunReservation | null => {
     prunePrepared()
-    if (projectLocks.has(projectId)) return null
+    if (shuttingDown || projectLocks.has(projectId)) return null
     if (key && (active.has(key) ||
       [...reservations.values()].some((entry) => entry.key === key))) return null
     const reservation = Object.freeze({ projectId })
@@ -535,6 +538,7 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
     },
     prepare(key, runId, projectId) {
       prunePrepared()
+      if (shuttingDown) return { status: 'capacity' }
       const id = admissionKey(key, runId)
       const existing = prepared.get(id)
       if (existing?.projectId === projectId) {
@@ -576,7 +580,7 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
     },
     tryLockProject(projectId) {
       prunePrepared()
-      if (projectLocks.has(projectId) ||
+      if (shuttingDown || projectLocks.has(projectId) ||
         [...reservations.values()].some((reservation) => reservation.projectId === projectId) ||
         [...active.values()].some((run) => run.projectId === projectId)) {
         return null
@@ -602,6 +606,17 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
       }
       return runReserved(reservation, key, input, onEvent)
         .finally(() => releaseProjectRun(reservation))
+    },
+    async shutdown() {
+      if (shuttingDown && active.size === 0) return
+      shuttingDown = true
+      prepared.clear()
+      for (const reservation of reservations.values()) reservation.cancelled = true
+      const runs = [...active.entries()]
+      for (const [key, run] of runs) signalCancel(key, run.runId)
+      await Promise.all(runs.map(([, run]) => run.stopped))
+      reservations.clear()
+      projectLocks.clear()
     },
   }
   return runner
