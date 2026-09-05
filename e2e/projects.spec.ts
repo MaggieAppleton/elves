@@ -6,6 +6,32 @@ test.beforeEach(async ({ request }) => {
   await resetProject(request) // ensure at least one project exists so the app opens a canvas
 })
 
+test('a project-list outage shows Retry and recovers without claiming the store is empty', async ({ page }) => {
+  let projectListReads = 0
+  await page.route('**/projects', async (route) => {
+    const request = route.request()
+    if (request.method() !== 'GET' || new URL(request.url()).pathname !== '/projects') {
+      await route.continue()
+      return
+    }
+    projectListReads += 1
+    if (projectListReads === 1) {
+      await route.abort('connectionfailed')
+      return
+    }
+    await route.continue()
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Couldn’t load projects' })).toBeVisible()
+  await expect(page.getByText('No projects yet')).toHaveCount(0)
+  await expect(page.getByTestId('project-new')).toHaveCount(0)
+
+  await page.getByTestId('project-load-retry').click()
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await expect(page.getByTestId('project-switcher')).toBeVisible()
+})
+
 async function createPersistedProseProject(page: Page, name: string, text: string): Promise<string> {
   page.once('dialog', (dialog) => dialog.accept(name))
   await page.getByTestId('project-switcher').click()
