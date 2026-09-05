@@ -23,11 +23,16 @@ export interface AnnotationThreadProps {
   attribution?: string
   onResolve?: () => void
   running?: boolean
+  phase?: 'saving' | 'awaiting-first-token' | 'streaming' | 'failed'
+  replyMessageId?: string
   streamingText?: string
   error?: string | null
+  draft?: string
+  onDraftChange?: (text: string) => void
+  onDiscardDraft?: () => void
   onReply?: (text: string) => void
   onRetry?: () => void
-  onClose?: () => void
+  onClose?: (origin?: 'pointer' | 'keyboard') => void
   /** Pixel cap measured from the live tldraw stage by the foreground owner. */
   maxHeight?: number
 }
@@ -45,8 +50,13 @@ export function AnnotationThread({
   attribution,
   onResolve,
   running = false,
+  phase,
+  replyMessageId,
   streamingText = '',
   error = null,
+  draft,
+  onDraftChange,
+  onDiscardDraft,
   onReply,
   onRetry,
   onClose,
@@ -55,28 +65,75 @@ export function AnnotationThread({
   const preview = mode === 'preview'
   const token = annotationPin(comment.type)
   const TypeIcon = PIN_ICONS[token.icon]
-  const [reply, setReply] = useState('')
+  const [localReply, setLocalReply] = useState('')
   const [composerOpen, setComposerOpen] = useState(false)
+  const [showNewest, setShowNewest] = useState(false)
+  const [completionAnnouncement, setCompletionAnnouncement] = useState('')
   const sending = useRef(false)
+  const restoreFocus = useRef(false)
+  const previousPhase = useRef<typeof phase>()
+  const latestReplyMessageId = useRef<string>()
   const replyInputRef = useRef<HTMLTextAreaElement>(null)
+  const messagesRef = useRef<HTMLDivElement>(null)
+  const atBottomRef = useRef(true)
+  if (replyMessageId) latestReplyMessageId.current = replyMessageId
   const messages = threadMessages(comment)
+  const completedReplyId = latestReplyMessageId.current ? `${latestReplyMessageId.current}:claude` : null
+  const completedReply = completedReplyId ? messages.find((message) => message.id === completedReplyId) : undefined
+  const transcriptMessages = completedReply ? messages.filter((message) => message.id !== completedReplyId) : messages
+  const reply = draft ?? localReply
+  const responseVisible = phase === 'awaiting-first-token' || phase === 'streaming' || !!completedReply
+  const setReply = (text: string) => {
+    if (draft === undefined) setLocalReply(text)
+    onDraftChange?.(text)
+  }
   useEffect(() => {
     if (!running) sending.current = false
   }, [running])
+  useEffect(() => {
+    const previous = previousPhase.current
+    if (phase === 'awaiting-first-token') setCompletionAnnouncement('')
+    if ((previous === 'awaiting-first-token' || previous === 'streaming') && phase === undefined) {
+      setCompletionAnnouncement('Claude replied')
+    }
+    previousPhase.current = phase
+  }, [phase])
   useLayoutEffect(() => {
     const input = replyInputRef.current
     if (!composerOpen || !input) return
     input.style.height = 'auto'
     input.style.height = `${Math.max(input.scrollHeight, REPLY_MIN_HEIGHT)}px`
   }, [composerOpen, reply])
+  useLayoutEffect(() => {
+    const transcript = messagesRef.current
+    if (!transcript) return
+    if (atBottomRef.current) {
+      transcript.scrollTop = transcript.scrollHeight
+      setShowNewest(false)
+    } else {
+      setShowNewest(true)
+    }
+  }, [messages.length, phase, streamingText])
+  useEffect(() => {
+    if (composerOpen || !restoreFocus.current) return
+    restoreFocus.current = false
+    messagesRef.current?.focus()
+  }, [composerOpen])
   const send = (event: FormEvent) => {
     event.preventDefault()
     const text = reply.trim()
     if (!text || disabled || running || sending.current || !onReply) return
     sending.current = true
-    setReply('')
+    if (draft === undefined) setLocalReply('')
+    restoreFocus.current = true
     setComposerOpen(false)
     onReply(text)
+  }
+  const discard = () => {
+    if (onDiscardDraft) onDiscardDraft()
+    else setReply('')
+    restoreFocus.current = true
+    setComposerOpen(false)
   }
   return (
     <article
@@ -97,20 +154,66 @@ export function AnnotationThread({
             <Checks aria-hidden="true" size={14} weight="bold" />
             Resolve
           </button>}
-          {onClose && <button type="button" className="elves-annotation-thread__close" aria-label="Close annotation thread" onClick={onClose}>
+          {onClose && <button type="button" className="elves-annotation-thread__close" aria-label="Close annotation thread" onClick={(event) => onClose(event?.detail === 0 ? 'keyboard' : 'pointer')}>
             <X aria-hidden="true" size={15} weight="bold" />
           </button>}
         </div>}
       </header>
-      <div className="elves-annotation-thread__messages">
-        {messages.map((message) => (
-          <p key={message.id} className="elves-annotation-thread__message" data-author={message.author}>
+      <div
+        ref={messagesRef}
+        className="elves-annotation-thread__messages"
+        tabIndex={-1}
+        onScroll={(event) => {
+          const transcript = event.currentTarget
+          atBottomRef.current = transcript.scrollHeight - transcript.clientHeight - transcript.scrollTop <= 4
+          if (atBottomRef.current) setShowNewest(false)
+        }}
+      >
+        {transcriptMessages.map((message) => (
+          <p
+            key={message.id}
+            className={`elves-annotation-thread__message${message.id === replyMessageId && (phase === 'awaiting-first-token' || phase === 'streaming') ? ' elves-annotation-thread__message--reply-transition' : ''}`}
+            data-author={message.author}
+          >
             <span className="elves-annotation-thread__message-author">{agentName(message.author)}</span>
             <span className="elves-annotation-thread__text">{message.text}</span>
           </p>
         ))}
-        {streamingText && <p className="elves-annotation-thread__message" data-author="claude"><span className="elves-annotation-thread__message-author">{agentName('claude')}</span><span className="elves-annotation-thread__text">{streamingText}</span></p>}
+        {responseVisible && <p
+          key={completedReplyId ?? 'pending-claude-reply'}
+          className="elves-annotation-thread__message"
+          data-author="claude"
+          data-reply-phase={phase}
+          role={phase === 'awaiting-first-token' ? 'status' : undefined}
+          aria-live={phase === 'awaiting-first-token' ? 'polite' : 'off'}
+        >
+          <span className="elves-annotation-thread__message-author">{agentName('claude')}</span>
+          <span className="elves-annotation-thread__text">
+            {phase === 'awaiting-first-token' ? 'Claude is replying' : completedReply?.text ?? streamingText}
+          </span>
+        </p>}
       </div>
+      {showNewest && <button
+        type="button"
+        className="elves-annotation-thread__newest"
+        onClick={() => {
+          const transcript = messagesRef.current
+          if (!transcript) return
+          transcript.scrollTop = transcript.scrollHeight
+          atBottomRef.current = true
+          setShowNewest(false)
+          transcript.focus()
+        }}
+      >
+        Newest reply
+      </button>}
+      {completionAnnouncement && <p
+        className="elves-annotation-thread__announcement"
+        role="status"
+        aria-live="polite"
+      >
+        {completionAnnouncement}
+      </p>}
       {!preview && onReply && !composerOpen && <button
         type="button"
         className="elves-annotation-thread__reply-trigger"
@@ -130,6 +233,15 @@ export function AnnotationThread({
           onChange={(event) => setReply(event.target.value)}
           style={{}}
         />
+        {reply && <button
+          type="button"
+          className="elves-annotation-thread__discard"
+          aria-label="Discard reply draft"
+          disabled={disabled || running}
+          onClick={discard}
+        >
+          <X aria-hidden="true" size={14} weight="bold" />
+        </button>}
         <button
           type="submit"
           className="elves-annotation-thread__send"

@@ -4,6 +4,8 @@ export type AnnotationTarget =
 
 export interface AnnotationThreadPresentation {
   running: boolean
+  phase?: 'saving' | 'awaiting-first-token' | 'streaming' | 'failed'
+  replyMessageId?: string
   streamingText?: string
   error?: string | null
 }
@@ -18,6 +20,7 @@ const retryListeners = new Set<AnnotationRetryListener>()
 const resolveListeners = new Set<AnnotationActionListener>()
 const presentationListeners = new Set<() => void>()
 const presentations = new Map<string, AnnotationThreadPresentation>()
+const replyDrafts = new Map<string, string>()
 const openTargets = new Map<string, AnnotationTarget>()
 const targetListeners = new Set<AnnotationTargetListener>()
 let annotationReplyLocked = false
@@ -121,6 +124,21 @@ export function clearAnnotationPresentations(): void {
   emitTargets()
 }
 
+export function annotationReplyDraft(target: AnnotationTarget): string {
+  return replyDrafts.get(annotationTargetKey(target)) ?? ''
+}
+
+export function setAnnotationReplyDraft(target: AnnotationTarget, text: string): void {
+  const key = annotationTargetKey(target)
+  if (text) replyDrafts.set(key, text)
+  else replyDrafts.delete(key)
+  presentationListeners.forEach((listener) => listener())
+}
+
+export function clearAnnotationReplyDraft(target: AnnotationTarget): void {
+  setAnnotationReplyDraft(target, '')
+}
+
 export function subscribeAnnotationReply(listener: AnnotationReplyListener): () => void {
   replyListeners.add(listener)
   return () => replyListeners.delete(listener)
@@ -155,8 +173,9 @@ export function setAnnotationThreadPresentation(
 
 /** Project changes invalidate every shape-local presentation immediately. */
 export function clearAnnotationThreadPresentations(): void {
-  if (!presentations.size) return
+  if (!presentations.size && !replyDrafts.size) return
   presentations.clear()
+  replyDrafts.clear()
   presentationListeners.forEach((listener) => listener())
 }
 

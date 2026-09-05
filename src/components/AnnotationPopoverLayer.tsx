@@ -8,10 +8,11 @@ import {
   type AnnotationViewport,
 } from '../client/annotationPlacement'
 import {
-  annotationHoverTarget, annotationOpenTargets, annotationRepliesLocked, annotationTargetKey,
+  annotationHoverTarget, annotationOpenTargets, annotationRepliesLocked, annotationReplyDraft, annotationTargetKey,
   annotationThreadPresentation, dismissAnnotationPopoverSoon, pruneAnnotationThreads,
   requestAnnotationClose, requestAnnotationReply, requestAnnotationResolve, requestAnnotationRetry,
-  setAnnotationHover, subscribeAnnotationTargets, subscribeAnnotationThreadPresentation,
+  clearAnnotationReplyDraft, setAnnotationHover, setAnnotationReplyDraft,
+  subscribeAnnotationTargets, subscribeAnnotationThreadPresentation,
   type AnnotationTarget,
 } from '../client/annotationSelection'
 import type { CardShape } from '../shapes/CardShapeUtil'
@@ -91,18 +92,33 @@ function stopForegroundEvent(event: SyntheticEvent): void {
  * keyed by the target, so simultaneous annotation runs never borrow another
  * thread's loading, error, or retry state. */
 export function foregroundThreadProps(target: AnnotationTarget): Pick<AnnotationThreadProps,
-  'running' | 'streamingText' | 'error' | 'disabled' | 'onReply' | 'onRetry' | 'onResolve' | 'onClose'
+  'running' | 'phase' | 'replyMessageId' | 'streamingText' | 'error' | 'disabled' | 'draft' |
+  'onDraftChange' | 'onDiscardDraft' | 'onReply' | 'onRetry' | 'onResolve' | 'onClose'
 > {
   const presentation = annotationThreadPresentation(target)
   return {
     running: presentation?.running,
+    phase: presentation?.phase,
+    replyMessageId: presentation?.replyMessageId,
     streamingText: presentation?.streamingText,
     error: presentation?.error,
+    draft: annotationReplyDraft(target),
     disabled: annotationRepliesLocked(),
     onReply: (text) => requestAnnotationReply(target, text),
+    onDraftChange: (text) => setAnnotationReplyDraft(target, text),
+    onDiscardDraft: () => clearAnnotationReplyDraft(target),
     onRetry: () => requestAnnotationRetry(target),
     onResolve: () => requestAnnotationResolve(target),
-    onClose: () => requestAnnotationClose(target),
+    onClose: (origin = 'keyboard') => {
+      requestAnnotationClose(target)
+      if (origin !== 'keyboard') return
+      requestAnimationFrame(() => {
+        const key = annotationTargetKey(target)
+        const pin = [...document.querySelectorAll<HTMLElement>('[data-annotation-target]')]
+          .find((element) => element.dataset.annotationTarget === key)
+        pin?.focus()
+      })
+    },
   }
 }
 
@@ -278,7 +294,7 @@ export function AnnotationPopoverLayer() {
   if (!entries.length) return null
 
   return (
-    <div className="elves-annotation-popover-layer" aria-live="polite">
+    <div className="elves-annotation-popover-layer">
       {entries.map((entry) => (
         <AnnotationForegroundItem
           key={annotationTargetKey(entry.target)}

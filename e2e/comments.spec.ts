@@ -71,6 +71,12 @@ function expectThreadTracksPin(
   expect(Math.abs(afterOffset.y - beforeOffset.y)).toBeLessThanOrEqual(THREAD_TRACK_TOLERANCE_PX)
 }
 
+async function replyComposer(thread: any) {
+  const trigger = thread.getByRole('button', { name: 'Reply to annotation' })
+  if (await trigger.isVisible().catch(() => false)) await trigger.click()
+  return thread.getByRole('textbox', { name: 'Reply to annotation' })
+}
+
 async function addTwoComments(page: any, request: any) {
   await addCardAndComment(page, request, { type: 'needs-evidence', text: 'The opening needs a source.' })
   const [cardId] = await serverCardIds(request, projectId)
@@ -292,6 +298,29 @@ test('a fresh session has no open annotation threads', async ({ page, request })
   await expect(page.getByTestId('annotation-pin')).toHaveCount(1)
 })
 
+test('an annotation draft survives close, reopen, and view changes until explicit discard', async ({ page, request }) => {
+  await addCardAndComment(page, request, { type: 'structure', text: 'Keep the response with this exact thread.' })
+  const pin = page.getByTestId('annotation-pin')
+  await pin.click()
+  let thread = page.getByTestId('annotation-thread')
+  await (await replyComposer(thread)).fill('A session-only draft')
+
+  await thread.getByLabel('Close annotation thread').focus()
+  await page.keyboard.press('Enter')
+  await expect(pin).toBeFocused()
+  await expect(page.getByTestId('annotation-popover')).toHaveClass(/--preview/)
+  await pin.click()
+  thread = page.getByTestId('annotation-thread')
+  await expect(await replyComposer(thread)).toHaveValue('A session-only draft')
+
+  await page.getByTestId('draft-open').click()
+  await expect(page.locator('.elves-stage')).toHaveAttribute('data-view', 'split')
+  await expect(thread.getByRole('textbox', { name: 'Reply to annotation' })).toHaveValue('A session-only draft')
+  await thread.getByRole('button', { name: 'Discard reply draft' }).click()
+  await thread.getByRole('button', { name: 'Reply to annotation' }).click()
+  await expect(thread.getByRole('textbox', { name: 'Reply to annotation' })).toHaveValue('')
+})
+
 test('hover and keyboard focus show a complete read-only preview', async ({ page, request }) => {
   const cardId = await addCardAndComment(page, request, { type: 'structure', text: 'The complete conversation is readable here.' })
   const commentId = (await cardRecord(request, cardId)).props.comments[0].id
@@ -421,20 +450,22 @@ test('an annotation reply streams then persists Claude’s answer', async ({ pag
   await firstPin.click()
   await secondPin.click()
   await expect(page.getByTestId('annotation-thread')).toHaveCount(2)
+  await firstPin.click()
   const thread = page.locator(`[data-annotation-popover-target="card:${cardId}:${firstComment.id}"]`)
     .getByTestId('annotation-thread')
   const unaffectedThread = page.locator(`[data-annotation-popover-target="card:${cardId}:${secondComment.id}"]`)
     .getByTestId('annotation-thread')
   const reply = 'Which source should support this claim?'
-  await thread.getByLabel('Reply to annotation').fill(reply)
+  await (await replyComposer(thread)).fill(reply)
   await thread.getByRole('button', { name: 'Send reply' }).click()
+  await expect(thread.locator('.elves-annotation-thread__messages')).toBeFocused()
 
   await expect(thread).toContainText(reply)
   await expect(thread).toContainText('Stub is checking likely sources…')
-  await expect(thread.getByRole('button', { name: 'Replying…' })).toBeDisabled()
-  await expect(unaffectedThread.getByLabel('Reply to annotation')).toBeEnabled()
+  await expect(thread.getByRole('button', { name: 'Reply to annotation' })).toBeDisabled()
+  await expect(unaffectedThread.getByRole('button', { name: 'Reply to annotation' })).toBeEnabled()
   await expect(thread).toContainText('Stub annotation reply: Which source should support this claim?')
-  const nextReply = thread.getByLabel('Reply to annotation')
+  const nextReply = await replyComposer(thread)
   await expect(nextReply).toBeEnabled()
   await nextReply.fill('Please suggest the strongest source.')
   await expect(thread.getByRole('button', { name: 'Send reply' })).toBeEnabled()
@@ -469,9 +500,9 @@ test('a failed foreground reply retries its persisted user turn once', async ({ 
   await page.getByTestId('annotation-pin').click()
   const thread = page.getByTestId('annotation-thread')
   const reply = 'Retry without duplicating this message.'
-  await thread.getByLabel('Reply to annotation').fill(reply)
+  await (await replyComposer(thread)).fill(reply)
   await thread.getByRole('button', { name: 'Send reply' }).click()
-  await expect(thread.getByRole('button', { name: 'Replying…' })).toBeDisabled()
+  await expect(thread).toContainText('Claude is replying')
   await expect.poll(() => interceptedRuns).toBe(1)
   releaseFailedRun()
   await expect(thread.getByRole('alert')).toContainText('stream was interrupted')
@@ -480,7 +511,7 @@ test('a failed foreground reply retries its persisted user turn once', async ({ 
 
   await page.unroute(routePattern)
   await retry.click()
-  await expect(thread.getByRole('button', { name: 'Replying…' })).toBeDisabled()
+  await expect(thread).toContainText('Claude is replying')
 
   const [cardId] = await serverCardIds(request, projectId)
   await expect.poll(async () => {
@@ -491,6 +522,80 @@ test('a failed foreground reply retries its persisted user turn once', async ({ 
       message.author === 'claude' && message.inReplyToMessageId === users[0]?.id)
     return { users: users.length, answers: answers.length, linked: answers[0]?.inReplyToMessageId === users[0]?.id }
   }).toEqual({ users: 1, answers: 1, linked: true })
+})
+
+test('a response-lost reply resend reuses its persisted user turn', async ({ page, request }) => {
+  const cardId = await addCardAndComment(page, request, {
+    type: 'needs-evidence', text: 'Keep exactly one durable user turn.',
+  })
+  const commentId = (await cardRecord(request, cardId)).props.comments[0].id
+  const pin = page.locator(`[data-shape-id="${cardId}"] [data-testid="annotation-pin"]`)
+  await pin.click()
+  const thread = page.getByTestId('annotation-thread')
+  const reply = 'Retry this exact durable reply.'
+  let persistenceAttempts = 0
+  await page.route(`**/projects/${projectId}/changeset`, async (route) => {
+    if (route.request().method() !== 'POST') return route.continue()
+    persistenceAttempts += 1
+    const response = await route.fetch()
+    if (persistenceAttempts === 1) {
+      await route.fulfill({ status: 503, body: 'response lost after commit' })
+      return
+    }
+    await route.fulfill({ response })
+  })
+
+  await (await replyComposer(thread)).fill(reply)
+  await thread.getByRole('button', { name: 'Send reply' }).click()
+  await expect(thread.getByRole('alert')).toBeVisible()
+  await (await replyComposer(thread)).fill(reply)
+  await thread.getByRole('button', { name: 'Send reply' }).click()
+  await expect.poll(() => persistenceAttempts).toBe(2)
+
+  await expect.poll(async () => {
+    const card = await cardRecord(request, cardId)
+    return card.props.comments.find((comment: any) => comment.id === commentId)!.messages
+      .filter((message: any) => message.author === 'user' && message.text === reply).length
+  }).toBe(1)
+})
+
+test('a changed resend clears the retained failed identity before an old draft is sent again', async ({ page, request }) => {
+  const cardId = await addCardAndComment(page, request, {
+    type: 'needs-evidence', text: 'Do not retain an old retry identity after a new reply persists.',
+  })
+  const commentId = (await cardRecord(request, cardId)).props.comments[0].id
+  await page.locator(`[data-shape-id="${cardId}"] [data-testid="annotation-pin"]`).click()
+  const thread = page.getByTestId('annotation-thread')
+  const originalReply = 'This was the response-lost reply.'
+  const revisedReply = 'This is the edited reply that succeeds.'
+  let persistenceAttempts = 0
+  await page.route(`**/projects/${projectId}/changeset`, async (route) => {
+    if (route.request().method() !== 'POST') return route.continue()
+    persistenceAttempts += 1
+    const response = await route.fetch()
+    if (persistenceAttempts === 1) {
+      await route.fulfill({ status: 503, body: 'response lost after commit' })
+      return
+    }
+    await route.fulfill({ response })
+  })
+
+  await (await replyComposer(thread)).fill(originalReply)
+  await thread.getByRole('button', { name: 'Send reply' }).click()
+  await expect(thread.getByRole('alert')).toBeVisible()
+  await (await replyComposer(thread)).fill(revisedReply)
+  await thread.getByRole('button', { name: 'Send reply' }).click()
+  await expect(thread.getByRole('button', { name: 'Reply to annotation' })).toBeEnabled()
+  await (await replyComposer(thread)).fill(originalReply)
+  await thread.getByRole('button', { name: 'Send reply' }).click()
+  await expect.poll(() => persistenceAttempts).toBe(3)
+
+  await expect.poll(async () => {
+    const card = await cardRecord(request, cardId)
+    const originalMessages = card.props.comments.find((comment: any) => comment.id === commentId)!.messages
+      .filter((message: any) => message.author === 'user' && message.text === originalReply)
+    return { count: originalMessages.length, ids: new Set(originalMessages.map((message: any) => message.id)).size }
+  }).toEqual({ count: 2, ids: 2 })
 })
 
 test('a long annotation transcript remains inside the canvas and scrolls internally', async ({ page, request }) => {
