@@ -581,7 +581,10 @@ body {
 .elves-canvas-write-status[data-write-status='unsaved']::before { background: #b8843e; }
 .elves-canvas-write-status[data-write-status='syncing']::before { background: #527da8; }
 .elves-canvas-write-status[data-write-status='conflict']::before,
+.elves-canvas-write-status[data-write-status='recovery-conflict']::before,
+.elves-canvas-write-status[data-write-status='recovery-unavailable']::before,
 .elves-canvas-write-status[data-write-status='error']::before { background: #d9534f; }
+.elves-recovery-actions { display: inline-flex; align-items: center; gap: 6px; }
 .elves-canvas-write-status[data-write-status='rename-ambiguous']::before { background: #8b62a8; }
 .elves-status-action {
   border: 1px solid var(--elves-border);

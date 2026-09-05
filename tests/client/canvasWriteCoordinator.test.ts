@@ -2,6 +2,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 import type { CanvasSnapshot, CanvasVersionedState } from '../../src/client/persistence'
 import { CanvasProtocolError, CanvasRevisionConflictError } from '../../src/client/persistence'
 import type { DocumentRecords } from '../../src/client/canvasMerge'
+import { MemoryCanvasRecoveryStore, type CanvasRecoveryContext } from '../../src/client/canvasRecovery'
 import {
   CanvasWriteCoordinatorDisposedError,
   createCanvasWriteCoordinator,
@@ -26,6 +27,9 @@ function deferred<T>() {
 }
 
 async function tick(): Promise<void> {
+  await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
   await Promise.resolve()
   await Promise.resolve()
   await Promise.resolve()
@@ -57,6 +61,9 @@ function harness(options: {
   autosaveMs?: number
   retryRandom?: () => number
   markDirtyOnApply?: boolean
+  recovery?: CanvasRecoveryContext
+  storageId?: string
+  lifecycleTarget?: Pick<Window, 'addEventListener' | 'removeEventListener'>
 } = {}) {
   let current = structuredClone(options.initial ?? document())
   let editing = false
@@ -93,6 +100,7 @@ function harness(options: {
   coordinator = createCanvasWriteCoordinator({
     project: {
       id: 'essay', name: 'Essay', createdAt: '2026-07-14T00:00:00.000Z',
+      storageId: options.storageId,
     },
     editor,
     transport: {
@@ -105,6 +113,8 @@ function harness(options: {
     },
     autosaveMs: options.autosaveMs ?? 0,
     retryRandom: options.retryRandom,
+    recovery: options.recovery,
+    lifecycleTarget: options.lifecycleTarget,
     onStatus: (status) => statuses.push(status),
     onRemoteChange: (ids, glow) => remoteChanges.push({ ids, glow }),
   })
@@ -124,6 +134,455 @@ function harness(options: {
     },
   }
 }
+
+const recoveryContext = (
+  store: MemoryCanvasRecoveryStore,
+  sessionId = 'tab-a',
+  activeSessionIds?: () => Promise<ReadonlySet<string>>,
+): CanvasRecoveryContext => ({
+  store, sessionId, serverOrigin: 'http://localhost:5199',
+  now: () => '2026-09-05T12:00:00.000Z', activeSessionIds,
+})
+
+test('dirty state installs an unload guard until the server confirms the save', async () => {
+  const saveResult = deferred<number>()
+  const recovery = recoveryContext(new MemoryCanvasRecoveryStore())
+  const lifecycleTarget = {
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }
+  const h = harness({
+    autosaveMs: 0,
+    save: async () => saveResult.promise,
+    recovery,
+    storageId: 'storage-one',
+    lifecycleTarget,
+  })
+  await h.coordinator.initialize()
+
+  h.coordinator.markDirty()
+  expect(lifecycleTarget.addEventListener).toHaveBeenCalledWith('beforeunload', expect.any(Function))
+
+  saveResult.resolve(2)
+  await h.coordinator.flushOrThrow()
+  expect(lifecycleTarget.removeEventListener).toHaveBeenCalledWith('beforeunload', expect.any(Function))
+})
+
+test('a committed journal restores an edit after disposal before the server debounce', async () => {
+  vi.useFakeTimers()
+  const store = new MemoryCanvasRecoveryStore()
+  const recovery = recoveryContext(store)
+  const first = harness({ autosaveMs: 500, recovery, storageId: 'storage-one' })
+  await first.coordinator.initialize()
+  const unsaved = document({ name: 'survives reload' })
+  first.setDocument(unsaved)
+  first.coordinator.markDirty()
+  await first.coordinator.whenRecoveryCommitted()
+  first.coordinator.dispose()
+  expect(first.save).not.toHaveBeenCalled()
+
+  const second = harness({ recovery, storageId: 'storage-one' })
+  await second.coordinator.initialize()
+  await tick()
+  expect(second.document).toEqual(unsaved)
+  expect((second.save.mock.calls[0][1] as CanvasSnapshot).document).toEqual(unsaved)
+  await second.coordinator.flushOrThrow()
+  expect(store.entries.size).toBe(0)
+})
+
+test('acknowledging save A keeps and rebases the newer journal B', async () => {
+  const store = new MemoryCanvasRecoveryStore()
+  const firstSave = deferred<number>()
+  const secondSave = deferred<number>()
+  const save = vi.fn()
+    .mockImplementationOnce(() => firstSave.promise)
+    .mockImplementationOnce(() => secondSave.promise)
+  const h = harness({ save, recovery: recoveryContext(store), storageId: 'storage-one' })
+  await h.coordinator.initialize()
+  h.setDocument(document({ name: 'edit A' }))
+  h.coordinator.markDirty()
+  await h.coordinator.whenRecoveryCommitted()
+  await tick()
+  h.setDocument(document({ name: 'edit B' }))
+  h.coordinator.markDirty()
+  await h.coordinator.whenRecoveryCommitted()
+
+  firstSave.resolve(2)
+  await tick()
+  await h.coordinator.whenRecoveryCommitted()
+  const [entry] = [...store.entries.values()]
+  expect(entry.generation).toBe(2)
+  expect(entry.baseRevision).toBe(2)
+  expect(entry.localDocument).toEqual(document({ name: 'edit B' }))
+
+  secondSave.resolve(3)
+  await h.coordinator.flushOrThrow()
+  expect(store.entries.size).toBe(0)
+})
+
+test('a recovery save acknowledgement preserves a newer same-tab journal', async () => {
+  const store = new MemoryCanvasRecoveryStore()
+  const recovery = recoveryContext(store)
+  const seed = harness({ autosaveMs: 500, recovery, storageId: 'storage-one' })
+  await seed.coordinator.initialize()
+  seed.setDocument(document({ name: 'recovered edit A' }))
+  seed.coordinator.markDirty()
+  await seed.coordinator.whenRecoveryCommitted()
+  seed.coordinator.dispose()
+
+  const firstSave = deferred<number>()
+  const secondSave = deferred<number>()
+  const save = vi.fn()
+    .mockImplementationOnce(() => firstSave.promise)
+    .mockImplementationOnce(() => secondSave.promise)
+  const restored = harness({ recovery, storageId: 'storage-one', save })
+  await restored.coordinator.initialize()
+  await tick()
+  expect(save).toHaveBeenCalledTimes(1)
+
+  restored.setDocument(document({ name: 'newer edit B' }))
+  restored.coordinator.markDirty()
+  await restored.coordinator.whenRecoveryCommitted()
+  firstSave.resolve(2)
+  await tick()
+  await restored.coordinator.whenRecoveryCommitted()
+
+  const [entry] = [...store.entries.values()]
+  expect(entry.localDocument).toEqual(document({ name: 'newer edit B' }))
+  expect(entry.generation).toBeGreaterThan(1)
+
+  secondSave.resolve(3)
+  await restored.coordinator.flushOrThrow()
+  expect(store.entries.size).toBe(0)
+})
+
+test('a lost save response leaves recovery until an authoritative reload confirms the write', async () => {
+  const store = new MemoryCanvasRecoveryStore()
+  const recovery = recoveryContext(store)
+  const committed = document({ name: 'server committed this edit' })
+  const first = harness({
+    recovery,
+    storageId: 'storage-one',
+    save: async () => { throw new TypeError('response lost') },
+  })
+  await first.coordinator.initialize()
+  first.setDocument(committed)
+  first.coordinator.markDirty()
+  await expect(first.coordinator.flushOrThrow()).rejects.toThrow('response lost')
+  expect(store.entries.size).toBe(1)
+  first.coordinator.dispose()
+
+  const reloaded = harness({
+    recovery,
+    storageId: 'storage-one',
+    load: async () => state(committed, 2),
+  })
+  await reloaded.coordinator.initialize()
+
+  expect(reloaded.document).toEqual(committed)
+  expect(reloaded.save).not.toHaveBeenCalled()
+  expect(store.entries.size).toBe(0)
+})
+
+test('an automatic retry retains the durable journal until its save is acknowledged', async () => {
+  vi.useFakeTimers()
+  const store = new MemoryCanvasRecoveryStore()
+  const retrySave = deferred<number>()
+  const saved = document({ name: 'retry this durable edit' })
+  const load = vi.fn()
+    .mockResolvedValueOnce(state(document(), 1))
+    .mockResolvedValueOnce(state(document(), 1))
+  const save = vi.fn()
+    .mockRejectedValueOnce(new TypeError('response lost'))
+    .mockImplementationOnce(() => retrySave.promise)
+  const h = harness({
+    load,
+    save,
+    recovery: recoveryContext(store),
+    storageId: 'storage-one',
+    retryRandom: () => 0,
+  })
+  await h.coordinator.initialize()
+  h.setDocument(saved)
+  h.coordinator.markDirty()
+  await tick()
+
+  expect([...store.entries.values()][0].localDocument).toEqual(saved)
+  await vi.advanceTimersByTimeAsync(0)
+  expect(save).toHaveBeenCalledTimes(2)
+  expect([...store.entries.values()][0].localDocument).toEqual(saved)
+
+  retrySave.resolve(2)
+  await h.coordinator.flushOrThrow()
+  expect(store.entries.size).toBe(0)
+})
+
+test('a clean recovery merge retains remote and local changes', async () => {
+  const store = new MemoryCanvasRecoveryStore()
+  const recovery = recoveryContext(store)
+  const seed = harness({ autosaveMs: 500, recovery, storageId: 'storage-one' })
+  await seed.coordinator.initialize()
+  seed.setDocument(document({ localOnly: true }))
+  seed.coordinator.markDirty()
+  await seed.coordinator.whenRecoveryCommitted()
+  seed.coordinator.dispose()
+
+  const restored = harness({
+    recovery,
+    storageId: 'storage-one',
+    load: async () => state(document({ remoteOnly: true }), 2),
+  })
+  await restored.coordinator.initialize()
+  await tick()
+  expect(restored.document['page:page']).toMatchObject({ localOnly: true, remoteOnly: true })
+  await restored.coordinator.flushOrThrow()
+  expect(store.entries.size).toBe(0)
+})
+
+test('a same-record recovery conflict never saves until the user decides', async () => {
+  const store = new MemoryCanvasRecoveryStore()
+  const recovery = recoveryContext(store)
+  const seed = harness({ autosaveMs: 500, recovery, storageId: 'storage-one' })
+  await seed.coordinator.initialize()
+  seed.setDocument(document({ name: 'local wording' }))
+  seed.coordinator.markDirty()
+  await seed.coordinator.whenRecoveryCommitted()
+  seed.coordinator.dispose()
+
+  const restored = harness({
+    recovery,
+    storageId: 'storage-one',
+    load: async () => state(document({ name: 'remote wording' }), 2),
+  })
+  await restored.coordinator.initialize()
+  await tick()
+  expect(restored.statuses.at(-1)).toBe('recovery-conflict')
+  expect(restored.save).not.toHaveBeenCalled()
+  expect(store.entries.size).toBe(1)
+
+  restored.coordinator.markDirty()
+  await expect(restored.coordinator.flushOrThrow()).rejects.toThrow('choose whether to recover or discard')
+  await expect(restored.coordinator.retryNow()).rejects.toThrow('choose whether to recover or discard')
+  expect([...store.entries.values()][0].localDocument).toEqual(document({ name: 'local wording' }))
+
+  await restored.coordinator.resolveRecovery('discard')
+  expect(restored.document).toEqual(document({ name: 'remote wording' }))
+  expect(store.entries.size).toBe(0)
+})
+
+test('realtime synchronization waits for a pending recovery decision', async () => {
+  const store = new MemoryCanvasRecoveryStore()
+  const recovery = recoveryContext(store)
+  const seed = harness({ autosaveMs: 500, recovery, storageId: 'storage-one' })
+  await seed.coordinator.initialize()
+  seed.setDocument(document({ name: 'local wording' }))
+  seed.coordinator.markDirty()
+  await seed.coordinator.whenRecoveryCommitted()
+  seed.coordinator.dispose()
+
+  const restored = harness({
+    recovery,
+    storageId: 'storage-one',
+    load: async () => state(document({ name: 'remote wording' }), 2),
+  })
+  await restored.coordinator.initialize()
+  const sync = restored.coordinator.requestRemoteSync()
+  await tick()
+  expect(restored.load).toHaveBeenCalledTimes(1)
+
+  await restored.coordinator.resolveRecovery('discard')
+  await sync
+  expect(restored.load).toHaveBeenCalledTimes(2)
+})
+
+test('a tab restores only its own journal when another tab has pending work', async () => {
+  const store = new MemoryCanvasRecoveryStore()
+  const seedA = harness({
+    autosaveMs: 500,
+    recovery: recoveryContext(store, 'tab-a'),
+    storageId: 'storage-one',
+  })
+  await seedA.coordinator.initialize()
+  seedA.setDocument(document({ name: 'tab A edit' }))
+  seedA.coordinator.markDirty()
+  await seedA.coordinator.whenRecoveryCommitted()
+  seedA.coordinator.dispose()
+
+  const seedB = harness({
+    autosaveMs: 500,
+    recovery: recoveryContext(store, 'tab-b'),
+    storageId: 'storage-one',
+  })
+  await seedB.coordinator.initialize()
+  seedB.setDocument(document({ name: 'tab B edit' }))
+  seedB.coordinator.markDirty()
+  await seedB.coordinator.whenRecoveryCommitted()
+  seedB.coordinator.dispose()
+
+  const heldSave = deferred<number>()
+  const restoredA = harness({
+    recovery: recoveryContext(store, 'tab-a', async () => new Set(['tab-a', 'tab-b'])),
+    storageId: 'storage-one',
+    save: () => heldSave.promise,
+  })
+  await restoredA.coordinator.initialize()
+  expect(restoredA.document).toEqual(document({ name: 'tab A edit' }))
+  expect([...store.entries.values()].map((entry) => entry.sessionId).sort()).toEqual(['tab-a', 'tab-b'])
+  restoredA.coordinator.dispose()
+})
+
+test('a new tab can claim a journal after its original session closes', async () => {
+  const store = new MemoryCanvasRecoveryStore()
+  const original = harness({
+    autosaveMs: 500,
+    recovery: recoveryContext(store, 'closed-tab'),
+    storageId: 'storage-one',
+  })
+  await original.coordinator.initialize()
+  original.setDocument(document({ name: 'survives tab close' }))
+  original.coordinator.markDirty()
+  await original.coordinator.whenRecoveryCommitted()
+  original.coordinator.dispose()
+
+  const heldSave = deferred<number>()
+  const reopened = harness({
+    recovery: recoveryContext(store, 'new-tab', async () => new Set()),
+    storageId: 'storage-one',
+    save: () => heldSave.promise,
+  })
+  await reopened.coordinator.initialize()
+
+  expect(reopened.document).toEqual(document({ name: 'survives tab close' }))
+  reopened.coordinator.dispose()
+})
+
+test('a fresh session claims a closed-tab journal without taking an active tab journal', async () => {
+  const store = new MemoryCanvasRecoveryStore()
+  const active = harness({
+    autosaveMs: 500,
+    recovery: recoveryContext(store, 'active-tab'),
+    storageId: 'storage-one',
+  })
+  await active.coordinator.initialize()
+  active.setDocument(document({ name: 'active tab edit' }))
+  active.coordinator.markDirty()
+  await active.coordinator.whenRecoveryCommitted()
+  active.coordinator.dispose()
+
+  const closed = harness({
+    autosaveMs: 500,
+    recovery: recoveryContext(store, 'closed-tab'),
+    storageId: 'storage-one',
+  })
+  await closed.coordinator.initialize()
+  closed.setDocument(document({ name: 'closed tab edit' }))
+  closed.coordinator.markDirty()
+  await closed.coordinator.whenRecoveryCommitted()
+  closed.coordinator.dispose()
+
+  const heldSave = deferred<number>()
+  const fresh = harness({
+    recovery: recoveryContext(store, 'fresh-tab', async () => new Set(['active-tab', 'fresh-tab'])),
+    storageId: 'storage-one',
+    save: () => heldSave.promise,
+  })
+  await fresh.coordinator.initialize()
+
+  expect(fresh.document).toEqual(document({ name: 'closed tab edit' }))
+  expect([...store.entries.values()].map((entry) => entry.sessionId).sort())
+    .toEqual(['active-tab', 'closed-tab'])
+  fresh.coordinator.dispose()
+})
+
+test('choosing local recovery preserves unrelated remote records and then saves', async () => {
+  const store = new MemoryCanvasRecoveryStore()
+  const recovery = recoveryContext(store)
+  const seed = harness({ autosaveMs: 500, recovery, storageId: 'storage-one' })
+  await seed.coordinator.initialize()
+  seed.setDocument(document({ name: 'local wording' }))
+  seed.coordinator.markDirty()
+  await seed.coordinator.whenRecoveryCommitted()
+  seed.coordinator.dispose()
+  const remote = {
+    ...document({ name: 'remote wording' }),
+    'shape:agent': { id: 'shape:agent', typeName: 'shape' as const, type: 'card', x: 10, y: 20 },
+  }
+  const restored = harness({
+    recovery,
+    storageId: 'storage-one',
+    load: async () => state(remote, 2),
+  })
+  await restored.coordinator.initialize()
+  await restored.coordinator.resolveRecovery('recover')
+  await restored.coordinator.flushOrThrow()
+
+  const saved = (restored.save.mock.calls[0][1] as CanvasSnapshot).document as DocumentRecords
+  expect(saved['page:page']).toMatchObject({ name: 'local wording' })
+  expect(saved['shape:agent']).toEqual(remote['shape:agent'])
+  expect(store.entries.size).toBe(0)
+})
+
+test('an incompatible recovery epoch requires an explicit decision', async () => {
+  const store = new MemoryCanvasRecoveryStore()
+  const recovery = recoveryContext(store)
+  const seed = harness({ autosaveMs: 500, recovery, storageId: 'storage-one' })
+  await seed.coordinator.initialize()
+  seed.setDocument(document({ name: 'old epoch edit' }))
+  seed.coordinator.markDirty()
+  await seed.coordinator.whenRecoveryCommitted()
+  seed.coordinator.dispose()
+  const savedEntry = [...store.entries.values()][0]
+  savedEntry.baseEpoch = 'epoch-before-reset'
+  store.entries.set(savedEntry.key, savedEntry)
+
+  const restored = harness({ recovery, storageId: 'storage-one' })
+  await restored.coordinator.initialize()
+  expect(restored.statuses.at(-1)).toBe('recovery-conflict')
+  expect(restored.save).not.toHaveBeenCalled()
+  expect(store.entries.size).toBe(1)
+})
+
+test('a failed journal transaction retains the last committed recovery and reports it', async () => {
+  vi.useFakeTimers()
+  const store = new MemoryCanvasRecoveryStore()
+  const put = vi.spyOn(store, 'put')
+  const h = harness({ autosaveMs: 500, recovery: recoveryContext(store), storageId: 'storage-one' })
+  await h.coordinator.initialize()
+  h.setDocument(document({ name: 'committed journal' }))
+  h.coordinator.markDirty()
+  await h.coordinator.whenRecoveryCommitted()
+  put.mockRejectedValueOnce(new Error('quota exhausted'))
+  h.setDocument(document({ name: 'uncommitted journal' }))
+  h.coordinator.markDirty()
+  await expect(h.coordinator.whenRecoveryCommitted()).rejects.toThrow('quota exhausted')
+  expect([...store.entries.values()][0].localDocument).toEqual(document({ name: 'committed journal' }))
+  expect(h.statuses.at(-1)).toBe('recovery-unavailable')
+  h.coordinator.dispose()
+})
+
+test('journal cleanup failure never turns a confirmed server save into another write', async () => {
+  const store = new MemoryCanvasRecoveryStore()
+  vi.spyOn(store, 'deleteIfGeneration').mockRejectedValue(new Error('indexeddb unavailable'))
+  const h = harness({ recovery: recoveryContext(store), storageId: 'storage-one' })
+  await h.coordinator.initialize()
+  h.setDocument(document({ name: 'server confirmed' }))
+  h.coordinator.markDirty()
+  await h.coordinator.flushOrThrow()
+
+  expect(h.save).toHaveBeenCalledTimes(1)
+  expect(h.statuses.at(-1)).toBe('recovery-unavailable')
+  expect(store.entries.size).toBe(1)
+})
+
+test('recovery database read failure leaves the authoritative canvas usable with a warning', async () => {
+  const store = new MemoryCanvasRecoveryStore()
+  vi.spyOn(store, 'list').mockRejectedValue(new Error('indexeddb blocked'))
+  const h = harness({ recovery: recoveryContext(store), storageId: 'storage-one' })
+
+  await expect(h.coordinator.initialize()).resolves.toBeUndefined()
+  expect(h.document).toEqual(document())
+  expect(h.statuses.at(-1)).toBe('recovery-unavailable')
+})
 
 test('an edit during a held save causes a fresh second save', async () => {
   const firstSave = deferred<number>()
@@ -399,6 +858,7 @@ test('a newer edit during a failing save restarts once with the latest snapshot'
   h.coordinator.markDirty()
   firstSave.reject(new Error('first save failed'))
   await tick()
+  await tick()
   expect(save).toHaveBeenCalledTimes(2)
   await h.coordinator.flushOrThrow()
 
@@ -425,6 +885,7 @@ test('the newer-edit restart consumes its debounce timer and stops after a secon
   h.setDocument(document({ name: 'latest edit' }))
   h.coordinator.markDirty()
   firstSave.reject(new Error('first save failed'))
+  await tick()
   await tick()
   expect(save).toHaveBeenCalledTimes(2)
 

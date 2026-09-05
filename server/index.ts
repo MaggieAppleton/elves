@@ -9,7 +9,7 @@ import { attachRealtime } from './realtime'
 import { createSelectionStore } from './selection'
 import { migrateLegacyCanvas } from './migrate'
 import { migrateSourceCardsToNotes } from './migrateNotes'
-import { listProjects, resyncProjectIds } from './projects'
+import { listProjects, migrateProjectStorageIds, resyncProjectIds } from './projects'
 import { warnOnSyncConflicts } from './conflicts'
 import { OllamaSummarizer } from './summarize'
 import { resolveHost } from './host'
@@ -27,6 +27,7 @@ async function main() {
   // Then rename any stored 'source' cards to 'note' so the server reads the same
   // shape the client writes (see migrateSourceCardsToNotes for why this is needed).
   await migrateSourceCardsToNotes(dataRoot)
+  await migrateProjectStorageIds(dataRoot)
   // Bring any project whose id drifted from its display name back in sync (folder
   // renamed to match slugify(name)). Idempotent; a no-op once everything matches.
   // Degrades to a log rather than blocking startup if a project is malformed

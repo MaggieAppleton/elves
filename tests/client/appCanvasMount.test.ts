@@ -19,6 +19,8 @@ function coordinator(overrides: Partial<CanvasWriteCoordinator> = {}): CanvasWri
     requestRemoteSync: vi.fn().mockResolvedValue(undefined),
     flushOrThrow: vi.fn().mockResolvedValue(undefined),
     retryNow: vi.fn().mockResolvedValue(undefined),
+    whenRecoveryCommitted: vi.fn().mockResolvedValue(undefined),
+    resolveRecovery: vi.fn().mockResolvedValue(undefined),
     renameProject: vi.fn(),
     ownsProject: vi.fn((id) => id === project.id),
     dispose: vi.fn(),
@@ -214,10 +216,12 @@ describe('canvas write status labels', () => {
     ['saving', 'Saving canvas'],
     ['syncing', 'Syncing canvas'],
     ['retrying', 'Canvas save failed; local changes remain unsaved; retrying'],
+    ['recovery-conflict', 'Recovered changes conflict with the server'],
+    ['recovery-unavailable', 'Local recovery unavailable — keep this tab open and retry saving'],
     ['renaming', 'Renaming project'],
     ['conflict', 'Canvas has a save conflict'],
     ['rename-ambiguous', 'Project rename needs attention'],
-    ['error', 'Canvas save failed; local changes remain unsaved'],
+    ['error', 'Canvas save failed'],
   ] as const)('%s is explicit', (status, label) => {
     expect(canvasWriteStatusLabel(status)).toBe(label)
   })
