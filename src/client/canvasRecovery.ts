@@ -5,6 +5,9 @@ export const CANVAS_RECOVERY_FORMAT = 1 as const
 const DATABASE_NAME = 'elves-canvas-recovery-v1'
 const STORE_NAME = 'entries'
 const SESSION_KEY = 'elves:canvas-recovery-session-v1'
+const RECOVERY_LEASE_PREFIX = 'elves:canvas-recovery-lease-v1:'
+const RECOVERY_LEASE_MS = 5 * 60 * 1_000
+const RECOVERY_LEASE_HEARTBEAT_MS = 30 * 1_000
 
 export interface CanvasRecoveryEntry {
   key: string
@@ -165,7 +168,7 @@ export class MemoryCanvasRecoveryStore implements CanvasRecoveryStore {
 let browserStore: IndexedDbCanvasRecoveryStore | undefined
 let browserOwnership: BrowserRecoveryOwnership | undefined
 
-interface BrowserRecoveryOwnership {
+export interface BrowserRecoveryOwnership {
   sessionId: string
   ready: Promise<void>
   activeSessionIds?: () => Promise<ReadonlySet<string>>
@@ -186,13 +189,16 @@ export function browserRecoveryContext(project: Project): CanvasRecoveryContext 
 
 const ACTIVE_SESSION_PREFIX = 'elves:canvas-recovery-session-v1:'
 
-function createBrowserRecoveryOwnership(browser: Window): BrowserRecoveryOwnership {
+export function createBrowserRecoveryOwnership(browser: Window): BrowserRecoveryOwnership {
   const ownership: BrowserRecoveryOwnership = {
     sessionId: browserRecoverySessionId(browser.sessionStorage, browser.crypto),
     ready: Promise.resolve(),
   }
   const locks = (browser.navigator as Navigator & { locks?: LockManager }).locks
-  if (!locks) return ownership
+  if (!locks) {
+    ownership.activeSessionIds = browserRecoverySessionLeases(browser, ownership)
+    return ownership
+  }
   let releaseLock: (() => void) | undefined
   ownership.ready = (async () => {
     const snapshot = await locks.query()
@@ -221,6 +227,85 @@ function createBrowserRecoveryOwnership(browser: Window): BrowserRecoveryOwnersh
     return active
   }
   return ownership
+}
+
+function browserRecoverySessionLeases(
+  browser: Window,
+  ownership: BrowserRecoveryOwnership,
+): (() => Promise<ReadonlySet<string>>) | undefined {
+  let storage: Storage
+  try {
+    storage = browser.localStorage
+  } catch {
+    return undefined
+  }
+  const ownerId = browser.crypto.randomUUID()
+  const leaseKey = () => `${RECOVERY_LEASE_PREFIX}${ownership.sessionId}`
+  const readLease = (key: string): { ownerId: string; expiresAt: number } | null => {
+    try {
+      const value = JSON.parse(storage.getItem(key) ?? 'null') as { ownerId?: unknown; expiresAt?: unknown } | null
+      return value && typeof value.ownerId === 'string' && typeof value.expiresAt === 'number'
+        ? { ownerId: value.ownerId, expiresAt: value.expiresAt }
+        : null
+    } catch {
+      return null
+    }
+  }
+  const refreshLease = (): boolean => {
+    try {
+      const existing = readLease(leaseKey())
+      if (existing && existing.ownerId !== ownerId && existing.expiresAt > Date.now()) {
+        ownership.sessionId = browser.crypto.randomUUID()
+        browser.sessionStorage.setItem(SESSION_KEY, ownership.sessionId)
+      }
+      storage.setItem(leaseKey(), JSON.stringify({ ownerId, expiresAt: Date.now() + RECOVERY_LEASE_MS }))
+      return true
+    } catch {
+      return false
+    }
+  }
+  if (!refreshLease()) return undefined
+  const timer = (browser as Window & {
+    setInterval?: typeof setInterval
+    clearInterval?: typeof clearInterval
+  }).setInterval?.(refreshLease, RECOVERY_LEASE_HEARTBEAT_MS)
+  browser.addEventListener('pagehide', () => {
+    if (timer !== undefined) {
+      (browser as Window & { clearInterval?: typeof clearInterval }).clearInterval?.(timer)
+    }
+    try {
+      if (readLease(leaseKey())?.ownerId === ownerId) storage.removeItem(leaseKey())
+    } catch {
+      // Keep the lease until expiry if the browser refuses storage access during teardown.
+    }
+  })
+  return async () => {
+    if (!refreshLease()) return new Set([ownership.sessionId])
+    const active = new Set<string>([ownership.sessionId])
+    const now = Date.now()
+    try {
+      const leaseKeys: string[] = []
+      for (let index = 0; index < storage.length; index++) {
+        const key = storage.key(index)
+        if (key?.startsWith(RECOVERY_LEASE_PREFIX)) leaseKeys.push(key)
+      }
+      for (const key of leaseKeys) {
+        const lease = readLease(key)
+        if (lease && lease.expiresAt > now) {
+          active.add(key.slice(RECOVERY_LEASE_PREFIX.length))
+          continue
+        }
+        try {
+          storage.removeItem(key)
+        } catch {
+          // Expired leases are harmless; leave them for a later best-effort scan.
+        }
+      }
+    } catch {
+      return new Set([ownership.sessionId])
+    }
+    return active
+  }
 }
 
 export function browserRecoverySessionId(

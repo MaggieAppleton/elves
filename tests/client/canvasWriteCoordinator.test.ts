@@ -417,6 +417,44 @@ test('a new tab can claim a journal after its original session closes', async ()
   reopened.coordinator.dispose()
 })
 
+test('a fresh session claims a closed-tab journal without taking an active tab journal', async () => {
+  const store = new MemoryCanvasRecoveryStore()
+  const active = harness({
+    autosaveMs: 500,
+    recovery: recoveryContext(store, 'active-tab'),
+    storageId: 'storage-one',
+  })
+  await active.coordinator.initialize()
+  active.setDocument(document({ name: 'active tab edit' }))
+  active.coordinator.markDirty()
+  await active.coordinator.whenRecoveryCommitted()
+  active.coordinator.dispose()
+
+  const closed = harness({
+    autosaveMs: 500,
+    recovery: recoveryContext(store, 'closed-tab'),
+    storageId: 'storage-one',
+  })
+  await closed.coordinator.initialize()
+  closed.setDocument(document({ name: 'closed tab edit' }))
+  closed.coordinator.markDirty()
+  await closed.coordinator.whenRecoveryCommitted()
+  closed.coordinator.dispose()
+
+  const heldSave = deferred<number>()
+  const fresh = harness({
+    recovery: recoveryContext(store, 'fresh-tab', async () => new Set(['active-tab', 'fresh-tab'])),
+    storageId: 'storage-one',
+    save: () => heldSave.promise,
+  })
+  await fresh.coordinator.initialize()
+
+  expect(fresh.document).toEqual(document({ name: 'closed tab edit' }))
+  expect([...store.entries.values()].map((entry) => entry.sessionId).sort())
+    .toEqual(['active-tab', 'closed-tab'])
+  fresh.coordinator.dispose()
+})
+
 test('choosing local recovery preserves unrelated remote records and then saves', async () => {
   const store = new MemoryCanvasRecoveryStore()
   const recovery = recoveryContext(store)

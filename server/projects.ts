@@ -235,20 +235,35 @@ export async function migrateProjectStorageIds(dataRoot: string): Promise<void> 
     }
     for (const id of ids) {
       if (!isValidId(id)) continue
-      await withProjectLock(dataRoot, id, async () => {
-        const path = join(projectsRoot(dataRoot), id, 'project.json')
-        let metadata: Project
-        try {
-          metadata = JSON.parse(await fs.readFile(path, 'utf8')) as Project
-        } catch {
-          return
+      let temporary: string | null = null
+      try {
+        await withProjectLock(dataRoot, id, async () => {
+          const path = join(projectsRoot(dataRoot), id, 'project.json')
+          let metadata: Project
+          try {
+            metadata = JSON.parse(await fs.readFile(path, 'utf8')) as Project
+          } catch {
+            return
+          }
+          if (!metadata.name || !metadata.createdAt || validStorageId(metadata.storageId)) return
+          const migrated = { ...metadata, id, storageId: randomUUID() }
+          temporary = join(projectsRoot(dataRoot), id, `.project.json.storage-${randomUUID()}.tmp`)
+          await fs.writeFile(temporary, JSON.stringify(migrated, null, 2), { encoding: 'utf8', flag: 'wx' })
+          await fs.rename(temporary, path)
+          temporary = null
+        })
+      } catch (error) {
+        if (temporary) {
+          try {
+            await fs.rm(temporary, { force: true })
+          } catch {
+            // The migration error remains the useful startup diagnostic.
+          }
         }
-        if (!metadata.name || !metadata.createdAt || validStorageId(metadata.storageId)) return
-        const migrated = { ...metadata, id, storageId: randomUUID() }
-        const temporary = join(projectsRoot(dataRoot), id, `.project.json.storage-${randomUUID()}.tmp`)
-        await fs.writeFile(temporary, JSON.stringify(migrated, null, 2), { encoding: 'utf8', flag: 'wx' })
-        await fs.rename(temporary, path)
-      })
+        // Keep this project identity-less rather than enabling journal recovery
+        // with an uncommitted identity; other projects can still start safely.
+        console.error(`[elves] project storage identity migration failed for "${id}":`, error)
+      }
     }
   })
 }

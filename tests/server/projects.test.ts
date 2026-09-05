@@ -147,6 +147,41 @@ test('legacy project storage identity is generated once and survives rename', as
   expect(renamed.storageId).toBe(first?.storageId)
 })
 
+test('storage identity migration skips a failed metadata commit and continues with other projects', async () => {
+  const d = await root()
+  for (const id of ['broken', 'healthy']) {
+    const directory = join(d, 'projects', id)
+    await fs.mkdir(directory, { recursive: true })
+    await fs.writeFile(join(directory, 'project.json'), JSON.stringify({
+      id, name: id, createdAt: '2026-07-02T10:00:00.000Z',
+    }))
+  }
+  const brokenPath = join(d, 'projects', 'broken', 'project.json')
+  const commitFailure = new Error('metadata commit failed')
+  const realRename = fs.rename
+  const rename = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+    if (to === brokenPath) throw commitFailure
+    await realRename(from, to)
+  })
+  const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+  try {
+    await expect(migrateProjectStorageIds(d)).resolves.toBeUndefined()
+    expect(log).toHaveBeenCalledWith(
+      '[elves] project storage identity migration failed for "broken":',
+      commitFailure,
+    )
+  } finally {
+    rename.mockRestore()
+    log.mockRestore()
+  }
+
+  expect((await getProject(d, 'broken'))?.storageId).toBeUndefined()
+  expect((await fs.readdir(join(d, 'projects', 'broken')))
+    .filter((entry) => entry.startsWith('.project.json.storage-'))).toEqual([])
+  expect((await getProject(d, 'healthy'))?.storageId).toMatch(/^[0-9a-f-]{36}$/)
+})
+
 test('listProjects is sorted by createdAt', async () => {
   const d = await root()
   await createProject(d, 'Second', '2026-07-02T11:00:00.000Z')
