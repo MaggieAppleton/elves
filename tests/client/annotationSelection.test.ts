@@ -14,6 +14,7 @@ import {
   requestAnnotationOpen,
   requestAnnotationResolve,
   setAnnotationHover,
+  suppressNextAnnotationFocus,
   subscribeAnnotationResolve,
 } from '../../src/client/annotationSelection'
 
@@ -77,6 +78,17 @@ test('interaction origin distinguishes pointer motion from immediate keyboard pr
   expect(annotationHoverOrigin()).toBe('keyboard')
   requestAnnotationOpen(a, 'keyboard')
   expect(annotationOpenTargets()).toEqual([a])
+})
+
+test('a programmatic close-focus return does not recreate a keyboard preview', () => {
+  clearAnnotationPresentations()
+
+  suppressNextAnnotationFocus(a)
+  setAnnotationHover(a, 'keyboard')
+
+  expect(annotationHoverTarget()).toBeNull()
+  setAnnotationHover(a, 'keyboard')
+  expect(annotationHoverTarget()).toEqual(a)
 })
 
 test('pointer close removes semantic state immediately and retains one inert visual exit snapshot', () => {

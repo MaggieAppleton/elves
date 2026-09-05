@@ -109,7 +109,7 @@
 }
 .elves-annotation-foreground-item[data-motion="pending"] { opacity: 0; }
 .elves-annotation-foreground-item[data-motion="enter"] { animation: elves-annotation-popover-enter 120ms ease-out both; }
-.elves-annotation-foreground-item[data-motion="exit"] { pointer-events: none; animation: elves-annotation-popover-exit 100ms ease-in both; }
+.elves-annotation-foreground-item[data-motion="exit"] { pointer-events: none; animation: elves-annotation-popover-exit 100ms ease-out both; }
 .elves-annotation-foreground-item[data-placement-side="right"] { --annotation-motion-x: -3px; --annotation-motion-y: 0; transform-origin: left center; }
 .elves-annotation-foreground-item[data-placement-side="left"] { --annotation-motion-x: 3px; --annotation-motion-y: 0; transform-origin: right center; }
 .elves-annotation-foreground-item[data-placement-side="below"] { --annotation-motion-x: 0; --annotation-motion-y: -3px; transform-origin: center top; }

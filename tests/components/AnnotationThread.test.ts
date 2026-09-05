@@ -453,6 +453,7 @@ test('compact previews clamp to three lines and popover motion changes only opac
   expect(previewRule).toMatch(/overflow:\s*hidden/)
   expect(css).toMatch(/data-motion="enter"[^}]*120ms/)
   expect(css).toMatch(/data-motion="exit"[^}]*100ms/)
+  expect(css).toMatch(/data-motion="exit"[^}]*ease-out/)
   expect(css).toMatch(/data-motion="exit"[^}]*pointer-events:\s*none/)
   const keyframes = css.match(/@keyframes elves-annotation-popover-(?:enter|exit)[\s\S]*?(?=@media)/)?.[0] ?? ''
   expect(keyframes).toContain('opacity')

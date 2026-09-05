@@ -290,6 +290,8 @@ test('pointer close is briefly inert while keyboard and reduced-motion close are
     return { motion: panel?.dataset.motion, pointerEvents: panel && getComputedStyle(panel).pointerEvents }
   })
   expect(closingState).toEqual({ motion: 'exit', pointerEvents: 'none' })
+  await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('data-annotation-target')))
+    .toBe(await pin.getAttribute('data-annotation-target'))
   await expect(popover).toHaveCount(0)
 
   await pin.focus()
@@ -305,6 +307,8 @@ test('pointer close is briefly inert while keyboard and reduced-motion close are
   popover = page.getByTestId('annotation-popover')
   await expect(popover).toHaveCSS('animation-name', 'none')
   await popover.getByLabel('Close annotation thread').click()
+  await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('data-annotation-target')))
+    .toBe(await pin.getAttribute('data-annotation-target'))
   await expect(popover).toHaveCount(0)
 })
 

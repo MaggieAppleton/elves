@@ -6,7 +6,7 @@ import {
   annotationOpenTargets, annotationRepliesLocked, annotationTargetKey,
   annotationThreadPresentation, dismissAnnotationPopoverSoon, pruneAnnotationThreads,
   requestAnnotationClose, requestAnnotationOpen, requestAnnotationReply, requestAnnotationResolve, requestAnnotationRetry,
-  setAnnotationHover, subscribeAnnotationTargets, subscribeAnnotationThreadPresentation,
+  setAnnotationHover, subscribeAnnotationTargets, subscribeAnnotationThreadPresentation, suppressNextAnnotationFocus,
   type AnnotationInteractionOrigin, type AnnotationTarget, type ClosingAnnotationTarget,
 } from '../client/annotationSelection'
 import { prefersReducedMotion } from '../client/motion'
@@ -111,11 +111,11 @@ export function foregroundThreadProps(target: AnnotationTarget): Pick<Annotation
         target,
         origin === 'pointer' && !prefersReducedMotion() ? 'pointer' : 'keyboard',
       )
-      if (origin !== 'keyboard') return
       requestAnimationFrame(() => {
         const key = annotationTargetKey(target)
         const pin = [...document.querySelectorAll<HTMLElement>('[data-annotation-target]')]
           .find((element) => element.dataset.annotationTarget === key)
+        if (origin !== 'keyboard') suppressNextAnnotationFocus(target)
         pin?.focus()
       })
     },

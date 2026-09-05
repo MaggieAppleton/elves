@@ -30,6 +30,7 @@ let annotationReplyLocked = false
 let popoverDismissTimer: ReturnType<typeof setTimeout> | null = null
 let hoverTarget: AnnotationTarget | null = null
 let hoverOrigin: AnnotationInteractionOrigin = 'pointer'
+let suppressedFocusTarget: string | null = null
 
 export function annotationTargetKey(target: AnnotationTarget): string {
   return target.kind === 'card'
@@ -143,6 +144,12 @@ export function setAnnotationHover(
   target: AnnotationTarget | null,
   origin: AnnotationInteractionOrigin = 'pointer',
 ): void {
+  const key = target && annotationTargetKey(target)
+  if (origin === 'keyboard' && key && suppressedFocusTarget === key) {
+    suppressedFocusTarget = null
+    return
+  }
+  if (origin === 'pointer') suppressedFocusTarget = null
   if (target && popoverDismissTimer !== null) {
     clearTimeout(popoverDismissTimer)
     popoverDismissTimer = null
@@ -150,6 +157,15 @@ export function setAnnotationHover(
   hoverTarget = target && openTargets.has(annotationTargetKey(target)) ? null : target
   if (target) hoverOrigin = origin
   emitTargets()
+}
+
+/** Consume the synchronous focus event caused by returning pointer-close focus to its pin. */
+export function suppressNextAnnotationFocus(target: AnnotationTarget): void {
+  const key = annotationTargetKey(target)
+  suppressedFocusTarget = key
+  queueMicrotask(() => {
+    if (suppressedFocusTarget === key) suppressedFocusTarget = null
+  })
 }
 
 /** Clear all ephemeral annotation state; none of this belongs in a canvas snapshot. */
@@ -160,6 +176,7 @@ export function clearAnnotationPresentations(): void {
   closingTimers.forEach((timer) => clearTimeout(timer))
   closingTimers.clear()
   hoverTarget = null
+  suppressedFocusTarget = null
   if (popoverDismissTimer !== null) {
     clearTimeout(popoverDismissTimer)
     popoverDismissTimer = null
