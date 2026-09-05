@@ -27,6 +27,7 @@ vi.mock('../../src/client/reviews', () => ({
 }))
 
 import App, { retryAnnotationCanRun } from '../../src/App'
+import { DraftPane } from '../../src/components/DraftPane'
 import { clearAnnotationPresentations, requestAnnotationOpen } from '../../src/client/annotationSelection'
 
 const storage = new Map<string, string>()
@@ -65,6 +66,24 @@ test('opening an annotation pin leaves the canvas-only view and draft divider un
 
   expect(stage().props['data-view']).toBe('canvas')
   expect(tree.root.findAllByProps({ 'data-testid': 'draft-divider' })).toHaveLength(0)
+  await act(async () => { tree.unmount() })
+})
+
+test('mounts the draft pane only after leaving canvas view', async () => {
+  let tree!: ReactTestRenderer
+  await act(async () => {
+    tree = create(createElement(App))
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+
+  expect(tree.root.findAllByType(DraftPane)).toHaveLength(0)
+
+  await act(async () => {
+    tree.root.findByProps({ 'data-testid': 'draft-open' }).props.onClick()
+  })
+
+  expect(tree.root.findAllByType(DraftPane)).toHaveLength(1)
   await act(async () => { tree.unmount() })
 })
 
