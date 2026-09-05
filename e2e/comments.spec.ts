@@ -7,6 +7,11 @@ const THREAD_TRACK_TOLERANCE_PX = 8
 
 type ScreenBox = { x: number; y: number; width: number; height: number }
 
+function overlapArea(left: ScreenBox, right: ScreenBox): number {
+  return Math.max(0, Math.min(left.x + left.width, right.x + right.width) - Math.max(left.x, right.x)) *
+    Math.max(0, Math.min(left.y + left.height, right.y + right.height) - Math.max(left.y, right.y))
+}
+
 async function addCardAndComment(page: any, request: any, comment: { type: string | null; text: string }): Promise<string> {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
@@ -151,6 +156,103 @@ test('each open card comment renders an independent pin', async ({ page, request
   await expect(pins).toHaveCount(2)
   const boxes = await pins.evaluateAll((elements) => elements.map((pin) => pin.getBoundingClientRect().y))
   expect(new Set(boxes).size).toBe(2)
+})
+
+test('promoted threads avoid their source and keep prior threads selectable', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1554, height: 942 })
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  for (let i = 0; i < 2; i++) {
+    await page.getByTestId('new-prose').click()
+    await page.keyboard.press('Escape')
+  }
+  await expect.poll(async () => (await serverCardIds(request, projectId)).length).toBe(2)
+  const [firstCardId, secondCardId] = await serverCardIds(request, projectId)
+  const [firstCard, secondCard] = await Promise.all([
+    cardRecord(request, firstCardId),
+    cardRecord(request, secondCardId),
+  ])
+  await moveCardsTool(BASE, projectId, {
+    moves: [{ cardId: secondCardId, x: firstCard.x + 520, y: secondCard.y + 220 }],
+  })
+  await addComment(request, firstCardId, { type: 'needs-evidence', text: 'Needs evidence.' })
+  await addComment(request, secondCardId, { type: 'weak-argument', text: 'Weak argument.' })
+
+  const firstPin = page.locator(`[data-shape-id="${firstCardId}"] [data-testid="annotation-pin"]`)
+  const secondPin = page.locator(`[data-shape-id="${secondCardId}"] [data-testid="annotation-pin"]`)
+  const cardPositionsBefore = await Promise.all([
+    page.locator(`[data-shape-id="${firstCardId}"]`).boundingBox(),
+    page.locator(`[data-shape-id="${secondCardId}"]`).boundingBox(),
+  ])
+  await firstPin.click()
+  await secondPin.click()
+  const panels = page.getByTestId('annotation-popover')
+  await expect(panels).toHaveCount(2)
+  expect(await Promise.all([
+    page.locator(`[data-shape-id="${firstCardId}"]`).boundingBox(),
+    page.locator(`[data-shape-id="${secondCardId}"]`).boundingBox(),
+  ])).toEqual(cardPositionsBefore)
+
+  const activePanel = panels.filter({ hasText: 'Weak argument.' })
+  const priorPanel = panels.filter({ hasText: 'Needs evidence.' })
+  const source = page.locator(`[data-shape-id="${secondCardId}"]`)
+  await expect.poll(async () => {
+    const [panelBox, sourceBox] = await Promise.all([activePanel.boundingBox(), source.boundingBox()])
+    return panelBox && sourceBox ? overlapArea(panelBox, sourceBox) : null
+  }).toBe(0)
+  const [activeBox, priorBox] = await Promise.all([activePanel.boundingBox(), priorPanel.boundingBox()])
+  expect(activeBox).not.toBeNull()
+  expect(priorBox).not.toBeNull()
+  expect(Math.max(Math.abs(activeBox!.x - priorBox!.x), Math.abs(activeBox!.y - priorBox!.y)))
+    .toBeGreaterThanOrEqual(32)
+
+  await activePanel.getByLabel('Reply to annotation').click()
+  await activePanel.locator('textarea').fill('Stable while the reply streams.')
+  const activeSource = page.locator(`[data-shape-id="${secondCardId}"]`)
+  const placementSide = async (panel: typeof activePanel, source: typeof activeSource) => {
+    const [threadBox, sourceBox] = await Promise.all([panel.boundingBox(), source.boundingBox()])
+    if (!threadBox || !sourceBox) return null
+    if (threadBox.x >= sourceBox.x + sourceBox.width) return 'right'
+    if (threadBox.x + threadBox.width <= sourceBox.x) return 'left'
+    if (threadBox.y + threadBox.height <= sourceBox.y) return 'above'
+    return 'below'
+  }
+  const sideBeforeReply = await placementSide(activePanel, activeSource)
+  await activePanel.getByRole('button', { name: 'Send reply' }).click()
+  await expect(activePanel).toContainText('Stub annotation reply: Stable while the reply streams.')
+  expect(await placementSide(activePanel, activeSource)).toBe(sideBeforeReply)
+
+  await firstPin.click()
+  await expect(priorPanel.getByLabel('Reply to annotation')).toBeEnabled()
+  await priorPanel.getByLabel('Reply to annotation').click()
+  await priorPanel.locator('textarea').fill('Still reachable after promotion.')
+  await page.mouse.click(24, 900)
+  await expect(panels).toHaveCount(2)
+
+  await page.getByLabel('Close annotation thread').first().click()
+  await page.getByLabel('Close annotation thread').first().click()
+  await page.setViewportSize({ width: 720, height: 640 })
+  await page.reload()
+  await createFeedbackTool(BASE, projectId, {
+    text: 'Constrained edge.', x: 80, y: 300, type: 'weak-argument', reviewer: 'architect',
+  })
+  const { feedback } = await readMapTool(BASE, projectId)
+  const constrainedFeedback = feedback.find((entry) => entry.text === 'Constrained edge.')!
+  const constrainedPin = page.locator(`[data-annotation-target="feedback:${constrainedFeedback.id}"]`)
+  await expect(constrainedPin).toBeVisible()
+  await constrainedPin.click()
+  const constrained = page.getByTestId('annotation-popover')
+  await expect.poll(async () => {
+    const [threadBox, stageBox] = await Promise.all([
+      constrained.boundingBox(),
+      page.locator('.tl-container').first().boundingBox(),
+    ])
+    return !!threadBox && !!stageBox && threadBox.x >= stageBox.x && threadBox.y >= stageBox.y &&
+      threadBox.x + threadBox.width <= stageBox.x + stageBox.width &&
+      threadBox.y + threadBox.height <= stageBox.y + stageBox.height
+  }).toBe(true)
+  await constrained.getByLabel('Reply to annotation').click()
+  await expect(constrained.locator('textarea')).toBeVisible()
 })
 
 test('identical comments on different cards have distinct pins', async ({ page, request }) => {
