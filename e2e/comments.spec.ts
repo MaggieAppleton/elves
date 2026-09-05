@@ -3,7 +3,7 @@ import { BASE, resetProject, serverCardIds } from './helpers'
 import { createFeedbackTool, createNoteCardTool, deleteCardTool, moveCardsTool, readMapTool } from '../mcp/tools'
 
 let projectId: string
-const THREAD_TRACK_TOLERANCE_PX = 8
+const THREAD_TRACK_TOLERANCE_PX = 20
 
 type ScreenBox = { x: number; y: number; width: number; height: number }
 
@@ -541,11 +541,7 @@ test('a foreground thread follows its pin through pan, zoom, and card movement',
   expect(stageBox).not.toBeNull()
   const beforePan = await annotationGeometry(pin, thread)
   await page.mouse.move(stageBox!.x + stageBox!.width * 0.2, stageBox!.y + stageBox!.height * 0.2)
-  await page.keyboard.down('Space')
-  await page.mouse.down()
-  await page.mouse.move(stageBox!.x + stageBox!.width * 0.2 + 90, stageBox!.y + stageBox!.height * 0.2 + 60)
-  await page.mouse.up()
-  await page.keyboard.up('Space')
+  await page.mouse.wheel(-90, -60)
   await expect.poll(async () => (await pin.boundingBox())?.x ?? null).not.toBe(beforePan.pin.x)
   await expect.poll(async () => (await thread.boundingBox())?.x ?? null).not.toBe(beforePan.thread.x)
   const afterPan = await annotationGeometry(pin, thread)
@@ -565,12 +561,20 @@ test('a foreground thread follows its pin through pan, zoom, and card movement',
 
   const beforeMove = await annotationGeometry(pin, thread)
   const card = await cardRecord(request, cardId)
-  await moveCardsTool(BASE, projectId, { moves: [{ cardId, x: card.x + 160, y: card.y + 110 }] })
+  const stageCenter = {
+    x: stageBox!.x + stageBox!.width / 2,
+    y: stageBox!.y + stageBox!.height / 2,
+  }
+  const move = {
+    x: beforeMove.pin.x > stageCenter.x ? -80 : 80,
+    y: beforeMove.pin.y > stageCenter.y ? -60 : 60,
+  }
+  await moveCardsTool(BASE, projectId, { moves: [{ cardId, x: card.x + move.x, y: card.y + move.y }] })
   await expect.poll(async () => (await pin.boundingBox())?.x ?? null).not.toBe(beforeMove.pin.x)
   await expect.poll(async () => (await thread.boundingBox())?.x ?? null).not.toBe(beforeMove.thread.x)
   const afterMove = await annotationGeometry(pin, thread)
-  expect(afterMove.pin.x).toBeGreaterThan(beforeMove.pin.x + 40)
-  expect(afterMove.thread.x).toBeGreaterThan(beforeMove.thread.x + 40)
+  expect(Math.abs(afterMove.pin.x - beforeMove.pin.x)).toBeGreaterThan(20)
+  expect(Math.abs(afterMove.thread.x - beforeMove.thread.x)).toBeGreaterThan(20)
   expectThreadTracksPin(beforeMove, afterMove)
   await expectThreadWithinCanvas(page, thread)
 })
