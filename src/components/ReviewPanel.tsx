@@ -95,6 +95,7 @@ export function ReviewPanel({
   const [open, setOpen] = useState(false)
   const [focus, setFocus] = useState('')
   const ref = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     if (!open) return
@@ -102,7 +103,10 @@ export function ReviewPanel({
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
+      if (e.key === 'Escape') {
+        setOpen(false)
+        triggerRef.current?.focus()
+      }
     }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
@@ -155,13 +159,16 @@ export function ReviewPanel({
   return (
     <div className="elves-review" ref={ref}>
       <button
+        ref={triggerRef}
         className="elves-review__button"
         data-testid="review-button"
         aria-label="Review"
         aria-haspopup="menu"
         aria-expanded={open}
-        disabled={disabled}
-        onClick={() => setOpen((v) => !v)}
+        aria-disabled={disabled || undefined}
+        onClick={() => {
+          if (!disabled) setOpen((v) => !v)
+        }}
       >
         <EyeglassesIcon />
         <span>Review</span>

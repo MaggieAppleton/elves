@@ -420,7 +420,7 @@ test('ambiguous rename locks mutations and offers same-name recovery', async ({ 
   await expect(page.getByTestId('draft-editor')).toHaveCount(0)
   await page.keyboard.press('/')
   await expect(page.getByRole('dialog', { name: 'Ask an agent' })).toHaveCount(0)
-  await expect(page.getByTestId('review-button')).toBeDisabled()
+  await expect(page.getByTestId('review-button')).toHaveAttribute('aria-disabled', 'true')
   const card = page.locator('.elves-card--prose').first()
   const bounds = await card.boundingBox()
   if (!bounds) throw new Error('prose card not in DOM')
