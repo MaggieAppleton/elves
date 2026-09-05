@@ -791,12 +791,13 @@ export default function App() {
       : kind === 'figure' ? makeFigureCardProps()
       : makeNoteCardProps()
     props.h = measuredCardPropsHeight(editor, props)
+    const { dx, dy } = cascadeOffset(spawnCountRef.current++)
     const id = createShapeId()
     editor.createShape<CardShape>({
       id,
       type: 'card',
-      x: center.x - props.w / 2,
-      y: center.y - props.h / 2,
+      x: center.x - props.w / 2 + dx,
+      y: center.y - props.h / 2 + dy,
       props,
     })
     editor.select(id)
