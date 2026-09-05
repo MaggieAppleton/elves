@@ -125,6 +125,34 @@ test('a successful empty project read keeps the genuine empty-store action', asy
   await act(async () => { tree.unmount() })
 })
 
+test('a failed refresh after creating the first project replaces the empty-store action with recovery', async () => {
+  vi.mocked(listProjects)
+    .mockResolvedValueOnce([])
+    .mockRejectedValueOnce(new Error('refresh unavailable'))
+  vi.mocked(createProject).mockResolvedValueOnce({
+    id: 'first-project', name: 'First project', createdAt: '2026-09-05T09:05:00.000Z',
+  })
+  vi.mocked(window.prompt).mockReturnValueOnce('First project')
+  let tree!: ReactTestRenderer
+  await act(async () => {
+    tree = create(createElement(App))
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+
+  await act(async () => {
+    tree.root.findByProps({ 'data-testid': 'project-new' }).props.onClick()
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+
+  expect(tree.root.findAllByProps({ 'data-testid': 'project-load-error' })).toHaveLength(1)
+  expect(tree.root.findAllByProps({ 'data-testid': 'project-load-retry' })).toHaveLength(1)
+  expect(tree.root.findAllByProps({ 'data-testid': 'project-new' })).toHaveLength(0)
+  expect(tree.root.findAll((node) => node.children.includes('No projects yet'))).toHaveLength(0)
+  await act(async () => { tree.unmount() })
+})
+
 test('a failed refresh keeps the last successful project list and exposes Retry', async () => {
   const existing = { id: 'essay', name: 'Essay', createdAt: '2026-09-05T09:00:00.000Z' }
   vi.mocked(listProjects)

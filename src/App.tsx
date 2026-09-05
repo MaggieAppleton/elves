@@ -994,7 +994,7 @@ export default function App() {
 
   // A failed read is not an empty project store. Keep creation unavailable
   // until a successful response establishes whether the store is empty.
-  if (projects === null && projectListError) {
+  if ((projects === null || projects.length === 0) && projectListError) {
     return (
       <div id="app-root">
         <div className="elves-empty" data-testid="project-load-error">
