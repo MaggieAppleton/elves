@@ -114,7 +114,6 @@
   font: 600 12px var(--elves-card-font);
   white-space: nowrap;
 }
-.elves-annotation-resolved-cue[data-side="left"] { transform: translateX(-100%); }
 .elves-annotation-resolved-cue button { min-height: 24px; padding: 3px 7px; border: 0; border-radius: 6px; background: var(--elves-tertiary); color: var(--elves-ink); font: inherit; cursor: pointer; }
 .elves-annotation-resolved-cue button:hover { background: var(--elves-border); }
 .elves-annotation-resolved-cue button:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring); }

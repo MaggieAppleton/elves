@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type SyntheticEvent } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type SyntheticEvent } from 'react'
 import { useEditor, useValue, type Editor, type TLShapeId } from 'tldraw'
 import { annotationThreadMaxHeight, placeAnnotationThread, type AnnotationPlacement } from '../client/annotationPlacement'
 import {
-  annotationHoverTarget, annotationOpenTargets, annotationRepliesLocked, annotationResolutionCue, annotationTargetKey,
+  annotationHoverTarget, annotationOpenTargets, annotationRepliesLocked, annotationResolutionCues, annotationTargetKey,
   annotationThreadPresentation, dismissAnnotationPopoverSoon, pruneAnnotationThreads,
   requestAnnotationClose, requestAnnotationReply, requestAnnotationResolutionUndo,
-  requestAnnotationResolve, requestAnnotationRetry, setAnnotationHover, setAnnotationResolutionCue,
+  requestAnnotationResolve, requestAnnotationRetry, clearAnnotationResolutionCue, setAnnotationHover,
   subscribeAnnotationTargets, subscribeAnnotationThreadPresentation,
   type AnnotationResolutionCue, type AnnotationTarget,
 } from '../client/annotationSelection'
@@ -25,13 +25,33 @@ const RESOLUTION_CUE_MS = 4_000
 
 export function ResolvedAnnotationCue({ cue }: { cue: AnnotationResolutionCue }) {
   const remaining = useRef(RESOLUTION_CUE_MS)
+  const cueRef = useRef<HTMLDivElement>(null)
   const [pointerInside, setPointerInside] = useState(false)
   const [focusInside, setFocusInside] = useState(false)
+  const [position, setPosition] = useState({ left: cue.anchor.left, top: cue.anchor.top })
+
+  useLayoutEffect(() => {
+    const element = cueRef.current
+    const boundary = element?.parentElement
+    if (!element || !boundary) return
+    const place = () => {
+      const desiredLeft = cue.anchor.side === 'left'
+        ? cue.anchor.left - element.offsetWidth
+        : cue.anchor.left
+      const left = Math.max(8, Math.min(desiredLeft, boundary.clientWidth - element.offsetWidth - 8))
+      const top = Math.max(8, Math.min(cue.anchor.top, boundary.clientHeight - element.offsetHeight - 8))
+      setPosition((current) => current.left === left && current.top === top ? current : { left, top })
+    }
+    place()
+    const observer = new ResizeObserver(place)
+    observer.observe(boundary)
+    return () => observer.disconnect()
+  }, [cue.anchor.left, cue.anchor.side, cue.anchor.top])
 
   useEffect(() => {
     if (pointerInside || focusInside) return
     const started = Date.now()
-    const timer = setTimeout(() => setAnnotationResolutionCue(null), remaining.current)
+    const timer = setTimeout(() => clearAnnotationResolutionCue(cue), remaining.current)
     return () => {
       clearTimeout(timer)
       remaining.current = Math.max(0, remaining.current - (Date.now() - started))
@@ -40,10 +60,11 @@ export function ResolvedAnnotationCue({ cue }: { cue: AnnotationResolutionCue })
 
   return (
     <div
+      ref={cueRef}
       className="elves-annotation-resolved-cue"
       data-side={cue.anchor.side}
       data-testid="annotation-resolved-cue"
-      style={{ left: cue.anchor.left, top: cue.anchor.top }}
+      style={position}
       onPointerDown={stopForegroundEvent}
       onClick={stopForegroundEvent}
       onKeyDown={stopForegroundEvent}
@@ -55,7 +76,15 @@ export function ResolvedAnnotationCue({ cue }: { cue: AnnotationResolutionCue })
       }}
     >
       <span role="status">Comment resolved</span>
-      <button type="button" onClick={() => requestAnnotationResolutionUndo(cue)}>Undo</button>
+      <button
+        type="button"
+        disabled={annotationRepliesLocked()}
+        onClick={() => {
+          if (!annotationRepliesLocked()) requestAnnotationResolutionUndo(cue)
+        }}
+      >
+        Undo
+      </button>
     </div>
   )
 }
@@ -249,15 +278,15 @@ export function AnnotationPopoverLayer() {
   useEffect(() => subscribeAnnotationThreadPresentation(() => setPresentationVersion((version) => version + 1)), [])
 
   const entries = foregroundEntries(annotationOpenTargets(), annotationHoverTarget())
-  const resolvedCue = annotationResolutionCue()
-  if (!entries.length && !resolvedCue) return null
+  const resolvedCues = annotationResolutionCues()
+  if (!entries.length && !resolvedCues.length) return null
 
   return (
     <div className="elves-annotation-popover-layer" aria-live="polite">
       {entries.map((entry) => (
         <AnnotationForegroundItem key={annotationTargetKey(entry.target)} {...entry} editor={editor} />
       ))}
-      {resolvedCue && <ResolvedAnnotationCue key={resolvedCue.id} cue={resolvedCue} />}
+      {resolvedCues.map((cue) => <ResolvedAnnotationCue key={cue.id} cue={cue} />)}
     </div>
   )
 }

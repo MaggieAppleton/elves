@@ -99,5 +99,5 @@ test('clearing project-local presentation state also removes a pending resolutio
 
   clearAnnotationPresentations()
 
-  expect(annotationResolutionCue()).toBeNull()
+  expect(annotationResolutionCue(a)).toBeNull()
 })

@@ -287,6 +287,7 @@ test('resolved card confirmation restores only its target and preserves later wo
 
   await page.getByTestId('new-note').click()
   await expect.poll(async () => (await serverCardIds(request, projectId)).length).toBe(3)
+  await page.keyboard.press('Escape')
   await page.keyboard.press('Meta+z')
   await expect.poll(async () => (await serverCardIds(request, projectId)).length).toBe(2)
 })

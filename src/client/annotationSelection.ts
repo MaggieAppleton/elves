@@ -32,7 +32,7 @@ const resolutionUndoListeners = new Set<AnnotationResolutionUndoListener>()
 let annotationReplyLocked = false
 let popoverDismissTimer: ReturnType<typeof setTimeout> | null = null
 let hoverTarget: AnnotationTarget | null = null
-let resolutionCue: AnnotationResolutionCue | null = null
+const resolutionCues = new Map<string, AnnotationResolutionCue>()
 
 export function annotationTargetKey(target: AnnotationTarget): string {
   return target.kind === 'card'
@@ -98,10 +98,23 @@ export function requestAnnotationResolve(target: AnnotationTarget): void {
   resolveListeners.forEach((listener) => listener(target))
 }
 
-export function annotationResolutionCue(): AnnotationResolutionCue | null { return resolutionCue }
+export function annotationResolutionCue(target: AnnotationTarget): AnnotationResolutionCue | null {
+  return resolutionCues.get(annotationTargetKey(target)) ?? null
+}
 
-export function setAnnotationResolutionCue(cue: AnnotationResolutionCue | null): void {
-  resolutionCue = cue
+export function annotationResolutionCues(): AnnotationResolutionCue[] {
+  return Array.from(resolutionCues.values())
+}
+
+export function setAnnotationResolutionCue(cue: AnnotationResolutionCue): void {
+  resolutionCues.set(annotationTargetKey(cue.target), cue)
+  emitTargets()
+}
+
+export function clearAnnotationResolutionCue(cue: AnnotationResolutionCue): void {
+  const key = annotationTargetKey(cue.target)
+  if (resolutionCues.get(key)?.id !== cue.id) return
+  resolutionCues.delete(key)
   emitTargets()
 }
 
@@ -139,7 +152,7 @@ export function setAnnotationHover(target: AnnotationTarget | null): void {
 export function clearAnnotationPresentations(): void {
   openTargets.clear()
   hoverTarget = null
-  resolutionCue = null
+  resolutionCues.clear()
   if (popoverDismissTimer !== null) {
     clearTimeout(popoverDismissTimer)
     popoverDismissTimer = null

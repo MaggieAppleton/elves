@@ -10,15 +10,21 @@ function editorWith(records: Record<string, any>, pin?: { key: string; rect: any
     records[update.id] = { ...current, props: { ...current.props, ...update.props } }
   })
   const containerBounds = { left: 100, top: 50, width: 800, height: 600 }
+  const run = vi.fn((task: () => void, _options?: { history?: 'ignore' | 'record' }) => task())
+  const markHistoryStoppingPoint = vi.fn()
   return {
     editor: {
       getShape: (id: string) => records[id],
       updateShape,
+      run,
+      markHistoryStoppingPoint,
       getContainer: () => ({
         getBoundingClientRect: () => containerBounds,
         querySelectorAll: () => pin ? [{ dataset: { annotationTarget: pin.key }, getBoundingClientRect: () => pin.rect }] : [],
       }),
     } as unknown as Editor,
+    markHistoryStoppingPoint,
+    run,
     updateShape,
   }
 }
@@ -34,7 +40,7 @@ test('targeted card Undo changes only resolved and preserves later replies and u
       }] },
     },
   }
-  const { editor, updateShape } = editorWith(records)
+  const { editor, markHistoryStoppingPoint, run, updateShape } = editorWith(records)
   const identity = annotationResolutionIdentity(editor, target)!
   expect(setAnnotationResolved(editor, target, true, identity)).toBe(true)
 
@@ -47,6 +53,12 @@ test('targeted card Undo changes only resolved and preserves later replies and u
     messages: [{ id: 'initial' }, { id: 'later' }],
   })
   expect(updateShape).toHaveBeenCalledTimes(2)
+  expect(run.mock.calls.map(([, options]) => options)).toEqual([
+    { history: 'ignore' }, { history: 'ignore' },
+  ])
+  expect(markHistoryStoppingPoint.mock.calls.map(([label]) => label)).toEqual([
+    'resolve annotation', 'restore annotation',
+  ])
 })
 
 test('Undo safely no-ops when a target is deleted or superseded and never recreates it', () => {

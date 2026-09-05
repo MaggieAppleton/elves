@@ -46,19 +46,25 @@ export function setAnnotationResolved(
     if (!shape || shape.type !== 'card') return false
     const comment = shape.props.comments.find((entry) => entry.id === target.commentId)
     if (!comment || comment.resolved === resolved) return false
-    editor.updateShape<CardShape>({
-      id: shape.id,
-      type: 'card',
-      props: {
-        comments: shape.props.comments.map((entry) =>
-          entry.id === target.commentId ? { ...entry, resolved } : entry),
-      },
-    })
+    editor.run(() => {
+      editor.updateShape<CardShape>({
+        id: shape.id,
+        type: 'card',
+        props: {
+          comments: shape.props.comments.map((entry) =>
+            entry.id === target.commentId ? { ...entry, resolved } : entry),
+        },
+      })
+    }, { history: 'ignore' })
+    editor.markHistoryStoppingPoint(resolved ? 'resolve annotation' : 'restore annotation')
     return true
   }
   const shape = editor.getShape(target.feedbackId as TLShapeId) as FeedbackShape | undefined
   if (!shape || shape.type !== 'feedback' || shape.props.resolved === resolved) return false
-  editor.updateShape<FeedbackShape>({ id: shape.id, type: 'feedback', props: { resolved } })
+  editor.run(() => {
+    editor.updateShape<FeedbackShape>({ id: shape.id, type: 'feedback', props: { resolved } })
+  }, { history: 'ignore' })
+  editor.markHistoryStoppingPoint(resolved ? 'resolve annotation' : 'restore annotation')
   return true
 }
 

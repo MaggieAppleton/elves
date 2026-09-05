@@ -43,8 +43,8 @@ import { AgentBox } from './components/AgentBox'
 import { DraftPane } from './components/DraftPane'
 import { AnnotationPopoverLayer } from './components/AnnotationPopoverLayer'
 import {
-  annotationResolutionCue, clearAnnotationPresentations, closeAnnotationThread, setAnnotationRepliesLocked,
-  setAnnotationResolutionCue, setAnnotationThreadPresentation, subscribeAnnotationReply,
+  annotationResolutionCue, clearAnnotationPresentations, clearAnnotationResolutionCue, closeAnnotationThread,
+  setAnnotationRepliesLocked, setAnnotationResolutionCue, setAnnotationThreadPresentation, subscribeAnnotationReply,
   subscribeAnnotationResolutionUndo, subscribeAnnotationResolve, subscribeAnnotationRetry,
 } from './client/annotationSelection'
 import {
@@ -451,12 +451,10 @@ export default function App() {
   }), [canvasMutationsLocked, editor])
 
   useEffect(() => subscribeAnnotationResolutionUndo((cue) => {
-    if (canvasMutationsLocked || !editor || annotationResolutionCue()?.id !== cue.id) {
-      setAnnotationResolutionCue(null)
-      return
-    }
+    if (canvasMutationsLocked || !editor) return
+    if (annotationResolutionCue(cue.target)?.id !== cue.id) return
     const restored = setAnnotationResolved(editor, cue.target, false, cue.identity)
-    setAnnotationResolutionCue(null)
+    clearAnnotationResolutionCue(cue)
     if (!restored) return
     requestAnimationFrame(() => {
       const key = cue.target.kind === 'card'

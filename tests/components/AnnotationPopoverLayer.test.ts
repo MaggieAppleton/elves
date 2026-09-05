@@ -21,8 +21,10 @@ vi.mock('tldraw', () => ({
 import { AnnotationPopoverLayer, ResolvedAnnotationCue, foregroundEntries } from '../../src/components/AnnotationPopoverLayer'
 import {
   annotationResolutionCue,
+  clearAnnotationResolutionCue,
   clearAnnotationPresentations,
   openAnnotationThread,
+  setAnnotationRepliesLocked,
   setAnnotationHover,
   setAnnotationResolutionCue,
   setAnnotationThreadPresentation,
@@ -156,12 +158,12 @@ test('resolved cue expires after four active seconds and pauses for pointer or f
 
   act(() => { vi.advanceTimersByTime(3_000); surface.props.onPointerEnter() })
   act(() => { vi.advanceTimersByTime(5_000) })
-  expect(annotationResolutionCue()).toEqual(cue)
+  expect(annotationResolutionCue(cue.target)).toEqual(cue)
   act(() => surface.props.onPointerLeave())
   act(() => { vi.advanceTimersByTime(999) })
-  expect(annotationResolutionCue()).toEqual(cue)
+  expect(annotationResolutionCue(cue.target)).toEqual(cue)
   act(() => { vi.advanceTimersByTime(1) })
-  expect(annotationResolutionCue()).toBeNull()
+  expect(annotationResolutionCue(cue.target)).toBeNull()
 
   act(() => tree.unmount())
   vi.useRealTimers()
@@ -174,7 +176,10 @@ test('resolved cue sends targeted Undo and remains while keyboard focus is insid
     anchor: { left: 120, top: 80, side: 'left' as const },
   }
   const onUndo = vi.fn()
-  const unsubscribe = subscribeAnnotationResolutionUndo(onUndo)
+  const unsubscribe = subscribeAnnotationResolutionUndo((cue) => {
+    onUndo(cue)
+    clearAnnotationResolutionCue(cue)
+  })
   setAnnotationResolutionCue(cue)
   let tree!: ReactTestRenderer
   act(() => { tree = create(createElement(ResolvedAnnotationCue, { cue })) })
@@ -186,7 +191,7 @@ test('resolved cue sends targeted Undo and remains while keyboard focus is insid
   }
   act(() => surface.props.onFocus())
   act(() => { vi.advanceTimersByTime(5_000) })
-  expect(annotationResolutionCue()).toEqual(cue)
+  expect(annotationResolutionCue(cue.target)).toEqual(cue)
   act(() => tree.root.findByType('button').props.onClick())
   expect(onUndo).toHaveBeenCalledWith(cue)
 
@@ -206,4 +211,92 @@ test('foreground layer renders a local cue even after its resolved thread is gon
   expect(cue.props.style).toEqual({ left: 120, top: 80 })
   expect(tree.root.findAllByProps({ 'data-testid': 'annotation-thread' })).toHaveLength(0)
   act(() => tree.unmount())
+})
+
+test('rapid resolves retain a local cue for each target and send Undo to the selected target', () => {
+  const firstCue = {
+    id: 'cue:first', target: failedTarget, identity: 'first feedback identity',
+    anchor: { left: 120, top: 80, side: 'right' as const },
+  }
+  const secondTarget = { kind: 'card' as const, cardId: 'shape:second', commentId: 'comment:second' }
+  const secondCue = {
+    id: 'cue:second', target: secondTarget, identity: 'second card identity',
+    anchor: { left: 420, top: 180, side: 'left' as const },
+  }
+  const onUndo = vi.fn()
+  const unsubscribe = subscribeAnnotationResolutionUndo((cue) => {
+    onUndo(cue)
+    clearAnnotationResolutionCue(cue)
+  })
+  setAnnotationResolutionCue(firstCue)
+  setAnnotationResolutionCue(secondCue)
+
+  let tree!: ReactTestRenderer
+  act(() => { tree = create(createElement(AnnotationPopoverLayer)) })
+
+  const cues = tree.root.findAllByProps({ 'data-testid': 'annotation-resolved-cue' })
+  expect(cues).toHaveLength(2)
+  act(() => cues[0].findByType('button').props.onClick())
+  expect(onUndo).toHaveBeenCalledWith(firstCue)
+  expect(annotationResolutionCue(firstCue.target)).toBeNull()
+  expect(annotationResolutionCue(secondCue.target)).toEqual(secondCue)
+  expect(tree.root.findAllByProps({ 'data-testid': 'annotation-resolved-cue' })).toHaveLength(1)
+
+  act(() => tree.unmount())
+  unsubscribe()
+})
+
+test('each local cue timer clears only its own target', () => {
+  vi.useFakeTimers()
+  const firstCue = {
+    id: 'cue:timer-first', target: failedTarget, identity: 'first feedback identity',
+    anchor: { left: 120, top: 80, side: 'right' as const },
+  }
+  const secondTarget = { kind: 'card' as const, cardId: 'shape:timer-second', commentId: 'comment:timer-second' }
+  const secondCue = {
+    id: 'cue:timer-second', target: secondTarget, identity: 'second card identity',
+    anchor: { left: 420, top: 180, side: 'left' as const },
+  }
+  setAnnotationResolutionCue(firstCue)
+  setAnnotationResolutionCue(secondCue)
+  let tree!: ReactTestRenderer
+  act(() => { tree = create(createElement(AnnotationPopoverLayer)) })
+
+  const cues = tree.root.findAllByProps({ 'data-testid': 'annotation-resolved-cue' })
+  act(() => cues[1].props.onPointerEnter())
+  act(() => { vi.advanceTimersByTime(4_000) })
+  expect(annotationResolutionCue(firstCue.target)).toBeNull()
+  expect(annotationResolutionCue(secondCue.target)).toEqual(secondCue)
+  expect(tree.root.findAllByProps({ 'data-testid': 'annotation-resolved-cue' })).toHaveLength(1)
+
+  act(() => tree.unmount())
+  vi.useRealTimers()
+})
+
+test('locked Undo remains visible and only dispatches after the canvas unlocks', () => {
+  const cue = {
+    id: 'cue:locked', target: failedTarget, identity: 'feedback identity',
+    anchor: { left: 120, top: 80, side: 'right' as const },
+  }
+  const onUndo = vi.fn()
+  const unsubscribe = subscribeAnnotationResolutionUndo(onUndo)
+  setAnnotationResolutionCue(cue)
+  setAnnotationRepliesLocked(true)
+  let tree!: ReactTestRenderer
+  act(() => { tree = create(createElement(AnnotationPopoverLayer)) })
+
+  let undo = tree.root.findByType('button')
+  expect(undo.props.disabled).toBe(true)
+  act(() => undo.props.onClick())
+  expect(onUndo).not.toHaveBeenCalled()
+  expect(annotationResolutionCue(cue.target)).toEqual(cue)
+
+  act(() => setAnnotationRepliesLocked(false))
+  undo = tree.root.findByType('button')
+  expect(undo.props.disabled).toBe(false)
+  act(() => undo.props.onClick())
+  expect(onUndo).toHaveBeenCalledWith(cue)
+
+  act(() => tree.unmount())
+  unsubscribe()
 })
