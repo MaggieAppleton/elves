@@ -32,9 +32,37 @@ test('preview has no reply, retry, resolve, or close controls', () => {
     onClose: vi.fn(),
   }))
 
-  expect(tree.root.findAllByProps({ className: 'elves-annotation-thread__message' })).toHaveLength(2)
+  expect(tree.root.findAllByProps({ className: 'elves-annotation-thread__message' })).toHaveLength(0)
+  expect(tree.root.findAllByProps({ className: 'elves-annotation-thread__messages' })).toHaveLength(0)
+  expect(tree.root.findByProps({ className: 'elves-annotation-thread__preview-excerpt' }).children.join(''))
+    .toBe('Initial finding')
+  expect(tree.root.findByProps({ className: 'elves-annotation-thread__reply-count' }).props['aria-label'])
+    .toBe('1 reply')
+  expect(tree.root.findByProps({ 'data-testid': 'annotation-thread' }).props['aria-label'])
+    .toBe('Annotation preview: Structure from Claude: Initial finding 1 reply')
   expect(tree.root.findAllByType('textarea')).toHaveLength(0)
   expect(tree.root.findAllByType('button')).toHaveLength(0)
+})
+
+test('preview clamps the original annotation while open mode retains every durable turn', () => {
+  const comment = {
+    id: 'c1', type: 'needs-evidence' as const, text: 'Original annotation', resolved: false, author: 'claude',
+    messages: [
+      { id: 'm1', author: 'claude', text: 'Original annotation', createdAt: '2026-09-05T09:00:00Z' },
+      { id: 'm2', author: 'user', text: 'First reply', createdAt: '2026-09-05T09:01:00Z' },
+      { id: 'm3', author: 'claude', text: 'Second reply', createdAt: '2026-09-05T09:02:00Z' },
+      { id: 'm4', author: 'user', text: 'Third reply', createdAt: '2026-09-05T09:03:00Z' },
+    ],
+  }
+  const tree = create(createElement(AnnotationThread, { comment, mode: 'preview' }))
+  expect(tree.root.findByProps({ className: 'elves-annotation-thread__preview-excerpt' }).children.join(''))
+    .toBe('Original annotation')
+  expect(tree.root.findByProps({ className: 'elves-annotation-thread__reply-count' }).props['aria-label'])
+    .toBe('3 replies')
+  expect(tree.root.findAll((node) => node.children.some((child) => child === 'First reply'))).toHaveLength(0)
+
+  act(() => tree.update(createElement(AnnotationThread, { comment, mode: 'open', onReply: vi.fn() })))
+  expect(tree.root.findAllByProps({ className: 'elves-annotation-thread__message' })).toHaveLength(4)
 })
 
 test('open mode exposes reply, retry, resolve, and close actions', () => {
@@ -416,4 +444,19 @@ test('thread controls use the embedded composer and typed header layout', () => 
   expect(css).toMatch(/\.elves-annotation-thread__retry\s*\{[^}]*border-radius:\s*[^;]+/s)
   expect(css).toMatch(/(?=[^{}]*\.elves-annotation-thread__resolve:hover)(?=[^{}]*\.elves-annotation-thread__retry:hover)[^{}]*\{[^}]*\}/s)
   expect(css).toMatch(/(?=[^{}]*\.elves-annotation-thread__resolve:focus-visible)(?=[^{}]*\.elves-annotation-thread__retry:focus-visible)[^{}]*\{[^}]*\}/s)
+})
+
+test('compact previews clamp to three lines and popover motion changes only opacity and transform', () => {
+  const css = readFileSync('src/components/annotationThread.css', 'utf8')
+  const previewRule = css.match(/\.elves-annotation-thread__preview-excerpt\s*\{([^}]*)\}/)?.[1] ?? ''
+  expect(previewRule).toMatch(/-webkit-line-clamp:\s*3/)
+  expect(previewRule).toMatch(/overflow:\s*hidden/)
+  expect(css).toMatch(/data-motion="enter"[^}]*120ms/)
+  expect(css).toMatch(/data-motion="exit"[^}]*100ms/)
+  expect(css).toMatch(/data-motion="exit"[^}]*pointer-events:\s*none/)
+  const keyframes = css.match(/@keyframes elves-annotation-popover-(?:enter|exit)[\s\S]*?(?=@media)/)?.[0] ?? ''
+  expect(keyframes).toContain('opacity')
+  expect(keyframes).toContain('transform')
+  expect(keyframes).not.toMatch(/\b(?:left|top|width|height)\s*:/)
+  expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*animation:\s*none/)
 })

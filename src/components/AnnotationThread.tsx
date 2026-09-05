@@ -10,7 +10,7 @@ import { commentGist } from '../model/summary'
 import type { Comment } from '../model/types'
 import {
   annotationTargetKey, dismissAnnotationPopoverSoon, requestAnnotationOpen,
-  setAnnotationHover, type AnnotationTarget,
+  setAnnotationHover, type AnnotationInteractionOrigin, type AnnotationTarget,
 } from '../client/annotationSelection'
 import './annotationThread.css'
 
@@ -27,7 +27,7 @@ export interface AnnotationThreadProps {
   error?: string | null
   onReply?: (text: string) => void
   onRetry?: () => void
-  onClose?: () => void
+  onClose?: (origin?: AnnotationInteractionOrigin) => void
   /** Pixel cap measured from the live tldraw stage by the foreground owner. */
   maxHeight?: number
 }
@@ -60,6 +60,8 @@ export function AnnotationThread({
   const sending = useRef(false)
   const replyInputRef = useRef<HTMLTextAreaElement>(null)
   const messages = threadMessages(comment)
+  const initialMessage = messages[0]
+  const replyCount = Math.max(0, messages.length - 1)
   useEffect(() => {
     if (!running) sending.current = false
   }, [running])
@@ -77,6 +79,33 @@ export function AnnotationThread({
     setReply('')
     setComposerOpen(false)
     onReply(text)
+  }
+  if (preview) {
+    const previewAuthor = attribution ?? agentName(initialMessage.author)
+    const previewName = `Annotation preview: ${token.label} from ${previewAuthor}: ${initialMessage.text}${replyCount ? ` ${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}` : ''}`
+    return (
+      <article
+        className="elves-annotation-thread elves-annotation-thread--preview"
+        data-testid="annotation-thread"
+        aria-label={previewName}
+        style={maxHeight === undefined ? undefined : { maxHeight }}
+      >
+        <header className="elves-annotation-thread__header">
+          <div className="elves-annotation-thread__meta">
+            <span className="elves-annotation-thread__type" data-type={token.tone}>
+              <TypeIcon aria-hidden="true" size={14} weight="bold" />
+              {token.label}
+            </span>
+            <span>{previewAuthor}</span>
+          </div>
+          {replyCount > 0 && <span className="elves-annotation-thread__reply-count" aria-label={`${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}`}>
+            <ChatCircleDots aria-hidden="true" size={13} weight="bold" />
+            {replyCount}
+          </span>}
+        </header>
+        <p className="elves-annotation-thread__preview-excerpt">{initialMessage.text}</p>
+      </article>
+    )
   }
   return (
     <article
@@ -97,7 +126,7 @@ export function AnnotationThread({
             <Checks aria-hidden="true" size={14} weight="bold" />
             Resolve
           </button>}
-          {onClose && <button type="button" className="elves-annotation-thread__close" aria-label="Close annotation thread" onClick={onClose}>
+          {onClose && <button type="button" className="elves-annotation-thread__close" aria-label="Close annotation thread" onClick={(event) => onClose(event?.detail === 0 ? 'keyboard' : 'pointer')}>
             <X aria-hidden="true" size={15} weight="bold" />
           </button>}
         </div>}
@@ -193,10 +222,13 @@ export function AnnotationPin({ comment, offsetY = 0, zoom = 1, className, targe
   const stopPointer = (event: PropagationEvent) => stopEvent(event)
   const open = (event: MouseEvent) => {
     stopEvent(event)
-    if (target) requestAnnotationOpen(target)
+    if (target) requestAnnotationOpen(target, event.detail === 0 ? 'keyboard' : 'pointer')
   }
-  const show = () => {
-    if (target) setAnnotationHover(target)
+  const showPointer = () => {
+    if (target) setAnnotationHover(target, 'pointer')
+  }
+  const showKeyboard = () => {
+    if (target) setAnnotationHover(target, 'keyboard')
   }
   const hide = () => {
     if (target) dismissAnnotationPopoverSoon(target)
@@ -207,9 +239,9 @@ export function AnnotationPin({ comment, offsetY = 0, zoom = 1, className, targe
       className={`elves-annotation-pin-wrap${className ? ` ${className}` : ''}`}
       style={style}
       onPointerDown={stopPointer}
-      onPointerEnter={show}
+      onPointerEnter={showPointer}
       onPointerLeave={hide}
-      onFocus={show}
+      onFocus={showKeyboard}
       onBlur={hide}
     >
       <button
