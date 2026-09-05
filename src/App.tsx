@@ -237,6 +237,7 @@ export default function App() {
   }
   const [annotationThreadStates, setAnnotationThreadStates] = useState<Record<string, AnnotationThreadState>>({})
   const publishedAnnotationThreadStates = useRef<Record<string, AnnotationThreadState>>({})
+  const failedAnnotationReplyMessages = useRef<Record<string, AnnotationMessage>>({})
   const stageRef = useRef<HTMLDivElement>(null)
   const canvasPaneRef = useRef<HTMLDivElement>(null)
   const dividerDragRef = useRef<PointerDragManager | null>(null)
@@ -546,10 +547,11 @@ export default function App() {
     retryMessage?: AnnotationMessage,
   ) => {
     if (!currentProjectId || canvasMutationsLocked) return
-    const message = retryMessage ?? {
-      id: crypto.randomUUID(), author: 'user' as const, text, createdAt: new Date().toISOString(),
-    }
     const key = annotationKey(target)
+    const retainedMessage = failedAnnotationReplyMessages.current[key]
+    const message = retryMessage ?? (retainedMessage?.text === text ? retainedMessage : {
+      id: crypto.randomUUID(), author: 'user' as const, text, createdAt: new Date().toISOString(),
+    })
     updateAnnotationThreadState(target, {
       key, target, running: true, phase: 'saving', replyMessageId: message.id,
       streamingText: '', error: null, message, persisted: false,
@@ -558,8 +560,10 @@ export default function App() {
       await persistAnnotationReply(currentProjectId, target, message)
       applyAnnotationMessage(target, message)
       clearAnnotationReplyDraft(target)
+      delete failedAnnotationReplyMessages.current[key]
       startAnnotationRun(target, message)
     } catch (error) {
+      failedAnnotationReplyMessages.current[key] = message
       updateAnnotationThreadState(target, {
         key, target, running: false, phase: 'failed', replyMessageId: message.id,
         streamingText: '', message, persisted: false,
@@ -907,6 +911,7 @@ export default function App() {
       editorRef.current = null
       setEditor(null)
     }
+    failedAnnotationReplyMessages.current = {}
     setAnnotationThreadStates({})
     clearAnnotationPresentations()
     localStorage.setItem(LAST_PROJECT_KEY, id)

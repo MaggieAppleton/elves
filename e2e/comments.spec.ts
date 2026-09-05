@@ -422,6 +422,80 @@ test('a failed foreground reply retries its persisted user turn once', async ({ 
   }).toEqual({ users: 1, answers: 1, linked: true })
 })
 
+test('a response-lost reply resend reuses its persisted user turn', async ({ page, request }) => {
+  const cardId = await addCardAndComment(page, request, {
+    type: 'needs-evidence', text: 'Keep exactly one durable user turn.',
+  })
+  const commentId = (await cardRecord(request, cardId)).props.comments[0].id
+  const pin = page.locator(`[data-shape-id="${cardId}"] [data-testid="annotation-pin"]`)
+  await pin.click()
+  const thread = page.getByTestId('annotation-thread')
+  const reply = 'Retry this exact durable reply.'
+  let persistenceAttempts = 0
+  await page.route(`**/projects/${projectId}/changeset`, async (route) => {
+    if (route.request().method() !== 'POST') return route.continue()
+    persistenceAttempts += 1
+    const response = await route.fetch()
+    if (persistenceAttempts === 1) {
+      await route.fulfill({ status: 503, body: 'response lost after commit' })
+      return
+    }
+    await route.fulfill({ response })
+  })
+
+  await (await replyComposer(thread)).fill(reply)
+  await thread.getByRole('button', { name: 'Send reply' }).click()
+  await expect(thread.getByRole('alert')).toBeVisible()
+  await (await replyComposer(thread)).fill(reply)
+  await thread.getByRole('button', { name: 'Send reply' }).click()
+  await expect.poll(() => persistenceAttempts).toBe(2)
+
+  await expect.poll(async () => {
+    const card = await cardRecord(request, cardId)
+    return card.props.comments.find((comment: any) => comment.id === commentId)!.messages
+      .filter((message: any) => message.author === 'user' && message.text === reply).length
+  }).toBe(1)
+})
+
+test('a changed resend clears the retained failed identity before an old draft is sent again', async ({ page, request }) => {
+  const cardId = await addCardAndComment(page, request, {
+    type: 'needs-evidence', text: 'Do not retain an old retry identity after a new reply persists.',
+  })
+  const commentId = (await cardRecord(request, cardId)).props.comments[0].id
+  await page.locator(`[data-shape-id="${cardId}"] [data-testid="annotation-pin"]`).click()
+  const thread = page.getByTestId('annotation-thread')
+  const originalReply = 'This was the response-lost reply.'
+  const revisedReply = 'This is the edited reply that succeeds.'
+  let persistenceAttempts = 0
+  await page.route(`**/projects/${projectId}/changeset`, async (route) => {
+    if (route.request().method() !== 'POST') return route.continue()
+    persistenceAttempts += 1
+    const response = await route.fetch()
+    if (persistenceAttempts === 1) {
+      await route.fulfill({ status: 503, body: 'response lost after commit' })
+      return
+    }
+    await route.fulfill({ response })
+  })
+
+  await (await replyComposer(thread)).fill(originalReply)
+  await thread.getByRole('button', { name: 'Send reply' }).click()
+  await expect(thread.getByRole('alert')).toBeVisible()
+  await (await replyComposer(thread)).fill(revisedReply)
+  await thread.getByRole('button', { name: 'Send reply' }).click()
+  await expect(thread.getByRole('button', { name: 'Reply to annotation' })).toBeEnabled()
+  await (await replyComposer(thread)).fill(originalReply)
+  await thread.getByRole('button', { name: 'Send reply' }).click()
+  await expect.poll(() => persistenceAttempts).toBe(3)
+
+  await expect.poll(async () => {
+    const card = await cardRecord(request, cardId)
+    const originalMessages = card.props.comments.find((comment: any) => comment.id === commentId)!.messages
+      .filter((message: any) => message.author === 'user' && message.text === originalReply)
+    return { count: originalMessages.length, ids: new Set(originalMessages.map((message: any) => message.id)).size }
+  }).toEqual({ count: 2, ids: 2 })
+})
+
 test('a long annotation transcript remains inside the canvas and scrolls internally', async ({ page, request }) => {
   await page.setViewportSize({ width: 800, height: 420 })
   const cardId = await addCardAndComment(page, request, { type: 'structure', text: 'Keep this full annotation inside the stage.' })
