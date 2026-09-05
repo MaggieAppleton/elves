@@ -12,6 +12,7 @@ import {
   type CanvasWriteCoordinatorTransport,
 } from '../../src/client/canvasWriteCoordinator'
 import { CHANGE_SET_STAMP_META_KEY } from '../../src/model/changeset'
+import type { CanvasRecoveryContext } from '../../src/client/canvasRecovery'
 
 export function deferred<T>() {
   let resolve!: (value: T) => void
@@ -73,6 +74,8 @@ export function initHarness(options: {
   bootstrap?: DocumentRecords
   load?: CanvasWriteCoordinatorTransport['load']
   save?: CanvasWriteCoordinatorTransport['save']
+  recovery?: CanvasRecoveryContext
+  storageId?: string
 } = {}) {
   const bootstrap = structuredClone(options.bootstrap ?? document('bootstrap'))
   let current = structuredClone(bootstrap)
@@ -143,6 +146,7 @@ export function initHarness(options: {
   const coordinator = createCanvasWriteCoordinator({
     project: {
       id: 'essay', name: 'Essay', createdAt: '2026-07-14T00:00:00.000Z',
+      storageId: options.storageId,
     },
     editor,
     transport: {
@@ -154,6 +158,7 @@ export function initHarness(options: {
       listProjects: async () => [],
     },
     autosaveMs: 0,
+    recovery: options.recovery,
     onRemoteChange: remoteChanges,
   })
   return {

@@ -9,7 +9,7 @@ import { attachRealtime } from './realtime'
 import { createSelectionStore } from './selection'
 import { migrateLegacyCanvas } from './migrate'
 import { migrateSourceCardsToNotes } from './migrateNotes'
-import { listProjects, resyncProjectIds } from './projects'
+import { listProjects, migrateProjectStorageIds, resyncProjectIds } from './projects'
 import { warnOnSyncConflicts } from './conflicts'
 import { OllamaSummarizer } from './summarize'
 import { resolveHost } from './host'
@@ -89,6 +89,10 @@ async function serve(
   // Then rename any stored 'source' cards to 'note' so the server reads the same
   // shape the client writes (see migrateSourceCardsToNotes for why this is needed).
   await migrateSourceCardsToNotes(ownedDataRoot)
+  checkShutdown()
+  // Give pre-storage-ID projects a durable identity before project-id resync,
+  // always through the canonical root protected by this process's ownership.
+  await migrateProjectStorageIds(ownedDataRoot)
   checkShutdown()
   // Bring any project whose id drifted from its display name back in sync (folder
   // renamed to match slugify(name)). Idempotent; a no-op once everything matches.

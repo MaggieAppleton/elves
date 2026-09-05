@@ -68,6 +68,7 @@ import {
   type AppCanvasMount,
 } from './client/appCanvasMount'
 import { createPointerDragManager, type PointerDragManager } from './client/dividerDrag'
+import { browserRecoveryContext } from './client/canvasRecovery'
 
 const shapeUtils = [CardShapeUtil, SectionShapeUtil, QuestionShapeUtil, FeedbackShapeUtil]
 // OnTheCanvas renders in page space behind the shapes, which is where the snap
@@ -173,6 +174,7 @@ export default function App() {
   const [editor, setEditor] = useState<Editor | null>(null)
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>('connecting')
   const [canvasWriteStatus, setCanvasWriteStatus] = useState<CanvasWriteStatus>('loading')
+  const [canvasRecoveryConflict, setCanvasRecoveryConflict] = useState(false)
   const [canvasMountKey, setCanvasMountKey] = useState(0)
   const [transitioning, setTransitioning] = useState(false)
   const [pendingRenameName, setPendingRenameName] = useState<string | null>(null)
@@ -200,7 +202,8 @@ export default function App() {
   const transitionRef = useRef<Promise<void> | null>(null)
   const reviewMutationControllersRef = useRef(new Set<AbortController>())
   const canvasMutationsLocked = !editor || transitioning ||
-    canvasWriteStatus === 'renaming' || canvasWriteStatus === 'rename-ambiguous'
+    canvasWriteStatus === 'renaming' || canvasWriteStatus === 'rename-ambiguous' ||
+    canvasWriteStatus === 'recovery-conflict'
   // Server-side agent/review runs cannot join the local canvas drain. Keep the
   // project identity fixed until they settle or the user cancels them.
   const activeServerMutation = agentRunning || reviewRequestCount > 0 || reviews.some(
@@ -742,6 +745,7 @@ export default function App() {
     canvasMountRef.current?.dispose()
     editorRef.current = null
     setEditor(null)
+    setCanvasRecoveryConflict(false)
     setCanvasWriteStatus('loading')
 
     // A click on empty canvas dismisses any open merged-card peek, like a popover.
@@ -770,11 +774,15 @@ export default function App() {
       project,
       editor: createTldrawCanvasWriteCoordinatorEditor(ed),
       transport: canvasTransport,
+      recovery: browserRecoveryContext(project),
       onStatus: (status) => {
         if (canvasMountRef.current === mount) setCanvasWriteStatus(status)
       },
       onRemoteChange: (changedIds, glow) => {
         if (canvasMountRef.current === mount && glow) markDoing(changedIds as TLShapeId[])
+      },
+      onRecoveryConflict: (active) => {
+        if (canvasMountRef.current === mount) setCanvasRecoveryConflict(active)
       },
     })
     mount = createAppCanvasMount({
@@ -993,6 +1001,13 @@ export default function App() {
     if (mount) activateCanvasMount(mount)
   }
 
+  const resolveCanvasRecovery = (decision: 'recover' | 'discard') => {
+    const mount = canvasMountRef.current
+    if (!mount) return
+    void mount.writeCoordinator.resolveRecovery(decision)
+      .catch((err) => console.error('Elves: failed to resolve canvas recovery', err))
+  }
+
   // A failed read is not an empty project store. Keep creation unavailable
   // until a successful response establishes whether the store is empty.
   if ((projects === null || projects.length === 0) && projectListError) {
@@ -1110,6 +1125,16 @@ export default function App() {
             Retry canvas
           </button>
         )}
+        {canvasRecoveryConflict && (
+          <div className="elves-recovery-actions" role="group" aria-label="Recovered local changes">
+            <button className="elves-status-action" onClick={() => resolveCanvasRecovery('recover')}>
+              Recover local changes
+            </button>
+            <button className="elves-status-action" onClick={() => resolveCanvasRecovery('discard')}>
+              Discard local changes
+            </button>
+          </div>
+        )}
         {canvasWriteStatus === 'rename-ambiguous' && pendingRenameName && (
           <button
             className="elves-status-action"
@@ -1139,7 +1164,7 @@ export default function App() {
           projects={projects}
           currentId={currentProjectId}
           disabled={activeServerMutation || transitioning || canvasWriteStatus === 'renaming' ||
-            canvasWriteStatus === 'rename-ambiguous'}
+            canvasWriteStatus === 'rename-ambiguous' || canvasRecoveryConflict}
           onSwitch={switchProject}
           onCreate={createFlow}
           onRename={renameFlow}
