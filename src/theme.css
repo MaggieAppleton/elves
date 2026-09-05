@@ -576,6 +576,7 @@ body {
 }
 .elves-canvas-write-status[data-write-status='loading']::before,
 .elves-canvas-write-status[data-write-status='saving']::before,
+.elves-canvas-write-status[data-write-status='retrying']::before,
 .elves-canvas-write-status[data-write-status='renaming']::before { background: #d9a441; }
 .elves-canvas-write-status[data-write-status='unsaved']::before { background: #b8843e; }
 .elves-canvas-write-status[data-write-status='syncing']::before { background: #527da8; }

@@ -155,6 +155,7 @@ export function canvasWriteStatusLabel(status: CanvasWriteStatus): string {
     case 'unsaved': return 'Canvas has unsaved changes'
     case 'saving': return 'Saving canvas'
     case 'syncing': return 'Syncing canvas'
+    case 'retrying': return 'Canvas save failed; local changes remain unsaved; retrying'
     case 'recovery-conflict': return 'Recovered changes conflict with the server'
     case 'recovery-unavailable': return 'Local recovery unavailable — keep this tab open and retry saving'
     case 'renaming': return 'Renaming project'

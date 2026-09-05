@@ -1008,6 +1008,13 @@ export default function App() {
       .catch((err) => console.error('Elves: failed to resolve canvas recovery', err))
   }
 
+  const retryCanvasSave = () => {
+    const mount = canvasMountRef.current
+    if (!mount) return
+    void mount.writeCoordinator.retryNow()
+      .catch((err) => console.error('Elves: canvas save retry failed', err))
+  }
+
   // A failed read is not an empty project store. Keep creation unavailable
   // until a successful response establishes whether the store is empty.
   if ((projects === null || projects.length === 0) && projectListError) {
@@ -1134,6 +1141,11 @@ export default function App() {
               Discard local changes
             </button>
           </div>
+        )}
+        {(canvasWriteStatus === 'retrying' || canvasWriteStatus === 'error') && editor && !canvasRecoveryConflict && (
+          <button className="elves-status-action" onClick={retryCanvasSave}>
+            Retry save
+          </button>
         )}
         {canvasWriteStatus === 'rename-ambiguous' && pendingRenameName && (
           <button

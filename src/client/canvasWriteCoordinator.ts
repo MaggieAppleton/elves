@@ -4,6 +4,7 @@ import {
   type DocumentRecords,
 } from './canvasMerge'
 import {
+  CanvasProtocolError,
   CanvasRevisionConflictError,
   type CanvasSnapshot,
   type CanvasVersionedState,
@@ -31,7 +32,7 @@ export {
 
 export type CanvasWriteStatus =
   | 'loading' | 'idle' | 'unsaved' | 'saving' | 'syncing' | 'renaming'
-  | 'recovery-conflict' | 'recovery-unavailable'
+  | 'retrying' | 'recovery-conflict' | 'recovery-unavailable'
   | 'rename-ambiguous' | 'conflict' | 'error'
 
 export interface CanvasWriteCoordinatorTransport {
@@ -58,6 +59,7 @@ export interface CanvasWriteCoordinatorOptions {
   editor: CanvasWriteCoordinatorEditor
   transport: CanvasWriteCoordinatorTransport
   autosaveMs?: number
+  retryRandom?: () => number
   recovery?: CanvasRecoveryContext
   lifecycleTarget?: Pick<Window, 'addEventListener' | 'removeEventListener'>
   onStatus?(status: CanvasWriteStatus): void
@@ -70,6 +72,7 @@ export interface CanvasWriteCoordinator {
   markDirty(): void
   requestRemoteSync(options?: { glow?: boolean }): Promise<void>
   flushOrThrow(): Promise<void>
+  retryNow(): Promise<void>
   whenRecoveryCommitted(): Promise<void>
   resolveRecovery(decision: 'recover' | 'discard'): Promise<void>
   renameProject(name: string): Promise<Project>
@@ -121,13 +124,21 @@ interface PendingRecoveryConflict {
   remote: DocumentRecords
 }
 
+interface AmbiguousSave {
+  base: DocumentRecords
+  attempted: DocumentRecords
+  generation: number
+}
+
 const MAX_INITIALIZATION_CONFLICT_RETRIES = 1
+const TRANSIENT_RETRY_CAPS_MS = [1_000, 2_000, 4_000, 8_000, 16_000] as const
 
 export function createCanvasWriteCoordinator(
   options: CanvasWriteCoordinatorOptions,
 ): CanvasWriteCoordinator {
   const { editor, transport } = options
   const autosaveMs = options.autosaveMs ?? 500
+  const retryRandom = options.retryRandom ?? Math.random
   const recovery = options.project.storageId ? options.recovery : undefined
   const lifecycleTarget = options.lifecycleTarget ??
     (typeof window === 'undefined' ? undefined : window)
@@ -147,6 +158,9 @@ export function createCanvasWriteCoordinator(
   let syncRequested = false
   let syncGlow = false
   let autosaveTimer: ReturnType<typeof setTimeout> | null = null
+  let retryTimer: ReturnType<typeof setTimeout> | null = null
+  let retryAttempt = 0
+  let ambiguousSave: AmbiguousSave | null = null
   let workSerial = 0
   const barriers: Barrier[] = []
   const editingEndBarriers: Barrier[] = []
@@ -176,6 +190,15 @@ export function createCanvasWriteCoordinator(
     if (autosaveTimer === null) return
     clearTimeout(autosaveTimer)
     autosaveTimer = null
+  }
+  const clearRetryTimer = () => {
+    if (retryTimer === null) return
+    clearTimeout(retryTimer)
+    retryTimer = null
+  }
+  const resetRetryPolicy = () => {
+    clearRetryTimer()
+    retryAttempt = 0
   }
   const beforeUnload = (event: BeforeUnloadEvent) => {
     event.preventDefault()
@@ -310,25 +333,69 @@ export function createCanvasWriteCoordinator(
     const retryDocument = editor.captureDocument()
     const retrySnapshot = editor.captureSnapshot()
     const savedGeneration = journalGeneration
+    await queueJournal().catch(() => undefined)
     await latestJournalCommit.catch(() => undefined)
     try {
       const savedRevision = await transport.save(expectedProjectId, retrySnapshot, revision)
       assertCurrent(expected, expectedProjectId)
       base = retryDocument
       revision = savedRevision
+      ambiguousSave = null
+      resetRetryPolicy()
       await clearAcknowledgedRecovery(savedGeneration)
       if (dirty && journalGeneration > savedGeneration) await queueJournal().catch(() => undefined)
     } catch (error) {
       dirty = true
+      if (isAmbiguousTransportFailure(error)) {
+        ambiguousSave = { base: structuredClone(base), attempted: retryDocument, generation: savedGeneration }
+      }
       throw error
     }
   }
 
+  const reconcileAmbiguousSave = async (
+    expected: number,
+    expectedProjectId: string,
+  ): Promise<void> => {
+    const pending = ambiguousSave
+    if (!pending) return
+    publish('syncing')
+    const loaded = await loadConflictState(expected, expectedProjectId)
+    const remote = editor.normalizeDocument(loaded.snapshot)
+    const local = editor.captureDocument()
+    if (recordsEqual(remote, pending.attempted)) {
+      base = remote
+      revision = loaded.revision
+      baseEpoch = loaded.nextChangeSetToken.epoch
+      ambiguousSave = null
+      dirty = !recordsEqual(local, remote)
+      await clearAcknowledgedRecovery(pending.generation)
+      if (dirty) await queueJournal().catch(() => undefined)
+      return
+    }
+    const merged = mergeCanvasRecords({ base: pending.base, local, remote })
+    if (!merged.ok) throw new CanvasWriteMergeConflictError(merged.conflicts)
+    applyRemote(merged.document, false)
+    base = remote
+    revision = loaded.revision
+    baseEpoch = loaded.nextChangeSetToken.epoch
+    ambiguousSave = null
+    dirty = !recordsEqual(merged.document, remote)
+    if (dirty) await queueJournal().catch(() => undefined)
+    else await clearAcknowledgedRecovery(pending.generation)
+  }
+
   const saveOnce = async (expected: number, expectedProjectId: string): Promise<void> => {
+    await reconcileAmbiguousSave(expected, expectedProjectId)
+    if (!dirty) {
+      resetRetryPolicy()
+      return
+    }
     await latestJournalCommit.catch(() => undefined)
     const savedDocument = editor.captureDocument()
     const snapshot = editor.captureSnapshot()
     const savedGeneration = journalGeneration
+    const savedBase = base
     dirty = false
     publish('saving')
     try {
@@ -336,6 +403,8 @@ export function createCanvasWriteCoordinator(
       assertCurrent(expected, expectedProjectId)
       base = savedDocument
       revision = savedRevision
+      ambiguousSave = null
+      resetRetryPolicy()
       await clearAcknowledgedRecovery(savedGeneration)
       if (dirty && journalGeneration > savedGeneration) await queueJournal().catch(() => undefined)
     } catch (error) {
@@ -349,6 +418,9 @@ export function createCanvasWriteCoordinator(
         }
       }
       dirty = true
+      if (isAmbiguousTransportFailure(error) && savedBase) {
+        ambiguousSave = { base: structuredClone(savedBase), attempted: savedDocument, generation: savedGeneration }
+      }
       throw error
     }
   }
@@ -385,9 +457,24 @@ export function createCanvasWriteCoordinator(
     }
   }
 
+  const scheduleTransientRetry = (): boolean => {
+    if (retryTimer !== null || retryAttempt >= TRANSIENT_RETRY_CAPS_MS.length) return false
+    const cap = TRANSIENT_RETRY_CAPS_MS[retryAttempt]
+    retryAttempt += 1
+    const jitter = Math.min(1, Math.max(0, retryRandom()))
+    const delayMs = Math.floor(cap * jitter)
+    publish('retrying')
+    retryTimer = setTimeout(() => {
+      retryTimer = null
+      start()
+    }, delayMs)
+    return true
+  }
+
   const start = (ignoreRenameGate = false) => {
     if (busy || disposed || !initialized || pendingRecovery ||
       (!ignoreRenameGate && renameController?.blocksWork())) return
+    clearRetryTimer()
     busy = true
     const expected = lifecycle
     const expectedProjectId = projectId
@@ -423,12 +510,11 @@ export function createCanvasWriteCoordinator(
       } catch (error) {
         failedAt = attemptedWorkSerial
         if (isCurrent(expected, expectedProjectId)) {
-          publish(
-            error instanceof CanvasRevisionConflictError ||
-              error instanceof CanvasWriteMergeConflictError
-              ? 'conflict'
-              : journalUnavailable ? 'recovery-unavailable' : 'error',
-          )
+          const conflict = error instanceof CanvasRevisionConflictError ||
+            error instanceof CanvasWriteMergeConflictError
+          const retryScheduled = !conflict && isTransientFailure(error) && scheduleTransientRetry()
+          if (conflict) publish('conflict')
+          else if (!retryScheduled) publish(journalUnavailable ? 'recovery-unavailable' : 'error')
           settlePreRenameFlush(error)
           settleBarriers(error)
         }
@@ -559,6 +645,7 @@ export function createCanvasWriteCoordinator(
     journalGeneration += 1
     publish('unsaved')
     void queueJournal().catch(() => undefined)
+    clearRetryTimer()
     clearAutosave()
     if (autosaveMs === 0) {
       signal()
@@ -585,6 +672,7 @@ export function createCanvasWriteCoordinator(
 
   const flushCurrentOrThrow = (): Promise<void> => {
     clearAutosave()
+    clearRetryTimer()
     if (disposed) return Promise.reject(new CanvasWriteCoordinatorDisposedError())
     if (!initialized) return Promise.reject(new Error('canvas write coordinator is not initialized'))
     if (pendingRecovery) return Promise.reject(new CanvasRecoveryDecisionRequiredError())
@@ -596,6 +684,7 @@ export function createCanvasWriteCoordinator(
 
   const beginPreRenameFlush = (): Promise<void> => {
     clearAutosave()
+    clearRetryTimer()
     if (disposed) return Promise.reject(new CanvasWriteCoordinatorDisposedError())
     if (!initialized) return Promise.reject(new Error('canvas write coordinator is not initialized'))
     if (pendingRecovery) return Promise.reject(new CanvasRecoveryDecisionRequiredError())
@@ -649,6 +738,18 @@ export function createCanvasWriteCoordinator(
     return flushCurrentOrThrow()
   }
 
+  const retryNow = (): Promise<void> => {
+    clearAutosave()
+    clearRetryTimer()
+    if (disposed) return Promise.reject(new CanvasWriteCoordinatorDisposedError())
+    if (!initialized) return Promise.reject(new Error('canvas write coordinator is not initialized'))
+    if (pendingRecovery) return Promise.reject(new CanvasRecoveryDecisionRequiredError())
+    const promise = new Promise<void>((resolve, reject) => barriers.push({ resolve, reject }))
+    workSerial += 1
+    start()
+    return promise
+  }
+
   const whenRecoveryCommitted = (): Promise<void> => latestJournalCommit
 
   const resolveRecovery = async (decision: 'recover' | 'discard'): Promise<void> => {
@@ -688,6 +789,7 @@ export function createCanvasWriteCoordinator(
     disposed = true
     lifecycle += 1
     clearAutosave()
+    clearRetryTimer()
     removeUnloadGuard()
     unsubscribeEditingEnd()
     settlePreRenameFlush(new CanvasWriteCoordinatorDisposedError())
@@ -713,6 +815,7 @@ export function createCanvasWriteCoordinator(
     markDirty,
     requestRemoteSync,
     flushOrThrow,
+    retryNow,
     whenRecoveryCommitted,
     resolveRecovery,
     renameProject,
@@ -791,4 +894,15 @@ function preferLocalChanges(
     else merged[id] = structuredClone(local[id])
   }
   return merged
+}
+
+function isTransientFailure(error: unknown): boolean {
+  if (isAmbiguousTransportFailure(error)) return true
+  return error instanceof CanvasProtocolError &&
+    (error.status === 408 || error.status === 429 || error.status >= 500)
+}
+
+function isAmbiguousTransportFailure(error: unknown): boolean {
+  return error instanceof TypeError ||
+    (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError'))
 }
