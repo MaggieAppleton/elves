@@ -9,12 +9,13 @@ import {
 } from '../client/annotationPlacement'
 import {
   annotationClosingTargets, annotationHoverOrigin, annotationHoverTarget, annotationOpenOrigin,
-  annotationOpenTargets, annotationRepliesLocked, annotationReplyDraft, annotationTargetKey,
+  annotationOpenTargets, annotationRepliesLocked, annotationReplyDraft, annotationResolutionCues, annotationTargetKey,
   annotationThreadPresentation, dismissAnnotationPopoverSoon, pruneAnnotationThreads,
-  requestAnnotationClose, requestAnnotationOpen, requestAnnotationReply, requestAnnotationResolve, requestAnnotationRetry,
-  clearAnnotationReplyDraft, setAnnotationHover, setAnnotationReplyDraft,
+  requestAnnotationClose, requestAnnotationOpen, requestAnnotationReply, requestAnnotationResolutionUndo,
+  requestAnnotationResolve, requestAnnotationRetry, clearAnnotationReplyDraft, clearAnnotationResolutionCue,
+  setAnnotationHover, setAnnotationReplyDraft,
   subscribeAnnotationTargets, subscribeAnnotationThreadPresentation, suppressNextAnnotationFocus,
-  type AnnotationInteractionOrigin, type AnnotationTarget, type ClosingAnnotationTarget,
+  type AnnotationInteractionOrigin, type AnnotationResolutionCue, type AnnotationTarget, type ClosingAnnotationTarget,
 } from '../client/annotationSelection'
 import { prefersReducedMotion } from '../client/motion'
 import type { CardShape } from '../shapes/CardShapeUtil'
@@ -39,6 +40,74 @@ export function annotationPopoverMotion(
   if (mode === 'closing') return 'exit'
   if (origin !== 'pointer') return undefined
   return placementReady && entranceReady ? 'enter' : 'pending'
+}
+
+const RESOLUTION_CUE_MS = 4_000
+
+export function ResolvedAnnotationCue({ cue }: { cue: AnnotationResolutionCue }) {
+  const remaining = useRef(RESOLUTION_CUE_MS)
+  const cueRef = useRef<HTMLDivElement>(null)
+  const [pointerInside, setPointerInside] = useState(false)
+  const [focusInside, setFocusInside] = useState(false)
+  const [position, setPosition] = useState({ left: cue.anchor.left, top: cue.anchor.top })
+
+  useLayoutEffect(() => {
+    const element = cueRef.current
+    const boundary = element?.parentElement
+    if (!element || !boundary) return
+    const place = () => {
+      const desiredLeft = cue.anchor.side === 'left'
+        ? cue.anchor.left - element.offsetWidth
+        : cue.anchor.left
+      const left = Math.max(8, Math.min(desiredLeft, boundary.clientWidth - element.offsetWidth - 8))
+      const top = Math.max(8, Math.min(cue.anchor.top, boundary.clientHeight - element.offsetHeight - 8))
+      setPosition((current) => current.left === left && current.top === top ? current : { left, top })
+    }
+    place()
+    const observer = new ResizeObserver(place)
+    observer.observe(boundary)
+    return () => observer.disconnect()
+  }, [cue.anchor.left, cue.anchor.side, cue.anchor.top])
+
+  useEffect(() => {
+    if (pointerInside || focusInside) return
+    const started = Date.now()
+    const timer = setTimeout(() => clearAnnotationResolutionCue(cue), remaining.current)
+    return () => {
+      clearTimeout(timer)
+      remaining.current = Math.max(0, remaining.current - (Date.now() - started))
+    }
+  }, [focusInside, pointerInside])
+
+  return (
+    <div
+      ref={cueRef}
+      className="elves-annotation-resolved-cue"
+      data-side={cue.anchor.side}
+      data-testid="annotation-resolved-cue"
+      style={position}
+      onPointerDown={stopForegroundEvent}
+      onClick={stopForegroundEvent}
+      onKeyDown={stopForegroundEvent}
+      onPointerEnter={() => setPointerInside(true)}
+      onPointerLeave={() => setPointerInside(false)}
+      onFocus={() => setFocusInside(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setFocusInside(false)
+      }}
+    >
+      <span role="status">Comment resolved</span>
+      <button
+        type="button"
+        disabled={annotationRepliesLocked()}
+        onClick={() => {
+          if (!annotationRepliesLocked()) requestAnnotationResolutionUndo(cue)
+        }}
+      >
+        Undo
+      </button>
+    </div>
+  )
 }
 
 /** Ordered canvas overlays: promoted threads stay on top, with one hover preview. */
@@ -375,7 +444,8 @@ export function AnnotationPopoverLayer() {
     }
     return arranged
   }, [entries, geometries])
-  if (!entries.length) return null
+  const resolvedCues = annotationResolutionCues()
+  if (!entries.length && !resolvedCues.length) return null
 
   return (
     <div className="elves-annotation-popover-layer">
@@ -388,6 +458,7 @@ export function AnnotationPopoverLayer() {
           onGeometry={reportGeometry}
         />
       ))}
+      {resolvedCues.map((cue) => <ResolvedAnnotationCue key={cue.id} cue={cue} />)}
     </div>
   )
 }

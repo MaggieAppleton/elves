@@ -43,9 +43,13 @@ import { AgentBox } from './components/AgentBox'
 import { DraftPane } from './components/DraftPane'
 import { AnnotationPopoverLayer } from './components/AnnotationPopoverLayer'
 import {
-  clearAnnotationPresentations, clearAnnotationReplyDraft, closeAnnotationThread, setAnnotationRepliesLocked, setAnnotationThreadPresentation, subscribeAnnotationReply, subscribeAnnotationResolve, subscribeAnnotationRetry,
-  type AnnotationTarget,
+  annotationResolutionCue, clearAnnotationPresentations, clearAnnotationReplyDraft, clearAnnotationResolutionCue,
+  closeAnnotationThread, setAnnotationRepliesLocked, setAnnotationResolutionCue, setAnnotationThreadPresentation,
+  subscribeAnnotationReply, subscribeAnnotationResolutionUndo, subscribeAnnotationResolve, subscribeAnnotationRetry,
 } from './client/annotationSelection'
+import {
+  annotationResolutionIdentity, captureAnnotationCueAnchor, setAnnotationResolved,
+} from './client/annotationResolution'
 import {
   persistAnnotationReply, runAnnotationThread,
   type AnnotationThreadTarget,
@@ -132,23 +136,6 @@ export function retryAnnotationCanRun(
   running: boolean,
 ): messageId is string {
   return !!projectId && !!messageId && !canvasMutationsLocked && !running
-}
-
-function resolveAnnotationRecord(editor: Editor, target: AnnotationTarget): void {
-  if (target.kind === 'card') {
-    const shape = editor.getShape(target.cardId as TLShapeId) as CardShape | undefined
-    if (!shape || shape.type !== 'card') return
-    editor.updateShape<CardShape>({
-      id: shape.id, type: 'card',
-      props: { comments: shape.props.comments.map((comment) =>
-        comment.id === target.commentId ? { ...comment, resolved: true } : comment) },
-    })
-    return
-  }
-  const shape = editor.getShape(target.feedbackId as TLShapeId) as FeedbackShape | undefined
-  if (shape?.type === 'feedback') editor.updateShape<FeedbackShape>({
-    id: shape.id, type: 'feedback', props: { resolved: true },
-  })
 }
 
 function realtimeStatusLabel(status: RealtimeStatus): string {
@@ -482,8 +469,27 @@ export default function App() {
 
   useEffect(() => subscribeAnnotationResolve((target) => {
     if (canvasMutationsLocked || !editor) return
-    resolveAnnotationRecord(editor, target)
+    const identity = annotationResolutionIdentity(editor, target)
+    const anchor = captureAnnotationCueAnchor(editor, target)
+    if (!identity || !setAnnotationResolved(editor, target, true, identity)) return
     closeAnnotationThread(target)
+    if (anchor) setAnnotationResolutionCue({ id: crypto.randomUUID(), target, identity, anchor })
+  }), [canvasMutationsLocked, editor])
+
+  useEffect(() => subscribeAnnotationResolutionUndo((cue) => {
+    if (canvasMutationsLocked || !editor) return
+    if (annotationResolutionCue(cue.target)?.id !== cue.id) return
+    const restored = setAnnotationResolved(editor, cue.target, false, cue.identity)
+    clearAnnotationResolutionCue(cue)
+    if (!restored) return
+    requestAnimationFrame(() => {
+      const key = cue.target.kind === 'card'
+        ? `card:${cue.target.cardId}:${cue.target.commentId}`
+        : `feedback:${cue.target.feedbackId}`
+      const pin = [...editor.getContainer().querySelectorAll<HTMLElement>('[data-annotation-target]')]
+        .find((element) => element.dataset.annotationTarget === key)
+      pin?.focus()
+    })
   }), [canvasMutationsLocked, editor])
 
   // Shape ids are only project-local. Keep transient reply presentation scoped

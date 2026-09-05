@@ -13,10 +13,18 @@ export interface AnnotationThreadPresentation {
   error?: string | null
 }
 
+export interface AnnotationResolutionCue {
+  id: string
+  target: AnnotationTarget
+  identity: string
+  anchor: { left: number; top: number; side: 'left' | 'right' }
+}
+
 type AnnotationReplyListener = (target: AnnotationTarget, text: string) => void
 type AnnotationRetryListener = (target: AnnotationTarget) => void
 type AnnotationActionListener = (target: AnnotationTarget) => void
 type AnnotationTargetListener = () => void
+type AnnotationResolutionUndoListener = (cue: AnnotationResolutionCue) => void
 
 const replyListeners = new Set<AnnotationReplyListener>()
 const retryListeners = new Set<AnnotationRetryListener>()
@@ -29,11 +37,13 @@ const openOrigins = new Map<string, AnnotationInteractionOrigin>()
 const closingTargets = new Map<string, ClosingAnnotationTarget>()
 const closingTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const targetListeners = new Set<AnnotationTargetListener>()
+const resolutionUndoListeners = new Set<AnnotationResolutionUndoListener>()
 let annotationReplyLocked = false
 let popoverDismissTimer: ReturnType<typeof setTimeout> | null = null
 let hoverTarget: AnnotationTarget | null = null
 let hoverOrigin: AnnotationInteractionOrigin = 'pointer'
 let suppressedFocusTarget: string | null = null
+const resolutionCues = new Map<string, AnnotationResolutionCue>()
 
 export function annotationTargetKey(target: AnnotationTarget): string {
   return target.kind === 'card'
@@ -130,6 +140,35 @@ export function requestAnnotationResolve(target: AnnotationTarget): void {
   resolveListeners.forEach((listener) => listener(target))
 }
 
+export function annotationResolutionCue(target: AnnotationTarget): AnnotationResolutionCue | null {
+  return resolutionCues.get(annotationTargetKey(target)) ?? null
+}
+
+export function annotationResolutionCues(): AnnotationResolutionCue[] {
+  return Array.from(resolutionCues.values())
+}
+
+export function setAnnotationResolutionCue(cue: AnnotationResolutionCue): void {
+  resolutionCues.set(annotationTargetKey(cue.target), cue)
+  emitTargets()
+}
+
+export function clearAnnotationResolutionCue(cue: AnnotationResolutionCue): void {
+  const key = annotationTargetKey(cue.target)
+  if (resolutionCues.get(key)?.id !== cue.id) return
+  resolutionCues.delete(key)
+  emitTargets()
+}
+
+export function subscribeAnnotationResolutionUndo(listener: AnnotationResolutionUndoListener): () => void {
+  resolutionUndoListeners.add(listener)
+  return () => resolutionUndoListeners.delete(listener)
+}
+
+export function requestAnnotationResolutionUndo(cue: AnnotationResolutionCue): void {
+  resolutionUndoListeners.forEach((listener) => listener(cue))
+}
+
 /** Remove stale presentation state without changing any canvas records. */
 export function pruneAnnotationThreads(isOpenTarget: (target: AnnotationTarget) => boolean): void {
   let changed = false
@@ -180,6 +219,7 @@ export function clearAnnotationPresentations(): void {
   closingTimers.clear()
   hoverTarget = null
   suppressedFocusTarget = null
+  resolutionCues.clear()
   if (popoverDismissTimer !== null) {
     clearTimeout(popoverDismissTimer)
     popoverDismissTimer = null
