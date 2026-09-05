@@ -4,13 +4,14 @@
   flex-direction: column;
   min-height: 0;
   max-height: 100%;
-  gap: 10px;
-  padding: 13px;
+  gap: 12px;
+  padding: 12px;
   border: 1px solid var(--elves-border);
   border-radius: 10px;
-  background: var(--elves-bg);
+  background: var(--elves-surface);
+  box-shadow: var(--elves-shadow-md);
 }
-.elves-annotation-thread__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.elves-annotation-thread__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .elves-annotation-thread__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 8px; color: var(--elves-ink-faint); font-size: 12px; font-weight: 600; }
 .elves-annotation-thread__type { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 700; }
 .elves-annotation-thread__type[data-type="needs-evidence"] { color: var(--elves-cc-evidence-label); }
@@ -22,7 +23,7 @@
 .elves-annotation-thread__type[data-type="unclear"] { color: var(--elves-cc-unclear-label); }
 .elves-annotation-thread__type[data-type="structure"] { color: var(--elves-cc-structure-label); }
 .elves-annotation-thread__type[data-type="freeform"] { color: var(--elves-cc-freeform-label); }
-.elves-annotation-thread__actions { display: inline-flex; align-items: center; gap: 2px; }
+.elves-annotation-thread__actions { display: inline-flex; align-items: center; gap: 4px; }
 .elves-annotation-thread__messages { display: grid; flex: 1 1 auto; min-height: 0; gap: 8px; overflow-y: auto; overscroll-behavior: contain; }
 .elves-annotation-thread__message { margin: 0; color: var(--elves-ink); font-size: 14px; line-height: 1.52; white-space: pre-wrap; overflow-wrap: anywhere; }
 .elves-annotation-thread__message[data-author="user"] { padding-left: 10px; border-left: 2px solid var(--elves-primary); }
@@ -35,8 +36,8 @@
 .elves-annotation-thread__error { display: flex; align-items: flex-start; gap: 8px; padding: 9px 10px; border: 1px solid var(--elves-danger, #b42318); border-radius: 8px; background: color-mix(in oklch, var(--elves-danger, #b42318) 10%, var(--elves-surface)); color: var(--elves-danger, #b42318); font-size: 12px; }
 .elves-annotation-thread__error-message { display: flex; flex: 1 1 auto; min-width: 0; gap: 7px; overflow-wrap: anywhere; line-height: 1.45; }
 .elves-annotation-thread__error-message svg { flex: 0 0 auto; margin-top: 1px; }
-.elves-annotation-thread__close { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--elves-ink-faint); cursor: pointer; }
-.elves-annotation-thread__resolve { display: inline-flex; align-items: center; gap: 4px; min-height: 26px; padding: 4px 7px; border: 1px solid var(--elves-border-strong); border-radius: 6px; background: transparent; color: var(--elves-ink-soft); font: 600 12px var(--elves-card-font); cursor: pointer; }
+.elves-annotation-thread__close { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--elves-ink-faint); cursor: pointer; }
+.elves-annotation-thread__resolve { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--elves-ink-soft); cursor: pointer; }
 .elves-annotation-thread__retry { flex: 0 0 auto; align-self: flex-end; display: inline-flex; align-items: center; gap: 4px; min-height: 26px; margin-left: auto; padding: 4px 7px; border: 1px solid var(--elves-danger, #b42318); border-radius: 6px; background: transparent; color: var(--elves-danger, #b42318); font: 600 12px var(--elves-card-font); cursor: pointer; }
 .elves-annotation-thread__resolve:hover:not(:disabled), .elves-annotation-thread__retry:hover:not(:disabled) { opacity: 1; }
 .elves-annotation-thread__resolve:hover:not(:disabled) { background: var(--elves-tertiary); color: var(--elves-ink); }
@@ -105,4 +106,3 @@
   max-height: calc(100% - 16px);
   pointer-events: all;
 }
-.elves-annotation-thread--preview { box-shadow: var(--elves-shadow-md); }
