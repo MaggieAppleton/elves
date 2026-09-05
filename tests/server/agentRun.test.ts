@@ -412,6 +412,31 @@ test('cancelAndWait escalates an ignored SIGTERM to SIGKILL', async () => {
   await run
 })
 
+test('shutdown cancels every active child, waits for close, and blocks new admissions', async () => {
+  const chat = new FakeChild()
+  const review = new FakeChild()
+  const children = [chat, review]
+  const runner = createAgentRunner(deps(() => children.shift()!))
+  const chatRun = runner.run('chat', input('chat-run'), () => {})
+  const reviewRun = runner.run('review:one', input('review-run'), () => {})
+
+  let settled = false
+  const shutdown = runner.shutdown!().then(() => { settled = true })
+  expect(chat.killed).toBe('SIGTERM')
+  expect(review.killed).toBe('SIGTERM')
+  expect(settled).toBe(false)
+  expect(runner.reserveProjectRun('other')).toBeNull()
+  expect(runner.prepare('new', 'new-run', 'other')).toEqual({ status: 'capacity' })
+
+  chat.emitClose(null)
+  await Promise.resolve()
+  expect(settled).toBe(false)
+  review.emitClose(null)
+  await shutdown
+  await Promise.all([chatRun, reviewRun])
+  expect(settled).toBe(true)
+})
+
 test.each([
   ['cancel', (runner: ReturnType<typeof createAgentRunner>) => runner.cancel('chat', 'run-a')],
   ['abandon', (runner: ReturnType<typeof createAgentRunner>) => runner.abandon('chat', 'run-a')],
