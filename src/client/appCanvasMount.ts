@@ -155,9 +155,10 @@ export function canvasWriteStatusLabel(status: CanvasWriteStatus): string {
     case 'unsaved': return 'Canvas has unsaved changes'
     case 'saving': return 'Saving canvas'
     case 'syncing': return 'Syncing canvas'
+    case 'retrying': return 'Canvas save failed; local changes remain unsaved; retrying'
     case 'renaming': return 'Renaming project'
     case 'rename-ambiguous': return 'Project rename needs attention'
     case 'conflict': return 'Canvas has a save conflict'
-    case 'error': return 'Canvas save failed'
+    case 'error': return 'Canvas save failed; local changes remain unsaved'
   }
 }

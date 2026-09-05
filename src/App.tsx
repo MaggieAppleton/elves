@@ -966,6 +966,13 @@ export default function App() {
     if (mount) activateCanvasMount(mount)
   }
 
+  const retryCanvasSave = () => {
+    const mount = canvasMountRef.current
+    if (!mount) return
+    void mount.writeCoordinator.retryNow()
+      .catch((err) => console.error('Elves: canvas save retry failed', err))
+  }
+
   // Still loading the project list.
   if (projects === null) return <div id="app-root" />
 
@@ -1047,6 +1054,11 @@ export default function App() {
         {canvasWriteStatus === 'error' && !editor && (
           <button className="elves-status-action" onClick={retryCanvasInitialization}>
             Retry canvas
+          </button>
+        )}
+        {(canvasWriteStatus === 'retrying' || canvasWriteStatus === 'error') && editor && (
+          <button className="elves-status-action" onClick={retryCanvasSave}>
+            Retry save
           </button>
         )}
         {canvasWriteStatus === 'rename-ambiguous' && pendingRenameName && (

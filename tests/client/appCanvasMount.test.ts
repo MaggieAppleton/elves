@@ -18,6 +18,7 @@ function coordinator(overrides: Partial<CanvasWriteCoordinator> = {}): CanvasWri
     markDirty: vi.fn(),
     requestRemoteSync: vi.fn().mockResolvedValue(undefined),
     flushOrThrow: vi.fn().mockResolvedValue(undefined),
+    retryNow: vi.fn().mockResolvedValue(undefined),
     renameProject: vi.fn(),
     ownsProject: vi.fn((id) => id === project.id),
     dispose: vi.fn(),
@@ -212,10 +213,11 @@ describe('canvas write status labels', () => {
     ['unsaved', 'Canvas has unsaved changes'],
     ['saving', 'Saving canvas'],
     ['syncing', 'Syncing canvas'],
+    ['retrying', 'Canvas save failed; local changes remain unsaved; retrying'],
     ['renaming', 'Renaming project'],
     ['conflict', 'Canvas has a save conflict'],
     ['rename-ambiguous', 'Project rename needs attention'],
-    ['error', 'Canvas save failed'],
+    ['error', 'Canvas save failed; local changes remain unsaved'],
   ] as const)('%s is explicit', (status, label) => {
     expect(canvasWriteStatusLabel(status)).toBe(label)
   })

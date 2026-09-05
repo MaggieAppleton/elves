@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import type { CanvasSnapshot, CanvasVersionedState } from '../../src/client/persistence'
-import { CanvasRevisionConflictError } from '../../src/client/persistence'
+import { CanvasProtocolError, CanvasRevisionConflictError } from '../../src/client/persistence'
 import type { DocumentRecords } from '../../src/client/canvasMerge'
 import {
   CanvasWriteCoordinatorDisposedError,
@@ -55,6 +55,7 @@ function harness(options: {
   load?: CanvasWriteCoordinatorTransport['load']
   save?: CanvasWriteCoordinatorTransport['save']
   autosaveMs?: number
+  retryRandom?: () => number
   markDirtyOnApply?: boolean
 } = {}) {
   let current = structuredClone(options.initial ?? document())
@@ -103,6 +104,7 @@ function harness(options: {
       listProjects: async () => [],
     },
     autosaveMs: options.autosaveMs ?? 0,
+    retryRandom: options.retryRandom,
     onStatus: (status) => statuses.push(status),
     onRemoteChange: (ids, glow) => remoteChanges.push({ ids, glow }),
   })
@@ -230,6 +232,156 @@ test('a save failure rejects its barrier and a later flush restarts retained dir
   expect(save).toHaveBeenCalledTimes(1)
   await h.coordinator.flushOrThrow()
   expect(save).toHaveBeenCalledTimes(2)
+})
+
+test('a transient transport failure retries without another edit and resets after success', async () => {
+  vi.useFakeTimers()
+  const firstEdit = document({ name: 'first unsaved edit' })
+  const secondEdit = document({ name: 'second unsaved edit' })
+  const load = vi.fn()
+    .mockResolvedValueOnce(state(document(), 1))
+    .mockResolvedValueOnce(state(document(), 1))
+    .mockResolvedValueOnce(state(firstEdit, 2))
+  const save = vi.fn()
+    .mockRejectedValueOnce(new TypeError('fetch failed'))
+    .mockResolvedValueOnce(2)
+    .mockRejectedValueOnce(new TypeError('fetch failed again'))
+    .mockResolvedValueOnce(3)
+  const h = harness({ load, save, retryRandom: () => 0.5 })
+  await h.coordinator.initialize()
+  h.setDocument(firstEdit)
+  h.coordinator.markDirty()
+  await tick()
+  expect(save).toHaveBeenCalledTimes(1)
+  expect(h.statuses.at(-1)).toBe('retrying')
+
+  await vi.advanceTimersByTimeAsync(499)
+  expect(save).toHaveBeenCalledTimes(1)
+  await vi.advanceTimersByTimeAsync(1)
+  expect(save).toHaveBeenCalledTimes(2)
+  expect(h.statuses.at(-1)).toBe('idle')
+
+  h.setDocument(secondEdit)
+  h.coordinator.markDirty()
+  await tick()
+  expect(save).toHaveBeenCalledTimes(3)
+  await vi.advanceTimersByTimeAsync(499)
+  expect(save).toHaveBeenCalledTimes(3)
+  await vi.advanceTimersByTimeAsync(1)
+  expect(save).toHaveBeenCalledTimes(4)
+})
+
+test('transient retry uses five bounded full-jitter slots then leaves manual retry', async () => {
+  vi.useFakeTimers()
+  const save = vi.fn().mockRejectedValue(new CanvasProtocolError('temporary', 503, null, null, null))
+  const h = harness({ save, retryRandom: () => 0.5 })
+  await h.coordinator.initialize()
+  h.coordinator.markDirty()
+  await tick()
+
+  for (const delay of [500, 1_000, 2_000, 4_000, 8_000]) {
+    await vi.advanceTimersByTimeAsync(delay - 1)
+    const before = save.mock.calls.length
+    await vi.advanceTimersByTimeAsync(1)
+    expect(save).toHaveBeenCalledTimes(before + 1)
+  }
+  expect(save).toHaveBeenCalledTimes(6)
+  expect(h.statuses.at(-1)).toBe('error')
+  await vi.advanceTimersByTimeAsync(60_000)
+  expect(save).toHaveBeenCalledTimes(6)
+})
+
+test('repeated manual retry requests share one save worker', async () => {
+  const held = deferred<number>()
+  const save = vi.fn()
+    .mockRejectedValueOnce(new TypeError('offline'))
+    .mockImplementationOnce(() => held.promise)
+  const h = harness({ save, retryRandom: () => 1 })
+  await h.coordinator.initialize()
+  h.setDocument(document({ name: 'manual retry' }))
+  h.coordinator.markDirty()
+  await tick()
+
+  const first = h.coordinator.retryNow()
+  const second = h.coordinator.retryNow()
+  const third = h.coordinator.retryNow()
+  await tick()
+  expect(save).toHaveBeenCalledTimes(2)
+  held.resolve(2)
+  await expect(Promise.all([first, second, third])).resolves.toEqual([undefined, undefined, undefined])
+  expect(save).toHaveBeenCalledTimes(2)
+})
+
+test('dispose cancels a scheduled transient retry', async () => {
+  vi.useFakeTimers()
+  const save = vi.fn().mockRejectedValue(new TypeError('offline'))
+  const h = harness({ save, retryRandom: () => 0.5 })
+  await h.coordinator.initialize()
+  h.coordinator.markDirty()
+  await tick()
+  h.coordinator.dispose()
+  await vi.advanceTimersByTimeAsync(60_000)
+  expect(save).toHaveBeenCalledTimes(1)
+})
+
+test.each([400, 401, 403, 409, 422])('HTTP %s does not enter automatic retry', async (status) => {
+  vi.useFakeTimers()
+  const save = vi.fn().mockRejectedValue(new CanvasProtocolError('not retriable', status, 'rejected', null, null))
+  const h = harness({ save })
+  await h.coordinator.initialize()
+  h.coordinator.markDirty()
+  await tick()
+  await vi.advanceTimersByTimeAsync(60_000)
+  expect(save).toHaveBeenCalledTimes(1)
+  expect(h.statuses.at(-1)).toBe('error')
+})
+
+test('a lost save response loads authoritative state before deciding whether to replay', async () => {
+  vi.useFakeTimers()
+  const savedDocument = document({ name: 'possibly committed' })
+  const load = vi.fn()
+    .mockResolvedValueOnce(state(document(), 1))
+    .mockResolvedValueOnce(state(savedDocument, 2))
+  const save = vi.fn().mockRejectedValueOnce(new TypeError('response lost'))
+  const h = harness({ load, save, retryRandom: () => 0 })
+  await h.coordinator.initialize()
+  h.setDocument(savedDocument)
+  h.coordinator.markDirty()
+  await tick()
+  expect(save).toHaveBeenCalledTimes(1)
+
+  await vi.advanceTimersByTimeAsync(0)
+  expect(load).toHaveBeenCalledTimes(2)
+  expect(save).toHaveBeenCalledTimes(1)
+  expect(h.statuses.at(-1)).toBe('idle')
+})
+
+test('a newer edit survives reconciliation when the ambiguous save did commit', async () => {
+  vi.useFakeTimers()
+  const attempted = document({ name: 'possibly committed' })
+  const newer = document({ name: 'typed after response loss' })
+  const load = vi.fn()
+    .mockResolvedValueOnce(state(document(), 1))
+    .mockResolvedValueOnce(state(attempted, 2))
+  const firstSave = deferred<number>()
+  const save = vi.fn()
+    .mockImplementationOnce(() => firstSave.promise)
+    .mockResolvedValueOnce(3)
+  const h = harness({ load, save, retryRandom: () => 0 })
+  await h.coordinator.initialize()
+  h.setDocument(attempted)
+  h.coordinator.markDirty()
+  await tick()
+
+  h.setDocument(newer)
+  h.coordinator.markDirty()
+  firstSave.reject(new TypeError('response lost after commit'))
+  await tick()
+  await vi.advanceTimersByTimeAsync(0)
+
+  expect(save).toHaveBeenCalledTimes(2)
+  expect((save.mock.calls[1][1] as CanvasSnapshot).document).toEqual(newer)
+  expect(h.document).toEqual(newer)
 })
 
 test('a newer edit during a failing save restarts once with the latest snapshot', async () => {
