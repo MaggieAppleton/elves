@@ -251,6 +251,74 @@ test('clicking a pin replaces its preview with an interactive thread', async ({ 
   await expect(thread.getByLabel('Close annotation thread')).toBeVisible()
 })
 
+test('resolved card confirmation restores only its target and preserves later work', async ({ page, request }) => {
+  const cardId = await addCardAndComment(page, request, { type: 'needs-evidence', text: 'Resolve this exact comment.' })
+  const commentId = (await cardRecord(request, cardId)).props.comments[0].id
+  const pin = page.locator(`[data-annotation-target="card:${cardId}:${commentId}"]`)
+  await page.getByTestId('draft-open').click()
+  await expect(page.getByLabel('1 unresolved comments')).toBeVisible()
+
+  await pin.click()
+  await page.getByRole('button', { name: /^Resolve .* comment$/ }).click()
+  const cue = page.getByTestId('annotation-resolved-cue')
+  await expect(cue).toContainText('Comment resolved')
+  await expect(cue.getByRole('button', { name: 'Undo' })).toBeVisible()
+  await expect(pin).toHaveCount(0)
+  await expect(page.getByLabel('1 unresolved comments')).toHaveCount(0)
+
+  await page.getByTestId('new-note').click()
+  await page.keyboard.press('Escape')
+  await request.post(`${BASE}/projects/${projectId}/changeset`, { data: {
+    id: `later-reply-${Date.now()}`, author: 'user', ops: [{
+      kind: 'append_annotation_message', target: { kind: 'card', cardId, commentId },
+      message: { id: 'later-after-resolve', author: 'user', text: 'Keep this later reply.', createdAt: '2026-09-05T10:00:00Z' },
+    }],
+  } })
+  await expect.poll(async () => (await serverCardIds(request, projectId)).length).toBe(2)
+
+  await cue.getByRole('button', { name: 'Undo' }).click()
+  await expect(pin).toBeVisible()
+  await expect(pin).toBeFocused()
+  await expect(page.getByLabel('1 unresolved comments')).toBeVisible()
+  await expect.poll(async () => {
+    const comment = (await cardRecord(request, cardId)).props.comments.find((entry: any) => entry.id === commentId)
+    return { resolved: comment?.resolved, messages: comment?.messages?.map((message: any) => message.text) }
+  }).toEqual({ resolved: false, messages: ['Resolve this exact comment.', 'Keep this later reply.'] })
+
+  await page.getByTestId('new-note').click()
+  await expect.poll(async () => (await serverCardIds(request, projectId)).length).toBe(3)
+  await page.keyboard.press('Meta+z')
+  await expect.poll(async () => (await serverCardIds(request, projectId)).length).toBe(2)
+})
+
+test('floating feedback uses its pre-resolve origin and timeout does not move focus', async ({ page, request }) => {
+  await addCardAndComment(page, request, { type: 'structure', text: 'Anchor the canvas.' })
+  await createFeedbackTool(BASE, projectId, {
+    text: 'Resolve floating feedback.', x: 520, y: 260, type: 'weak-argument', reviewer: 'architect',
+  })
+  const { feedback } = await readMapTool(BASE, projectId)
+  const feedbackId = feedback.find((entry: any) => entry.text === 'Resolve floating feedback.')!.id
+  const pin = page.locator(`[data-annotation-target="feedback:${feedbackId}"]`)
+  const before = await pin.boundingBox()
+  await pin.click()
+  await page.getByRole('button', { name: /^Resolve .* comment$/ }).click()
+  const cue = page.getByTestId('annotation-resolved-cue')
+  const cueBox = await cue.boundingBox()
+  expect(before).not.toBeNull()
+  expect(cueBox).not.toBeNull()
+  expect(Math.hypot(cueBox!.x - before!.x, cueBox!.y - before!.y)).toBeLessThan(360)
+  await expect(pin).toHaveCount(0)
+
+  await cue.getByRole('button', { name: 'Undo' }).click()
+  await expect(pin).toBeFocused()
+  await pin.click()
+  await page.getByRole('button', { name: /^Resolve .* comment$/ }).click()
+  const focusBeforeTimeout = await page.evaluate(() => document.activeElement?.tagName)
+  await expect(page.getByTestId('annotation-resolved-cue')).toHaveCount(0, { timeout: 5_500 })
+  expect(await page.evaluate(() => document.activeElement?.tagName)).toBe(focusBeforeTimeout)
+  await expect(pin).toHaveCount(0)
+})
+
 test('foreground threads promote independently, persist resolution, and prune only a deleted anchor', async ({ page, request }) => {
   const proseCardId = await addCardAndComment(page, request, { type: 'needs-evidence', text: 'Resolve this card comment.' })
   const proseCommentId = (await cardRecord(request, proseCardId)).props.comments[0].id

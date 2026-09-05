@@ -1,5 +1,6 @@
 import { expect, test, vi } from 'vitest'
 import {
+  annotationResolutionCue,
   annotationOpenTargets,
   annotationHoverTarget,
   clearAnnotationPresentations,
@@ -11,6 +12,7 @@ import {
   requestAnnotationClose,
   requestAnnotationOpen,
   requestAnnotationResolve,
+  setAnnotationResolutionCue,
   setAnnotationHover,
   subscribeAnnotationResolve,
 } from '../../src/client/annotationSelection'
@@ -87,4 +89,15 @@ test('re-entering a hover target cancels its pending dismissal', () => {
   expect(annotationHoverTarget()).toEqual(a)
   vi.useRealTimers()
   clearAnnotationPresentations()
+})
+
+test('clearing project-local presentation state also removes a pending resolution cue', () => {
+  setAnnotationResolutionCue({
+    id: 'cue:one', target: a, identity: 'comment identity',
+    anchor: { left: 100, top: 80, side: 'right' },
+  })
+
+  clearAnnotationPresentations()
+
+  expect(annotationResolutionCue()).toBeNull()
 })

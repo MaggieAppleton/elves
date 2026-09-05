@@ -18,12 +18,15 @@ vi.mock('tldraw', () => ({
   useValue: (_name: string, getValue: () => unknown) => getValue(),
 }))
 
-import { AnnotationPopoverLayer, foregroundEntries } from '../../src/components/AnnotationPopoverLayer'
+import { AnnotationPopoverLayer, ResolvedAnnotationCue, foregroundEntries } from '../../src/components/AnnotationPopoverLayer'
 import {
+  annotationResolutionCue,
   clearAnnotationPresentations,
   openAnnotationThread,
   setAnnotationHover,
+  setAnnotationResolutionCue,
   setAnnotationThreadPresentation,
+  subscribeAnnotationResolutionUndo,
   subscribeAnnotationRetry,
 } from '../../src/client/annotationSelection'
 
@@ -136,5 +139,71 @@ test('preview panels retain the delayed hover handoff handlers', () => {
   act(() => panel.props.onPointerEnter())
   act(() => panel.props.onPointerLeave())
 
+  act(() => tree.unmount())
+})
+
+test('resolved cue expires after four active seconds and pauses for pointer or focus', () => {
+  vi.useFakeTimers()
+  vi.setSystemTime(new Date('2026-09-05T10:00:00Z'))
+  const cue = {
+    id: 'cue:one', target: failedTarget, identity: 'feedback identity',
+    anchor: { left: 120, top: 80, side: 'right' as const },
+  }
+  setAnnotationResolutionCue(cue)
+  let tree!: ReactTestRenderer
+  act(() => { tree = create(createElement(ResolvedAnnotationCue, { cue })) })
+  const surface = tree.root.findByProps({ 'data-testid': 'annotation-resolved-cue' })
+
+  act(() => { vi.advanceTimersByTime(3_000); surface.props.onPointerEnter() })
+  act(() => { vi.advanceTimersByTime(5_000) })
+  expect(annotationResolutionCue()).toEqual(cue)
+  act(() => surface.props.onPointerLeave())
+  act(() => { vi.advanceTimersByTime(999) })
+  expect(annotationResolutionCue()).toEqual(cue)
+  act(() => { vi.advanceTimersByTime(1) })
+  expect(annotationResolutionCue()).toBeNull()
+
+  act(() => tree.unmount())
+  vi.useRealTimers()
+})
+
+test('resolved cue sends targeted Undo and remains while keyboard focus is inside', () => {
+  vi.useFakeTimers()
+  const cue = {
+    id: 'cue:two', target: failedTarget, identity: 'feedback identity',
+    anchor: { left: 120, top: 80, side: 'left' as const },
+  }
+  const onUndo = vi.fn()
+  const unsubscribe = subscribeAnnotationResolutionUndo(onUndo)
+  setAnnotationResolutionCue(cue)
+  let tree!: ReactTestRenderer
+  act(() => { tree = create(createElement(ResolvedAnnotationCue, { cue })) })
+  const surface = tree.root.findByProps({ 'data-testid': 'annotation-resolved-cue' })
+  for (const eventName of ['onPointerDown', 'onClick', 'onKeyDown'] as const) {
+    const stopPropagation = vi.fn()
+    surface.props[eventName]({ stopPropagation })
+    expect(stopPropagation).toHaveBeenCalledOnce()
+  }
+  act(() => surface.props.onFocus())
+  act(() => { vi.advanceTimersByTime(5_000) })
+  expect(annotationResolutionCue()).toEqual(cue)
+  act(() => tree.root.findByType('button').props.onClick())
+  expect(onUndo).toHaveBeenCalledWith(cue)
+
+  unsubscribe()
+  act(() => tree.unmount())
+  vi.useRealTimers()
+})
+
+test('foreground layer renders a local cue even after its resolved thread is gone', () => {
+  setAnnotationResolutionCue({
+    id: 'cue:layer', target: failedTarget, identity: 'feedback identity',
+    anchor: { left: 120, top: 80, side: 'right' },
+  })
+  let tree!: ReactTestRenderer
+  act(() => { tree = create(createElement(AnnotationPopoverLayer)) })
+  const cue = tree.root.findByProps({ 'data-testid': 'annotation-resolved-cue' })
+  expect(cue.props.style).toEqual({ left: 120, top: 80 })
+  expect(tree.root.findAllByProps({ 'data-testid': 'annotation-thread' })).toHaveLength(0)
   act(() => tree.unmount())
 })

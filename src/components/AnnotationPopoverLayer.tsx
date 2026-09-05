@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type Syntheti
 import { useEditor, useValue, type Editor, type TLShapeId } from 'tldraw'
 import { annotationThreadMaxHeight, placeAnnotationThread, type AnnotationPlacement } from '../client/annotationPlacement'
 import {
-  annotationHoverTarget, annotationOpenTargets, annotationRepliesLocked, annotationTargetKey,
+  annotationHoverTarget, annotationOpenTargets, annotationRepliesLocked, annotationResolutionCue, annotationTargetKey,
   annotationThreadPresentation, dismissAnnotationPopoverSoon, pruneAnnotationThreads,
-  requestAnnotationClose, requestAnnotationReply, requestAnnotationResolve, requestAnnotationRetry,
-  setAnnotationHover, subscribeAnnotationTargets, subscribeAnnotationThreadPresentation,
-  type AnnotationTarget,
+  requestAnnotationClose, requestAnnotationReply, requestAnnotationResolutionUndo,
+  requestAnnotationResolve, requestAnnotationRetry, setAnnotationHover, setAnnotationResolutionCue,
+  subscribeAnnotationTargets, subscribeAnnotationThreadPresentation,
+  type AnnotationResolutionCue, type AnnotationTarget,
 } from '../client/annotationSelection'
 import type { CardShape } from '../shapes/CardShapeUtil'
 import type { FeedbackShape } from '../shapes/FeedbackShapeUtil'
@@ -18,6 +19,45 @@ export type ForegroundEntry = {
   target: AnnotationTarget
   mode: 'preview' | 'open'
   zIndex: number
+}
+
+const RESOLUTION_CUE_MS = 4_000
+
+export function ResolvedAnnotationCue({ cue }: { cue: AnnotationResolutionCue }) {
+  const remaining = useRef(RESOLUTION_CUE_MS)
+  const [pointerInside, setPointerInside] = useState(false)
+  const [focusInside, setFocusInside] = useState(false)
+
+  useEffect(() => {
+    if (pointerInside || focusInside) return
+    const started = Date.now()
+    const timer = setTimeout(() => setAnnotationResolutionCue(null), remaining.current)
+    return () => {
+      clearTimeout(timer)
+      remaining.current = Math.max(0, remaining.current - (Date.now() - started))
+    }
+  }, [focusInside, pointerInside])
+
+  return (
+    <div
+      className="elves-annotation-resolved-cue"
+      data-side={cue.anchor.side}
+      data-testid="annotation-resolved-cue"
+      style={{ left: cue.anchor.left, top: cue.anchor.top }}
+      onPointerDown={stopForegroundEvent}
+      onClick={stopForegroundEvent}
+      onKeyDown={stopForegroundEvent}
+      onPointerEnter={() => setPointerInside(true)}
+      onPointerLeave={() => setPointerInside(false)}
+      onFocus={() => setFocusInside(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setFocusInside(false)
+      }}
+    >
+      <span role="status">Comment resolved</span>
+      <button type="button" onClick={() => requestAnnotationResolutionUndo(cue)}>Undo</button>
+    </div>
+  )
 }
 
 /** Ordered canvas overlays: promoted threads stay on top, with one hover preview. */
@@ -209,13 +249,15 @@ export function AnnotationPopoverLayer() {
   useEffect(() => subscribeAnnotationThreadPresentation(() => setPresentationVersion((version) => version + 1)), [])
 
   const entries = foregroundEntries(annotationOpenTargets(), annotationHoverTarget())
-  if (!entries.length) return null
+  const resolvedCue = annotationResolutionCue()
+  if (!entries.length && !resolvedCue) return null
 
   return (
     <div className="elves-annotation-popover-layer" aria-live="polite">
       {entries.map((entry) => (
         <AnnotationForegroundItem key={annotationTargetKey(entry.target)} {...entry} editor={editor} />
       ))}
+      {resolvedCue && <ResolvedAnnotationCue key={resolvedCue.id} cue={resolvedCue} />}
     </div>
   )
 }
