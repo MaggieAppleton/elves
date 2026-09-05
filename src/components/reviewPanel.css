@@ -28,6 +28,11 @@
   transition: background-color 100ms ease;
 }
 .elves-review__button:hover { background: var(--elves-tertiary); }
+.elves-review__button[aria-disabled='true'] {
+  cursor: default;
+  opacity: 0.55;
+}
+.elves-review__button[aria-disabled='true']:hover { background: var(--elves-surface); }
 .elves-review__button:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--elves-surface), 0 0 0 4px var(--elves-focus-ring);

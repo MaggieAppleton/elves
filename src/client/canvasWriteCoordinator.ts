@@ -4,6 +4,7 @@ import {
   type DocumentRecords,
 } from './canvasMerge'
 import {
+  CanvasProtocolError,
   CanvasRevisionConflictError,
   type CanvasSnapshot,
   type CanvasVersionedState,
@@ -15,6 +16,12 @@ import {
   type CanvasRenameController,
 } from './canvasRenameCoordinator'
 import { changeSetTokenStamp, type ChangeSet } from '../model/changeset'
+import {
+  createRecoveryEntry,
+  recoveryKey,
+  type CanvasRecoveryContext,
+  type CanvasRecoveryEntry,
+} from './canvasRecovery'
 
 export {
   CanvasRenameAmbiguousError,
@@ -25,6 +32,7 @@ export {
 
 export type CanvasWriteStatus =
   | 'loading' | 'idle' | 'unsaved' | 'saving' | 'syncing' | 'renaming'
+  | 'retrying' | 'recovery-conflict' | 'recovery-unavailable'
   | 'rename-ambiguous' | 'conflict' | 'error'
 
 export interface CanvasWriteCoordinatorTransport {
@@ -51,7 +59,11 @@ export interface CanvasWriteCoordinatorOptions {
   editor: CanvasWriteCoordinatorEditor
   transport: CanvasWriteCoordinatorTransport
   autosaveMs?: number
+  retryRandom?: () => number
+  recovery?: CanvasRecoveryContext
+  lifecycleTarget?: Pick<Window, 'addEventListener' | 'removeEventListener'>
   onStatus?(status: CanvasWriteStatus): void
+  onRecoveryConflict?(active: boolean): void
   onRemoteChange?(changedIds: string[], glow: boolean): void
 }
 
@@ -60,6 +72,9 @@ export interface CanvasWriteCoordinator {
   markDirty(): void
   requestRemoteSync(options?: { glow?: boolean }): Promise<void>
   flushOrThrow(): Promise<void>
+  retryNow(): Promise<void>
+  whenRecoveryCommitted(): Promise<void>
+  resolveRecovery(decision: 'recover' | 'discard'): Promise<void>
   renameProject(name: string): Promise<Project>
   ownsProject(projectId: string): boolean
   dispose(): void
@@ -76,6 +91,13 @@ export class CanvasWriteCoordinatorDisposedError extends Error {
   constructor() {
     super('canvas write coordinator disposed')
     this.name = 'CanvasWriteCoordinatorDisposedError'
+  }
+}
+
+export class CanvasRecoveryDecisionRequiredError extends Error {
+  constructor() {
+    super('choose whether to recover or discard local canvas changes before continuing')
+    this.name = 'CanvasRecoveryDecisionRequiredError'
   }
 }
 
@@ -97,13 +119,29 @@ interface PreRenameFlush {
   reject(error: unknown): void
 }
 
+interface PendingRecoveryConflict {
+  entry: CanvasRecoveryEntry
+  remote: DocumentRecords
+}
+
+interface AmbiguousSave {
+  base: DocumentRecords
+  attempted: DocumentRecords
+  generation: number
+}
+
 const MAX_INITIALIZATION_CONFLICT_RETRIES = 1
+const TRANSIENT_RETRY_CAPS_MS = [1_000, 2_000, 4_000, 8_000, 16_000] as const
 
 export function createCanvasWriteCoordinator(
   options: CanvasWriteCoordinatorOptions,
 ): CanvasWriteCoordinator {
   const { editor, transport } = options
   const autosaveMs = options.autosaveMs ?? 500
+  const retryRandom = options.retryRandom ?? Math.random
+  const recovery = options.project.storageId ? options.recovery : undefined
+  const lifecycleTarget = options.lifecycleTarget ??
+    (typeof window === 'undefined' ? undefined : window)
   let project = options.project
   let projectId = project.id
   let lifecycle = 0
@@ -114,15 +152,27 @@ export function createCanvasWriteCoordinator(
   let editingGeneration = 0
   let base: DocumentRecords | null = null
   let revision = 0
+  let baseEpoch = ''
   let dirty = false
   let busy = false
   let syncRequested = false
   let syncGlow = false
   let autosaveTimer: ReturnType<typeof setTimeout> | null = null
+  let retryTimer: ReturnType<typeof setTimeout> | null = null
+  let retryAttempt = 0
+  let ambiguousSave: AmbiguousSave | null = null
   let workSerial = 0
   const barriers: Barrier[] = []
   const editingEndBarriers: Barrier[] = []
   let preRenameFlush: PreRenameFlush | null = null
+  let journalGeneration = 0
+  let latestJournalCommit: Promise<void> = Promise.resolve()
+  let journalQueue: Promise<void> = Promise.resolve()
+  let journalUnavailable = false
+  let journalCreatedAt: string | null = null
+  let pendingRecovery: PendingRecoveryConflict | null = null
+  const recoveredSourceGenerations = new Map<string, number>()
+  let unloadGuardInstalled = false
   let renameController!: CanvasRenameController
 
   editor.setReadOnly(true)
@@ -140,6 +190,29 @@ export function createCanvasWriteCoordinator(
     if (autosaveTimer === null) return
     clearTimeout(autosaveTimer)
     autosaveTimer = null
+  }
+  const clearRetryTimer = () => {
+    if (retryTimer === null) return
+    clearTimeout(retryTimer)
+    retryTimer = null
+  }
+  const resetRetryPolicy = () => {
+    clearRetryTimer()
+    retryAttempt = 0
+  }
+  const beforeUnload = (event: BeforeUnloadEvent) => {
+    event.preventDefault()
+    event.returnValue = ''
+  }
+  const installUnloadGuard = () => {
+    if (unloadGuardInstalled || !lifecycleTarget) return
+    lifecycleTarget.addEventListener('beforeunload', beforeUnload)
+    unloadGuardInstalled = true
+  }
+  const removeUnloadGuard = () => {
+    if (!unloadGuardInstalled || !lifecycleTarget) return
+    lifecycleTarget.removeEventListener('beforeunload', beforeUnload)
+    unloadGuardInstalled = false
   }
   const settleBarriers = (error?: unknown) => {
     for (const barrier of barriers.splice(0)) {
@@ -163,6 +236,60 @@ export function createCanvasWriteCoordinator(
       if (changedIds.length > 0) options.onRemoteChange?.(changedIds, glow)
     } finally {
       applyingRemote = false
+    }
+  }
+
+  const queueJournal = (): Promise<void> => {
+    if (!recovery || !base) return Promise.resolve()
+    const generation = journalGeneration
+    const now = (recovery.now ?? (() => new Date().toISOString()))()
+    journalCreatedAt ??= now
+    const entry = createRecoveryEntry({
+      serverOrigin: recovery.serverOrigin,
+      storageId: project.storageId!,
+      projectId,
+      sessionId: recovery.sessionId,
+      generation,
+      createdAt: journalCreatedAt,
+      updatedAt: now,
+      baseRevision: revision,
+      baseEpoch,
+      baseDocument: structuredClone(base),
+      localDocument: structuredClone(editor.captureDocument()),
+      localSnapshot: structuredClone(editor.captureSnapshot()),
+    })
+    installUnloadGuard()
+    const commit = journalQueue.catch(() => undefined).then(() => recovery.store.put(entry))
+      .then(() => {
+        if (generation === journalGeneration) journalUnavailable = false
+      })
+      .catch((error) => {
+        journalUnavailable = true
+        publish('recovery-unavailable')
+        throw error
+      })
+    journalQueue = commit.catch(() => undefined)
+    latestJournalCommit = commit
+    return commit
+  }
+
+  const clearAcknowledgedRecovery = async (generation: number): Promise<void> => {
+    if (!recovery) return
+    try {
+      const currentKey = recoveryKey(recovery.serverOrigin, project.storageId!, recovery.sessionId)
+      await recovery.store.deleteIfGeneration(currentKey, generation)
+      for (const [key, sourceGeneration] of recoveredSourceGenerations) {
+        await recovery.store.deleteIfGeneration(key, sourceGeneration)
+      }
+      recoveredSourceGenerations.clear()
+      journalUnavailable = false
+      if (generation === journalGeneration && !dirty) {
+        journalCreatedAt = null
+        removeUnloadGuard()
+      }
+    } catch {
+      journalUnavailable = true
+      publish('recovery-unavailable')
     }
   }
 
@@ -200,24 +327,75 @@ export function createCanvasWriteCoordinator(
     applyRemote(merged.document, false)
     base = remote
     revision = loaded.revision
+    baseEpoch = loaded.nextChangeSetToken.epoch
 
     dirty = false
     const retryDocument = editor.captureDocument()
     const retrySnapshot = editor.captureSnapshot()
+    const savedGeneration = journalGeneration
+    await queueJournal().catch(() => undefined)
+    await latestJournalCommit.catch(() => undefined)
     try {
       const savedRevision = await transport.save(expectedProjectId, retrySnapshot, revision)
       assertCurrent(expected, expectedProjectId)
       base = retryDocument
       revision = savedRevision
+      ambiguousSave = null
+      resetRetryPolicy()
+      await clearAcknowledgedRecovery(savedGeneration)
+      if (dirty && journalGeneration > savedGeneration) await queueJournal().catch(() => undefined)
     } catch (error) {
       dirty = true
+      if (isAmbiguousTransportFailure(error)) {
+        ambiguousSave = { base: structuredClone(base), attempted: retryDocument, generation: savedGeneration }
+      }
       throw error
     }
   }
 
+  const reconcileAmbiguousSave = async (
+    expected: number,
+    expectedProjectId: string,
+  ): Promise<void> => {
+    const pending = ambiguousSave
+    if (!pending) return
+    publish('syncing')
+    const loaded = await loadConflictState(expected, expectedProjectId)
+    const remote = editor.normalizeDocument(loaded.snapshot)
+    const local = editor.captureDocument()
+    if (recordsEqual(remote, pending.attempted)) {
+      base = remote
+      revision = loaded.revision
+      baseEpoch = loaded.nextChangeSetToken.epoch
+      ambiguousSave = null
+      dirty = !recordsEqual(local, remote)
+      await clearAcknowledgedRecovery(pending.generation)
+      if (dirty) await queueJournal().catch(() => undefined)
+      return
+    }
+    const merged = mergeCanvasRecords({ base: pending.base, local, remote })
+    if (!merged.ok) throw new CanvasWriteMergeConflictError(merged.conflicts)
+    applyRemote(merged.document, false)
+    base = remote
+    revision = loaded.revision
+    baseEpoch = loaded.nextChangeSetToken.epoch
+    ambiguousSave = null
+    dirty = !recordsEqual(merged.document, remote)
+    if (dirty) await queueJournal().catch(() => undefined)
+    else await clearAcknowledgedRecovery(pending.generation)
+  }
+
   const saveOnce = async (expected: number, expectedProjectId: string): Promise<void> => {
+    await reconcileAmbiguousSave(expected, expectedProjectId)
+    if (!dirty) {
+      resetRetryPolicy()
+      return
+    }
+    await latestJournalCommit.catch(() => undefined)
     const savedDocument = editor.captureDocument()
     const snapshot = editor.captureSnapshot()
+    const savedGeneration = journalGeneration
+    const savedBase = base
     dirty = false
     publish('saving')
     try {
@@ -225,6 +403,10 @@ export function createCanvasWriteCoordinator(
       assertCurrent(expected, expectedProjectId)
       base = savedDocument
       revision = savedRevision
+      ambiguousSave = null
+      resetRetryPolicy()
+      await clearAcknowledgedRecovery(savedGeneration)
+      if (dirty && journalGeneration > savedGeneration) await queueJournal().catch(() => undefined)
     } catch (error) {
       if (error instanceof CanvasRevisionConflictError) {
         try {
@@ -236,6 +418,9 @@ export function createCanvasWriteCoordinator(
         }
       }
       dirty = true
+      if (isAmbiguousTransportFailure(error) && savedBase) {
+        ambiguousSave = { base: structuredClone(savedBase), attempted: savedDocument, generation: savedGeneration }
+      }
       throw error
     }
   }
@@ -262,6 +447,7 @@ export function createCanvasWriteCoordinator(
       applyRemote(merged.document, activeGlow)
       base = remote
       revision = loaded.revision
+      baseEpoch = loaded.nextChangeSetToken.epoch
     } catch (error) {
       if (isCurrent(expected, expectedProjectId)) {
         syncRequested = true
@@ -271,9 +457,24 @@ export function createCanvasWriteCoordinator(
     }
   }
 
+  const scheduleTransientRetry = (): boolean => {
+    if (retryTimer !== null || retryAttempt >= TRANSIENT_RETRY_CAPS_MS.length) return false
+    const cap = TRANSIENT_RETRY_CAPS_MS[retryAttempt]
+    retryAttempt += 1
+    const jitter = Math.min(1, Math.max(0, retryRandom()))
+    const delayMs = Math.floor(cap * jitter)
+    publish('retrying')
+    retryTimer = setTimeout(() => {
+      retryTimer = null
+      start()
+    }, delayMs)
+    return true
+  }
+
   const start = (ignoreRenameGate = false) => {
-    if (busy || disposed || !initialized ||
+    if (busy || disposed || !initialized || pendingRecovery ||
       (!ignoreRenameGate && renameController?.blocksWork())) return
+    clearRetryTimer()
     busy = true
     const expected = lifecycle
     const expectedProjectId = projectId
@@ -303,18 +504,17 @@ export function createCanvasWriteCoordinator(
           settlePreRenameFlush()
         }
         if (!dirty && !syncRequested) {
-          publish('idle')
+          publish(journalUnavailable ? 'recovery-unavailable' : 'idle')
           settleBarriers()
         }
       } catch (error) {
         failedAt = attemptedWorkSerial
         if (isCurrent(expected, expectedProjectId)) {
-          publish(
-            error instanceof CanvasRevisionConflictError ||
-              error instanceof CanvasWriteMergeConflictError
-              ? 'conflict'
-              : 'error',
-          )
+          const conflict = error instanceof CanvasRevisionConflictError ||
+            error instanceof CanvasWriteMergeConflictError
+          const retryScheduled = !conflict && isTransientFailure(error) && scheduleTransientRetry()
+          if (conflict) publish('conflict')
+          else if (!retryScheduled) publish(journalUnavailable ? 'recovery-unavailable' : 'error')
           settlePreRenameFlush(error)
           settleBarriers(error)
         }
@@ -342,7 +542,10 @@ export function createCanvasWriteCoordinator(
     publish('loading')
     initializing = (async () => {
       try {
+        await recovery?.ready
+        assertCurrent(expected, expectedProjectId)
         let conflictRetries = 0
+        let authoritativeState: CanvasVersionedState | null = null
         for (;;) {
           assertCurrent(expected, expectedProjectId)
           const loaded = await transport.load(expectedProjectId)
@@ -372,6 +575,8 @@ export function createCanvasWriteCoordinator(
               revision = loaded.revision
             }
             base = initialDocument
+            baseEpoch = loaded.nextChangeSetToken.epoch
+            authoritativeState = { ...loaded, revision, snapshot: editor.captureSnapshot(), pendingChangeSets: [] }
             break
           }
           for (const entry of loaded.pendingChangeSets) {
@@ -391,6 +596,8 @@ export function createCanvasWriteCoordinator(
             )
             assertCurrent(expected, expectedProjectId)
             base = stagedDocument
+            baseEpoch = loaded.nextChangeSetToken.epoch
+            authoritativeState = { ...loaded, revision, snapshot: editor.captureSnapshot(), pendingChangeSets: [] }
             break
           } catch (error) {
             if (error instanceof CanvasRevisionConflictError &&
@@ -402,9 +609,16 @@ export function createCanvasWriteCoordinator(
           }
         }
         initialized = true
-        editor.setReadOnly(false)
-        publish('idle')
-        if (syncRequested) start()
+        if (authoritativeState) await restoreRecovery(authoritativeState)
+        if (pendingRecovery) {
+          editor.setReadOnly(true)
+          publish('recovery-conflict')
+          options.onRecoveryConflict?.(true)
+        } else {
+          editor.setReadOnly(false)
+          publish(dirty ? 'unsaved' : journalUnavailable ? 'recovery-unavailable' : 'idle')
+          if (dirty || syncRequested) start()
+        }
       } catch (error) {
         if (isCurrent(expected, expectedProjectId)) {
           initialized = false
@@ -425,10 +639,13 @@ export function createCanvasWriteCoordinator(
   }
 
   const markDirty = () => {
-    if (disposed || !initialized || applyingRemote) return
+    if (disposed || !initialized || applyingRemote || pendingRecovery) return
     dirty = true
     workSerial += 1
+    journalGeneration += 1
     publish('unsaved')
+    void queueJournal().catch(() => undefined)
+    clearRetryTimer()
     clearAutosave()
     if (autosaveMs === 0) {
       signal()
@@ -449,14 +666,16 @@ export function createCanvasWriteCoordinator(
     syncRequested = true
     workSerial += 1
     const promise = new Promise<void>((resolve, reject) => barriers.push({ resolve, reject }))
-    if (initialized) signal()
+    if (initialized && !pendingRecovery) signal()
     return promise
   }
 
   const flushCurrentOrThrow = (): Promise<void> => {
     clearAutosave()
+    clearRetryTimer()
     if (disposed) return Promise.reject(new CanvasWriteCoordinatorDisposedError())
     if (!initialized) return Promise.reject(new Error('canvas write coordinator is not initialized'))
+    if (pendingRecovery) return Promise.reject(new CanvasRecoveryDecisionRequiredError())
     if (!busy && !dirty && !syncRequested) return Promise.resolve()
     const promise = new Promise<void>((resolve, reject) => barriers.push({ resolve, reject }))
     signal()
@@ -465,8 +684,10 @@ export function createCanvasWriteCoordinator(
 
   const beginPreRenameFlush = (): Promise<void> => {
     clearAutosave()
+    clearRetryTimer()
     if (disposed) return Promise.reject(new CanvasWriteCoordinatorDisposedError())
     if (!initialized) return Promise.reject(new Error('canvas write coordinator is not initialized'))
+    if (pendingRecovery) return Promise.reject(new CanvasRecoveryDecisionRequiredError())
     if (!busy && !dirty && !syncRequested) return Promise.resolve()
     const cutoff = workSerial
     const promise = new Promise<void>((resolve, reject) => {
@@ -517,6 +738,47 @@ export function createCanvasWriteCoordinator(
     return flushCurrentOrThrow()
   }
 
+  const retryNow = (): Promise<void> => {
+    clearAutosave()
+    clearRetryTimer()
+    if (disposed) return Promise.reject(new CanvasWriteCoordinatorDisposedError())
+    if (!initialized) return Promise.reject(new Error('canvas write coordinator is not initialized'))
+    if (pendingRecovery) return Promise.reject(new CanvasRecoveryDecisionRequiredError())
+    const promise = new Promise<void>((resolve, reject) => barriers.push({ resolve, reject }))
+    workSerial += 1
+    start()
+    return promise
+  }
+
+  const whenRecoveryCommitted = (): Promise<void> => latestJournalCommit
+
+  const resolveRecovery = async (decision: 'recover' | 'discard'): Promise<void> => {
+    const conflict = pendingRecovery
+    if (!conflict || disposed) return
+    if (decision === 'discard') {
+      await recovery?.store.delete(conflict.entry.key)
+      pendingRecovery = null
+      options.onRecoveryConflict?.(false)
+      editor.setReadOnly(false)
+      publish('idle')
+      if (syncRequested) start()
+      return
+    }
+    const preferred = preferLocalChanges(conflict.entry.baseDocument, conflict.entry.localDocument, conflict.remote)
+    applyRemote(preferred, false)
+    recoveredSourceGenerations.set(conflict.entry.key, conflict.entry.generation)
+    pendingRecovery = null
+    options.onRecoveryConflict?.(false)
+    editor.setReadOnly(false)
+    dirty = true
+    workSerial += 1
+    journalGeneration = Math.max(journalGeneration, conflict.entry.generation)
+    journalGeneration += 1
+    publish('unsaved')
+    await queueJournal().catch(() => undefined)
+    start()
+  }
+
   const renameProject = (name: string): Promise<Project> =>
     renameController.renameProject(name)
 
@@ -527,6 +789,8 @@ export function createCanvasWriteCoordinator(
     disposed = true
     lifecycle += 1
     clearAutosave()
+    clearRetryTimer()
+    removeUnloadGuard()
     unsubscribeEditingEnd()
     settlePreRenameFlush(new CanvasWriteCoordinatorDisposedError())
     settleBarriers(new CanvasWriteCoordinatorDisposedError())
@@ -551,8 +815,94 @@ export function createCanvasWriteCoordinator(
     markDirty,
     requestRemoteSync,
     flushOrThrow,
+    retryNow,
+    whenRecoveryCommitted,
+    resolveRecovery,
     renameProject,
     ownsProject,
     dispose,
   }
+
+  async function restoreRecovery(authoritative: CanvasVersionedState): Promise<void> {
+    if (!recovery || !base) return
+    let entries: CanvasRecoveryEntry[]
+    try {
+      entries = await recovery.store.list(recovery.serverOrigin, project.storageId!)
+    } catch {
+      journalUnavailable = true
+      return
+    }
+    const activeSessionIds = await recovery.activeSessionIds?.()
+    entries = entries
+      .filter((candidate) => candidate.sessionId === recovery.sessionId ||
+        (activeSessionIds ? !activeSessionIds.has(candidate.sessionId) : false))
+      .sort((left, right) => Number(right.sessionId === recovery.sessionId) -
+        Number(left.sessionId === recovery.sessionId) || right.updatedAt.localeCompare(left.updatedAt))
+    let entry: CanvasRecoveryEntry | undefined
+    const remote = editor.captureDocument()
+    for (const candidate of entries) {
+      if (recordsEqual(candidate.localDocument, remote)) {
+        await recovery.store.delete(candidate.key).catch(() => { journalUnavailable = true })
+      } else {
+        entry = candidate
+        break
+      }
+    }
+    if (!entry) return
+    if (entry.baseEpoch !== authoritative.nextChangeSetToken.epoch) {
+      pendingRecovery = { entry, remote }
+      return
+    }
+    const merged = mergeCanvasRecords({ base: entry.baseDocument, local: entry.localDocument, remote })
+    if (!merged.ok) {
+      pendingRecovery = { entry, remote }
+      return
+    }
+    applyRemote(merged.document, false)
+    journalGeneration = Math.max(journalGeneration, entry.generation)
+    recoveredSourceGenerations.set(entry.key, entry.generation)
+    dirty = !recordsEqual(merged.document, remote)
+    installUnloadGuard()
+  }
+}
+
+function recordsEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true
+  if (typeof left !== typeof right || left === null || right === null) return false
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right) && left.length === right.length &&
+      left.every((value, index) => recordsEqual(value, right[index]))
+  }
+  if (typeof left !== 'object') return false
+  const leftRecord = left as Record<string, unknown>
+  const rightRecord = right as Record<string, unknown>
+  const leftKeys = Object.keys(leftRecord).sort()
+  const rightKeys = Object.keys(rightRecord).sort()
+  return leftKeys.length === rightKeys.length &&
+    leftKeys.every((key, index) => key === rightKeys[index] && recordsEqual(leftRecord[key], rightRecord[key]))
+}
+
+function preferLocalChanges(
+  base: DocumentRecords,
+  local: DocumentRecords,
+  remote: DocumentRecords,
+): DocumentRecords {
+  const merged = structuredClone(remote)
+  for (const id of new Set([...Object.keys(base), ...Object.keys(local)])) {
+    if (recordsEqual(base[id], local[id])) continue
+    if (local[id] === undefined) delete merged[id]
+    else merged[id] = structuredClone(local[id])
+  }
+  return merged
+}
+
+function isTransientFailure(error: unknown): boolean {
+  if (isAmbiguousTransportFailure(error)) return true
+  return error instanceof CanvasProtocolError &&
+    (error.status === 408 || error.status === 429 || error.status >= 500)
+}
+
+function isAmbiguousTransportFailure(error: unknown): boolean {
+  return error instanceof TypeError ||
+    (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError'))
 }

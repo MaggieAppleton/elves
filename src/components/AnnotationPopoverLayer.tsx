@@ -1,6 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type SyntheticEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type SyntheticEvent } from 'react'
 import { useEditor, useValue, type Editor, type TLShapeId } from 'tldraw'
-import { annotationThreadMaxHeight, placeAnnotationThread, type AnnotationPlacement } from '../client/annotationPlacement'
+import {
+  annotationThreadMaxHeight,
+  arrangeAnnotationThreads,
+  type AnnotationPlacement,
+  type AnnotationRect,
+  type AnnotationViewport,
+} from '../client/annotationPlacement'
 import {
   annotationHoverTarget, annotationOpenTargets, annotationRepliesLocked, annotationReplyDraft, annotationTargetKey,
   annotationThreadPresentation, dismissAnnotationPopoverSoon, pruneAnnotationThreads,
@@ -52,8 +58,21 @@ function contentForTarget(target: AnnotationTarget, shape: unknown): PopoverCont
   return null
 }
 
-function samePlacement(a: AnnotationPlacement | null, b: AnnotationPlacement): boolean {
-  return a?.left === b.left && a.top === b.top && a.side === b.side
+interface ForegroundGeometry {
+  anchor: AnnotationRect
+  source: AnnotationRect
+  thread: Pick<AnnotationRect, 'width' | 'height'>
+  viewport: AnnotationViewport
+}
+
+function sameRect(a: AnnotationRect, b: AnnotationRect): boolean {
+  return a.left === b.left && a.top === b.top && a.width === b.width && a.height === b.height
+}
+
+function sameGeometry(a: ForegroundGeometry | undefined, b: ForegroundGeometry): boolean {
+  return !!a && sameRect(a.anchor, b.anchor) && sameRect(a.source, b.source) &&
+    a.thread.width === b.thread.width && a.thread.height === b.thread.height &&
+    sameRect(a.viewport, b.viewport)
 }
 
 interface AnnotationForegroundItemProps {
@@ -61,6 +80,8 @@ interface AnnotationForegroundItemProps {
   mode: ForegroundEntry['mode']
   zIndex: number
   editor: Editor
+  placement?: AnnotationPlacement
+  onGeometry(targetKey: string, geometry: ForegroundGeometry | null): void
 }
 
 function stopForegroundEvent(event: SyntheticEvent): void {
@@ -101,10 +122,11 @@ export function foregroundThreadProps(target: AnnotationTarget): Pick<Annotation
   }
 }
 
-function AnnotationForegroundItem({ target, mode, zIndex, editor }: AnnotationForegroundItemProps) {
+function AnnotationForegroundItem({
+  target, mode, zIndex, editor, placement, onGeometry,
+}: AnnotationForegroundItemProps) {
   const targetKey = annotationTargetKey(target)
   const panelRef = useRef<HTMLDivElement>(null)
-  const [placement, setPlacement] = useState<AnnotationPlacement | null>(null)
   const [stageMaxHeight, setStageMaxHeight] = useState<number | null>(null)
   const shape = useValue(
     `annotation foreground target ${targetKey}`,
@@ -122,7 +144,7 @@ function AnnotationForegroundItem({ target, mode, zIndex, editor }: AnnotationFo
 
   useEffect(() => {
     if (!content) {
-      setPlacement(null)
+      onGeometry(targetKey, null)
       return
     }
 
@@ -137,22 +159,29 @@ function AnnotationForegroundItem({ target, mode, zIndex, editor }: AnnotationFo
       const pin = [...canvas.querySelectorAll<HTMLElement>('[data-annotation-target]')]
         .find((element) => element.dataset.annotationTarget === targetKey)
       if (!panel || !pin) {
-        setPlacement(null)
+        onGeometry(targetKey, null)
         return
       }
 
       const pinBounds = pin.getBoundingClientRect()
-      const next = placeAnnotationThread(
-        {
+      const host = pin.closest<HTMLElement>('[data-shape-id]') ?? pin
+      const hostBounds = host.getBoundingClientRect()
+      onGeometry(targetKey, {
+        anchor: {
           left: pinBounds.left - canvasBounds.left,
           top: pinBounds.top - canvasBounds.top,
           width: pinBounds.width,
           height: pinBounds.height,
         },
-        { width: panel.offsetWidth, height: panel.offsetHeight },
-        { left: 0, top: 0, width: canvasBounds.width, height: canvasBounds.height },
-      )
-      setPlacement((current) => samePlacement(current, next) ? current : next)
+        source: {
+          left: hostBounds.left - canvasBounds.left,
+          top: hostBounds.top - canvasBounds.top,
+          width: hostBounds.width,
+          height: hostBounds.height,
+        },
+        thread: { width: panel.offsetWidth, height: panel.offsetHeight },
+        viewport: { left: 0, top: 0, width: canvasBounds.width, height: canvasBounds.height },
+      })
     }
     const schedulePlacement = () => {
       if (frame !== null) cancelAnimationFrame(frame)
@@ -163,13 +192,17 @@ function AnnotationForegroundItem({ target, mode, zIndex, editor }: AnnotationFo
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(schedulePlacement)
     if (panelRef.current) observer?.observe(panelRef.current)
     observer?.observe(editor.getContainer())
+    const pin = [...editor.getContainer().querySelectorAll<HTMLElement>('[data-annotation-target]')]
+      .find((element) => element.dataset.annotationTarget === targetKey)
+    const host = pin?.closest<HTMLElement>('[data-shape-id]')
+    if (host) observer?.observe(host)
     window.addEventListener('resize', schedulePlacement)
     return () => {
       if (frame !== null) cancelAnimationFrame(frame)
       observer?.disconnect()
       window.removeEventListener('resize', schedulePlacement)
     }
-  }, [camera, content, editor, targetKey])
+  }, [camera, content, editor, onGeometry, targetKey])
 
   if (!content) return null
 
@@ -220,17 +253,56 @@ export function AnnotationPopoverLayer() {
   const editor = useEditor()
   const [, setTargetsVersion] = useState(0)
   const [, setPresentationVersion] = useState(0)
+  const [geometries, setGeometries] = useState<Record<string, ForegroundGeometry>>({})
+  const preferredSides = useRef(new Map<string, AnnotationPlacement['side']>())
 
   useEffect(() => subscribeAnnotationTargets(() => setTargetsVersion((version) => version + 1)), [])
   useEffect(() => subscribeAnnotationThreadPresentation(() => setPresentationVersion((version) => version + 1)), [])
 
   const entries = foregroundEntries(annotationOpenTargets(), annotationHoverTarget())
+  const reportGeometry = useCallback((targetKey: string, geometry: ForegroundGeometry | null) => {
+    setGeometries((current) => {
+      if (!geometry) {
+        if (!current[targetKey]) return current
+        const next = { ...current }
+        delete next[targetKey]
+        return next
+      }
+      return sameGeometry(current[targetKey], geometry) ? current : { ...current, [targetKey]: geometry }
+    })
+  }, [])
+  const placements = useMemo(() => {
+    const priority = [...entries].sort((left, right) => right.zIndex - left.zIndex)
+    const items = priority.flatMap((entry) => {
+      const key = annotationTargetKey(entry.target)
+      const geometry = geometries[key]
+      return geometry ? [{
+        key,
+        anchor: geometry.anchor,
+        source: geometry.source,
+        thread: geometry.thread,
+        preferredSide: preferredSides.current.get(key),
+      }] : []
+    })
+    const viewport = priority.map((entry) => geometries[annotationTargetKey(entry.target)]?.viewport)
+      .find((value): value is AnnotationViewport => !!value)
+    if (!viewport) return {}
+    const arranged = arrangeAnnotationThreads(items, viewport)
+    for (const [key, placement] of Object.entries(arranged)) preferredSides.current.set(key, placement.side)
+    return arranged
+  }, [entries, geometries])
   if (!entries.length) return null
 
   return (
     <div className="elves-annotation-popover-layer">
       {entries.map((entry) => (
-        <AnnotationForegroundItem key={annotationTargetKey(entry.target)} {...entry} editor={editor} />
+        <AnnotationForegroundItem
+          key={annotationTargetKey(entry.target)}
+          {...entry}
+          editor={editor}
+          placement={placements[annotationTargetKey(entry.target)]}
+          onGeometry={reportGeometry}
+        />
       ))}
     </div>
   )

@@ -68,6 +68,7 @@ import {
   type AppCanvasMount,
 } from './client/appCanvasMount'
 import { createPointerDragManager, type PointerDragManager } from './client/dividerDrag'
+import { browserRecoveryContext } from './client/canvasRecovery'
 
 const shapeUtils = [CardShapeUtil, SectionShapeUtil, QuestionShapeUtil, FeedbackShapeUtil]
 // OnTheCanvas renders in page space behind the shapes, which is where the snap
@@ -168,10 +169,12 @@ function PlusIcon() {
 
 export default function App() {
   const [projects, setProjects] = useState<Project[] | null>(null) // null = still loading
+  const [projectListError, setProjectListError] = useState(false)
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
   const [editor, setEditor] = useState<Editor | null>(null)
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>('connecting')
   const [canvasWriteStatus, setCanvasWriteStatus] = useState<CanvasWriteStatus>('loading')
+  const [canvasRecoveryConflict, setCanvasRecoveryConflict] = useState(false)
   const [canvasMountKey, setCanvasMountKey] = useState(0)
   const [transitioning, setTransitioning] = useState(false)
   const [pendingRenameName, setPendingRenameName] = useState<string | null>(null)
@@ -199,7 +202,8 @@ export default function App() {
   const transitionRef = useRef<Promise<void> | null>(null)
   const reviewMutationControllersRef = useRef(new Set<AbortController>())
   const canvasMutationsLocked = !editor || transitioning ||
-    canvasWriteStatus === 'renaming' || canvasWriteStatus === 'rename-ambiguous'
+    canvasWriteStatus === 'renaming' || canvasWriteStatus === 'rename-ambiguous' ||
+    canvasWriteStatus === 'recovery-conflict'
   // Server-side agent/review runs cannot join the local canvas drain. Keep the
   // project identity fixed until they settle or the user cancels them.
   const activeServerMutation = agentRunning || reviewRequestCount > 0 || reviews.some(
@@ -246,21 +250,34 @@ export default function App() {
   // retarget mounted images; its tldraw atom invalidates tracked card renderers.
   useAssetProject(currentProjectId)
 
-  // Load the project list once; open the last-used project (or the first).
-  useEffect(() => {
-    listProjects()
-      .then((list) => {
+  const loadProjectList = async () => {
+    setProjectListError(false)
+    try {
+      const list = await listProjects()
+      // Bootstrap can choose a project directly because no canvas owns writes
+      // yet. Once a project is mounted, a list refresh must never impersonate
+      // the save/dispose/remount transaction performed by switchProject.
+      if (projects === null || currentProjectId === null) {
         setProjects(list)
-        if (list.length) {
-          const last = localStorage.getItem(LAST_PROJECT_KEY)
-          setCurrentProjectId(list.some((p) => p.id === last) ? last : list[0].id)
+        if (!list.length) {
+          setCurrentProjectId(null)
+          return list
         }
-      })
-      .catch((err) => {
-        console.error('Elves: failed to load projects', err)
-        setProjects([])
-      })
-  }, [])
+        const last = localStorage.getItem(LAST_PROJECT_KEY)
+        setCurrentProjectId(list.some((project) => project.id === last) ? last : list[0].id)
+      } else if (list.some((project) => project.id === currentProjectId)) {
+        setProjects(list)
+      }
+      return list
+    } catch (err) {
+      console.error('Elves: failed to load projects', err)
+      setProjectListError(true)
+      return null
+    }
+  }
+
+  // Load the project list once; open the last-used project (or the first).
+  useEffect(() => { void loadProjectList() }, [])
 
   const resyncOnReconnect = () => {
     const mount = canvasMountRef.current
@@ -760,6 +777,7 @@ export default function App() {
     canvasMountRef.current?.dispose()
     editorRef.current = null
     setEditor(null)
+    setCanvasRecoveryConflict(false)
     setCanvasWriteStatus('loading')
 
     // A click on empty canvas dismisses any open merged-card peek, like a popover.
@@ -788,11 +806,15 @@ export default function App() {
       project,
       editor: createTldrawCanvasWriteCoordinatorEditor(ed),
       transport: canvasTransport,
+      recovery: browserRecoveryContext(project),
       onStatus: (status) => {
         if (canvasMountRef.current === mount) setCanvasWriteStatus(status)
       },
       onRemoteChange: (changedIds, glow) => {
         if (canvasMountRef.current === mount && glow) markDoing(changedIds as TLShapeId[])
+      },
+      onRecoveryConflict: (active) => {
+        if (canvasMountRef.current === mount) setCanvasRecoveryConflict(active)
       },
     })
     mount = createAppCanvasMount({
@@ -823,12 +845,13 @@ export default function App() {
       : kind === 'figure' ? makeFigureCardProps()
       : makeNoteCardProps()
     props.h = measuredCardPropsHeight(editor, props)
+    const { dx, dy } = cascadeOffset(spawnCountRef.current++)
     const id = createShapeId()
     editor.createShape<CardShape>({
       id,
       type: 'card',
-      x: center.x - props.w / 2,
-      y: center.y - props.h / 2,
+      x: center.x - props.w / 2 + dx,
+      y: center.y - props.h / 2 + dy,
       props,
     })
     editor.select(id)
@@ -938,7 +961,13 @@ export default function App() {
     if (!name) return
     try {
       const proj = await createProject(name)
-      setProjects(await listProjects())
+      try {
+        setProjects(await listProjects())
+        setProjectListError(false)
+      } catch (err) {
+        setProjectListError(true)
+        throw err
+      }
       await switchProject(proj.id)
     } catch (err) {
       console.error('Elves: failed to create project', err)
@@ -970,9 +999,15 @@ export default function App() {
       void listProjects()
         .then((list) => {
           if (canvasMountRef.current === mount &&
-            mount.writeCoordinator.ownsProject(updated.id)) setProjects(list)
+            mount.writeCoordinator.ownsProject(updated.id)) {
+            setProjects(list)
+            setProjectListError(false)
+          }
         })
-        .catch((err) => console.error('Elves: failed to refresh projects after rename', err))
+        .catch((err) => {
+          console.error('Elves: failed to refresh projects after rename', err)
+          setProjectListError(true)
+        })
       const reviewVisit = reviewVisitRef.current
       void fetchReviews(updated.id)
         .then((list) => {
@@ -997,6 +1032,42 @@ export default function App() {
   const retryCanvasInitialization = () => {
     const mount = canvasMountRef.current
     if (mount) activateCanvasMount(mount)
+  }
+
+  const resolveCanvasRecovery = (decision: 'recover' | 'discard') => {
+    const mount = canvasMountRef.current
+    if (!mount) return
+    void mount.writeCoordinator.resolveRecovery(decision)
+      .catch((err) => console.error('Elves: failed to resolve canvas recovery', err))
+  }
+
+  const retryCanvasSave = () => {
+    const mount = canvasMountRef.current
+    if (!mount) return
+    void mount.writeCoordinator.retryNow()
+      .catch((err) => console.error('Elves: canvas save retry failed', err))
+  }
+
+  // A failed read is not an empty project store. Keep creation unavailable
+  // until a successful response establishes whether the store is empty.
+  if ((projects === null || projects.length === 0) && projectListError) {
+    return (
+      <div id="app-root">
+        <div className="elves-empty" data-testid="project-load-error">
+          <h1 className="elves-empty__title">Couldn’t load projects</h1>
+          <p className="elves-empty__body">
+            Elves can’t reach the project API. Check that the server is running, then try again.
+          </p>
+          <button
+            className="elves-empty__button"
+            data-testid="project-load-retry"
+            onClick={() => void loadProjectList()}
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    )
   }
 
   // Still loading the project list.
@@ -1065,6 +1136,18 @@ export default function App() {
         </button>
       )}
       <div className="elves-topbar">
+        {projectListError && (
+          <div className="elves-project-list-error" role="alert" data-testid="project-list-error">
+            <span>Couldn’t refresh projects.</span>
+            <button
+              className="elves-status-action"
+              data-testid="project-load-retry"
+              onClick={() => void loadProjectList()}
+            >
+              Retry projects
+            </button>
+          </div>
+        )}
         {canvasWriteStatus !== 'idle' && (
           <div
             className="elves-canvas-write-status"
@@ -1080,6 +1163,21 @@ export default function App() {
         {canvasWriteStatus === 'error' && !editor && (
           <button className="elves-status-action" onClick={retryCanvasInitialization}>
             Retry canvas
+          </button>
+        )}
+        {canvasRecoveryConflict && (
+          <div className="elves-recovery-actions" role="group" aria-label="Recovered local changes">
+            <button className="elves-status-action" onClick={() => resolveCanvasRecovery('recover')}>
+              Recover local changes
+            </button>
+            <button className="elves-status-action" onClick={() => resolveCanvasRecovery('discard')}>
+              Discard local changes
+            </button>
+          </div>
+        )}
+        {(canvasWriteStatus === 'retrying' || canvasWriteStatus === 'error') && editor && !canvasRecoveryConflict && (
+          <button className="elves-status-action" onClick={retryCanvasSave}>
+            Retry save
           </button>
         )}
         {canvasWriteStatus === 'rename-ambiguous' && pendingRenameName && (
@@ -1111,7 +1209,7 @@ export default function App() {
           projects={projects}
           currentId={currentProjectId}
           disabled={activeServerMutation || transitioning || canvasWriteStatus === 'renaming' ||
-            canvasWriteStatus === 'rename-ambiguous'}
+            canvasWriteStatus === 'rename-ambiguous' || canvasRecoveryConflict}
           onSwitch={switchProject}
           onCreate={createFlow}
           onRename={renameFlow}
@@ -1210,12 +1308,14 @@ export default function App() {
           style={{ width: draftWidth }}
           aria-hidden={visualView === 'canvas'}
         >
-          <DraftPane
-            editor={editor}
-            readOnly={canvasMutationsLocked}
-            onSelectCard={onSelectCard}
-            onInsertImages={addDraftImageFiles}
-          />
+          {visualView !== 'canvas' && (
+            <DraftPane
+              editor={editor}
+              readOnly={canvasMutationsLocked}
+              onSelectCard={onSelectCard}
+              onInsertImages={addDraftImageFiles}
+            />
+          )}
         </div>
         <DraftDrawerControls
           view={view}

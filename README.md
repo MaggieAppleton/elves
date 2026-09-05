@@ -151,6 +151,25 @@ Example — keep a separate set of projects (e.g. for testing):
 ELVES_DATA=./scratch-data npm run server
 ```
 
+### Data-root ownership
+
+Only one Elves server can use a given canonical `ELVES_DATA` path on a machine.
+Startup claims an OS-local marker outside the data folder before running migrations
+or binding the API port. A second server exits with the owning PID, hostname, data
+root, and marker path; connect to the existing server or stop it first.
+
+A crash or `SIGKILL` deliberately leaves the marker in place. After confirming that
+every server which could use that data root is stopped, inspect the path printed in
+the startup error, then recover explicitly:
+
+```bash
+npm run data:recover -- --data-root /absolute/path/to/Elves --force
+```
+
+Recovery refuses a live or inconclusive local PID even with `--force`. Foreign-host
+and malformed markers require the same explicit command because their liveness
+cannot be inferred safely. Normal startup never removes an existing marker.
+
 ### Card summaries (zoom-out gists)
 
 Every note and prose card gets a one-line, model-authored **summary** — shown on the agent's
@@ -208,6 +227,7 @@ startup naming the files so you can review and delete them.
 | `npm run test:watch` | Unit tests in watch mode. |
 | `npm run e2e` | Run the Playwright end-to-end tests. |
 | `npm run typecheck` | Type-check with `tsc --noEmit`. |
+| `npm run data:recover -- --data-root <path> --force` | Remove a stale data-root ownership marker after all candidate servers are stopped. |
 | `npm run mcp` | Run the MCP server standalone (usually launched by your agent, not by hand). |
 
 ## Testing
