@@ -43,7 +43,7 @@ import { AgentBox } from './components/AgentBox'
 import { DraftPane } from './components/DraftPane'
 import { AnnotationPopoverLayer } from './components/AnnotationPopoverLayer'
 import {
-  clearAnnotationPresentations, closeAnnotationThread, setAnnotationRepliesLocked, setAnnotationThreadPresentation, subscribeAnnotationReply, subscribeAnnotationResolve, subscribeAnnotationRetry,
+  clearAnnotationPresentations, clearAnnotationReplyDraft, closeAnnotationThread, setAnnotationRepliesLocked, setAnnotationThreadPresentation, subscribeAnnotationReply, subscribeAnnotationResolve, subscribeAnnotationRetry,
   type AnnotationTarget,
 } from './client/annotationSelection'
 import {
@@ -225,7 +225,15 @@ export default function App() {
   const [split, setSplit] = useState(DEFAULT_SPLIT)
   const [dragging, setDragging] = useState(false)
   type AnnotationThreadState = {
-    key: string; target: AnnotationThreadTarget; running: boolean; streamingText: string; error: string | null; messageId: string | null
+    key: string
+    target: AnnotationThreadTarget
+    running: boolean
+    phase: 'saving' | 'awaiting-first-token' | 'streaming' | 'failed'
+    replyMessageId: string
+    streamingText: string
+    error: string | null
+    message: AnnotationMessage
+    persisted: boolean
   }
   const [annotationThreadStates, setAnnotationThreadStates] = useState<Record<string, AnnotationThreadState>>({})
   const publishedAnnotationThreadStates = useRef<Record<string, AnnotationThreadState>>({})
@@ -506,47 +514,67 @@ export default function App() {
     })
   }
 
-  const startAnnotationRun = (target: AnnotationThreadTarget, messageId: string) => {
+  const startAnnotationRun = (target: AnnotationThreadTarget, message: AnnotationMessage) => {
     if (!currentProjectId) return
+    const messageId = message.id
     const key = annotationKey(target)
-    updateAnnotationThreadState(target, { key, target, running: true, streamingText: '', error: null, messageId })
+    updateAnnotationThreadState(target, {
+      key, target, running: true, phase: 'awaiting-first-token', replyMessageId: messageId,
+      streamingText: '', error: null, message, persisted: true,
+    })
     const run = runAnnotationThread(currentProjectId, target, messageId, (event) => {
       if (event.type === 'text') updateAnnotationThreadState(target, (current) =>
-        current.messageId === messageId ? { ...current, streamingText: current.streamingText + event.text } : current)
+        current.message.id === messageId
+          ? { ...current, phase: 'streaming', streamingText: current.streamingText + event.text }
+          : current)
       if (event.type === 'error') updateAnnotationThreadState(target, (current) =>
-        current.messageId === messageId ? { ...current, error: event.message } : current)
+        current.message.id === messageId ? { ...current, phase: 'failed', error: event.message } : current)
     })
     void run.done.catch((error) => updateAnnotationThreadState(target, (current) =>
-      current.messageId === messageId
-        ? { ...current, error: error instanceof Error ? error.message : 'the annotation run failed' }
+      current.message.id === messageId
+        ? { ...current, phase: 'failed', error: error instanceof Error ? error.message : 'the annotation run failed' }
         : current))
       .finally(() => updateAnnotationThreadState(target, (current) => {
-        if (current.messageId !== messageId) return current
-        return current.error ? { ...current, running: false, streamingText: '' } : null
+        if (current.message.id !== messageId) return current
+        return current.error ? { ...current, running: false, phase: 'failed', streamingText: '' } : null
       }))
   }
 
-  const replyToAnnotation = async (target: AnnotationThreadTarget, text: string) => {
+  const replyToAnnotation = async (
+    target: AnnotationThreadTarget,
+    text: string,
+    retryMessage?: AnnotationMessage,
+  ) => {
     if (!currentProjectId || canvasMutationsLocked) return
-    const message = { id: crypto.randomUUID(), author: 'user' as const, text, createdAt: new Date().toISOString() }
+    const message = retryMessage ?? {
+      id: crypto.randomUUID(), author: 'user' as const, text, createdAt: new Date().toISOString(),
+    }
     const key = annotationKey(target)
-    updateAnnotationThreadState(target, { key, target, running: true, streamingText: '', error: null, messageId: message.id })
+    updateAnnotationThreadState(target, {
+      key, target, running: true, phase: 'saving', replyMessageId: message.id,
+      streamingText: '', error: null, message, persisted: false,
+    })
     try {
       await persistAnnotationReply(currentProjectId, target, message)
       applyAnnotationMessage(target, message)
-      startAnnotationRun(target, message.id)
+      clearAnnotationReplyDraft(target)
+      startAnnotationRun(target, message)
     } catch (error) {
-      updateAnnotationThreadState(target, { key, target, running: false, streamingText: '', messageId: message.id,
-        error: error instanceof Error ? error.message : 'could not save reply' })
+      updateAnnotationThreadState(target, {
+        key, target, running: false, phase: 'failed', replyMessageId: message.id,
+        streamingText: '', message, persisted: false,
+        error: error instanceof Error ? error.message : 'could not save reply',
+      })
     }
   }
 
   const retryAnnotation = (target: AnnotationThreadTarget) => {
     const key = annotationKey(target)
     const state = annotationThreadStates[key]
-    const messageId = state?.messageId ?? null
+    const messageId = state?.message.id ?? null
     if (!retryAnnotationCanRun(currentProjectId, messageId, canvasMutationsLocked, !!state?.running)) return
-    startAnnotationRun(target, messageId)
+    if (!state.persisted) void replyToAnnotation(target, state.message.text, state.message)
+    else startAnnotationRun(target, state.message)
   }
 
   useEffect(() => subscribeAnnotationReply(replyToAnnotation), [currentProjectId, editor, canvasMutationsLocked])
