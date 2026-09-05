@@ -8,6 +8,8 @@ import { Summarizer, SUMMARY_PROMPT, cleanSummary } from './summarizer'
  */
 export class OllamaSummarizer implements Summarizer {
   readonly label: string
+  private readonly active = new Set<AbortController>()
+  private closed = false
   constructor(
     private readonly host = process.env.OLLAMA_HOST ?? 'http://localhost:11434',
     private readonly model = process.env.OLLAMA_MODEL ?? 'llama3.2',
@@ -17,7 +19,9 @@ export class OllamaSummarizer implements Summarizer {
   }
 
   async summarize(text: string): Promise<string | null> {
+    if (this.closed) return null
     const ctrl = new AbortController()
+    this.active.add(ctrl)
     const timer = setTimeout(() => ctrl.abort(), this.timeoutMs)
     try {
       const res = await fetch(`${this.host}/api/generate`, {
@@ -38,6 +42,12 @@ export class OllamaSummarizer implements Summarizer {
       return null
     } finally {
       clearTimeout(timer)
+      this.active.delete(ctrl)
     }
+  }
+
+  close(): void {
+    this.closed = true
+    for (const controller of this.active) controller.abort()
   }
 }

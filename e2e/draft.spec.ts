@@ -104,6 +104,8 @@ test('prose focus rail stays at the pane edge in split and full-draft views', as
 test('draft sections preserve collapsed spacing around prose', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  await page.getByTestId('draft-open').click()
+  await expect(page.locator('.elves-draft__scroll')).toBeVisible()
 
   // Use the production draft classes with a deterministic content sequence so
   // this checks browser layout independently of canvas placement and ordering.
@@ -146,6 +148,17 @@ test('draft sections preserve collapsed spacing around prose', async ({ page }) 
   // larger adjacent margin wins instead of both margins being added together.
   expect.soft(await verticalGap('#before-figure', '#rhythm-figure')).toBeCloseTo(15, 0)
   expect.soft(await verticalGap('#before-section', '#next-heading')).toBeCloseTo(42, 0)
+})
+
+test('canvas view leaves the draft projection unmounted until it is opened', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+
+  await expect(page.locator('.elves-draft__scroll')).toHaveCount(0)
+  await expect(page.getByTestId('draft-para')).toHaveCount(0)
+
+  await page.getByTestId('draft-open').click()
+  await expect(page.locator('.elves-draft__scroll')).toBeVisible()
 })
 
 test('a prose card shows up live in the draft pane in split view', async ({ page }) => {

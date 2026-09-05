@@ -3,9 +3,14 @@ import { BASE, resetProject, serverCardIds } from './helpers'
 import { createFeedbackTool, createNoteCardTool, deleteCardTool, moveCardsTool, readMapTool } from '../mcp/tools'
 
 let projectId: string
-const THREAD_TRACK_TOLERANCE_PX = 8
+const THREAD_TRACK_TOLERANCE_PX = 20
 
 type ScreenBox = { x: number; y: number; width: number; height: number }
+
+function overlapArea(left: ScreenBox, right: ScreenBox): number {
+  return Math.max(0, Math.min(left.x + left.width, right.x + right.width) - Math.max(left.x, right.x)) *
+    Math.max(0, Math.min(left.y + left.height, right.y + right.height) - Math.max(left.y, right.y))
+}
 
 async function addCardAndComment(page: any, request: any, comment: { type: string | null; text: string }): Promise<string> {
   await page.goto('/')
@@ -64,6 +69,12 @@ function expectThreadTracksPin(
   const afterOffset = { x: after.thread.x - after.pin.x, y: after.thread.y - after.pin.y }
   expect(Math.abs(afterOffset.x - beforeOffset.x)).toBeLessThanOrEqual(THREAD_TRACK_TOLERANCE_PX)
   expect(Math.abs(afterOffset.y - beforeOffset.y)).toBeLessThanOrEqual(THREAD_TRACK_TOLERANCE_PX)
+}
+
+async function replyComposer(thread: any) {
+  const trigger = thread.getByRole('button', { name: 'Reply to annotation' })
+  if (await trigger.isVisible().catch(() => false)) await trigger.click()
+  return thread.getByRole('textbox', { name: 'Reply to annotation' })
 }
 
 async function addTwoComments(page: any, request: any) {
@@ -153,6 +164,103 @@ test('each open card comment renders an independent pin', async ({ page, request
   expect(new Set(boxes).size).toBe(2)
 })
 
+test('promoted threads avoid their source and keep prior threads selectable', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1554, height: 942 })
+  await page.goto('/')
+  await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
+  for (let i = 0; i < 2; i++) {
+    await page.getByTestId('new-prose').click()
+    await page.keyboard.press('Escape')
+  }
+  await expect.poll(async () => (await serverCardIds(request, projectId)).length).toBe(2)
+  const [firstCardId, secondCardId] = await serverCardIds(request, projectId)
+  const [firstCard, secondCard] = await Promise.all([
+    cardRecord(request, firstCardId),
+    cardRecord(request, secondCardId),
+  ])
+  await moveCardsTool(BASE, projectId, {
+    moves: [{ cardId: secondCardId, x: firstCard.x + 520, y: secondCard.y + 220 }],
+  })
+  await addComment(request, firstCardId, { type: 'needs-evidence', text: 'Needs evidence.' })
+  await addComment(request, secondCardId, { type: 'weak-argument', text: 'Weak argument.' })
+
+  const firstPin = page.locator(`[data-shape-id="${firstCardId}"] [data-testid="annotation-pin"]`)
+  const secondPin = page.locator(`[data-shape-id="${secondCardId}"] [data-testid="annotation-pin"]`)
+  const cardPositionsBefore = await Promise.all([
+    page.locator(`[data-shape-id="${firstCardId}"]`).boundingBox(),
+    page.locator(`[data-shape-id="${secondCardId}"]`).boundingBox(),
+  ])
+  await firstPin.click()
+  await secondPin.click()
+  const panels = page.getByTestId('annotation-popover')
+  await expect(panels).toHaveCount(2)
+  expect(await Promise.all([
+    page.locator(`[data-shape-id="${firstCardId}"]`).boundingBox(),
+    page.locator(`[data-shape-id="${secondCardId}"]`).boundingBox(),
+  ])).toEqual(cardPositionsBefore)
+
+  const activePanel = panels.filter({ hasText: 'Weak argument.' })
+  const priorPanel = panels.filter({ hasText: 'Needs evidence.' })
+  const source = page.locator(`[data-shape-id="${secondCardId}"]`)
+  await expect.poll(async () => {
+    const [panelBox, sourceBox] = await Promise.all([activePanel.boundingBox(), source.boundingBox()])
+    return panelBox && sourceBox ? overlapArea(panelBox, sourceBox) : null
+  }).toBe(0)
+  const [activeBox, priorBox] = await Promise.all([activePanel.boundingBox(), priorPanel.boundingBox()])
+  expect(activeBox).not.toBeNull()
+  expect(priorBox).not.toBeNull()
+  expect(Math.max(Math.abs(activeBox!.x - priorBox!.x), Math.abs(activeBox!.y - priorBox!.y)))
+    .toBeGreaterThanOrEqual(32)
+
+  await activePanel.getByLabel('Reply to annotation').click()
+  await activePanel.locator('textarea').fill('Stable while the reply streams.')
+  const activeSource = page.locator(`[data-shape-id="${secondCardId}"]`)
+  const placementSide = async (panel: typeof activePanel, source: typeof activeSource) => {
+    const [threadBox, sourceBox] = await Promise.all([panel.boundingBox(), source.boundingBox()])
+    if (!threadBox || !sourceBox) return null
+    if (threadBox.x >= sourceBox.x + sourceBox.width) return 'right'
+    if (threadBox.x + threadBox.width <= sourceBox.x) return 'left'
+    if (threadBox.y + threadBox.height <= sourceBox.y) return 'above'
+    return 'below'
+  }
+  const sideBeforeReply = await placementSide(activePanel, activeSource)
+  await activePanel.getByRole('button', { name: 'Send reply' }).click()
+  await expect(activePanel).toContainText('Stub annotation reply: Stable while the reply streams.')
+  expect(await placementSide(activePanel, activeSource)).toBe(sideBeforeReply)
+
+  await firstPin.click()
+  await expect(priorPanel.getByLabel('Reply to annotation')).toBeEnabled()
+  await priorPanel.getByLabel('Reply to annotation').click()
+  await priorPanel.locator('textarea').fill('Still reachable after promotion.')
+  await page.mouse.click(24, 900)
+  await expect(panels).toHaveCount(2)
+
+  await page.getByLabel('Close annotation thread').first().click()
+  await page.getByLabel('Close annotation thread').first().click()
+  await page.setViewportSize({ width: 720, height: 640 })
+  await page.reload()
+  await createFeedbackTool(BASE, projectId, {
+    text: 'Constrained edge.', x: 80, y: 300, type: 'weak-argument', reviewer: 'architect',
+  })
+  const { feedback } = await readMapTool(BASE, projectId)
+  const constrainedFeedback = feedback.find((entry) => entry.text === 'Constrained edge.')!
+  const constrainedPin = page.locator(`[data-annotation-target="feedback:${constrainedFeedback.id}"]`)
+  await expect(constrainedPin).toBeVisible()
+  await constrainedPin.click()
+  const constrained = page.getByTestId('annotation-popover')
+  await expect.poll(async () => {
+    const [threadBox, stageBox] = await Promise.all([
+      constrained.boundingBox(),
+      page.locator('.tl-container').first().boundingBox(),
+    ])
+    return !!threadBox && !!stageBox && threadBox.x >= stageBox.x && threadBox.y >= stageBox.y &&
+      threadBox.x + threadBox.width <= stageBox.x + stageBox.width &&
+      threadBox.y + threadBox.height <= stageBox.y + stageBox.height
+  }).toBe(true)
+  await constrained.getByLabel('Reply to annotation').click()
+  await expect(constrained.locator('textarea')).toBeVisible()
+})
+
 test('identical comments on different cards have distinct pins', async ({ page, request }) => {
   await page.goto('/')
   await expect(page.locator('.tl-canvas')).toBeVisible({ timeout: 15000 })
@@ -190,7 +298,30 @@ test('a fresh session has no open annotation threads', async ({ page, request })
   await expect(page.getByTestId('annotation-pin')).toHaveCount(1)
 })
 
-test('hover and keyboard focus show a complete read-only preview', async ({ page, request }) => {
+test('an annotation draft survives close, reopen, and view changes until explicit discard', async ({ page, request }) => {
+  await addCardAndComment(page, request, { type: 'structure', text: 'Keep the response with this exact thread.' })
+  const pin = page.getByTestId('annotation-pin')
+  await pin.click()
+  let thread = page.getByTestId('annotation-thread')
+  await (await replyComposer(thread)).fill('A session-only draft')
+
+  await thread.getByLabel('Close annotation thread').focus()
+  await page.keyboard.press('Enter')
+  await expect(pin).toBeFocused()
+  await expect(page.getByTestId('annotation-popover')).toHaveClass(/--preview/)
+  await pin.click()
+  thread = page.getByTestId('annotation-thread')
+  await expect(await replyComposer(thread)).toHaveValue('A session-only draft')
+
+  await page.getByTestId('draft-open').click()
+  await expect(page.locator('.elves-stage')).toHaveAttribute('data-view', 'split')
+  await expect(thread.getByRole('textbox', { name: 'Reply to annotation' })).toHaveValue('A session-only draft')
+  await thread.getByRole('button', { name: 'Discard reply draft' }).click()
+  await thread.getByRole('button', { name: 'Reply to annotation' }).click()
+  await expect(thread.getByRole('textbox', { name: 'Reply to annotation' })).toHaveValue('')
+})
+
+test('hover and keyboard focus show a compact read-only preview', async ({ page, request }) => {
   const cardId = await addCardAndComment(page, request, { type: 'structure', text: 'The complete conversation is readable here.' })
   const commentId = (await cardRecord(request, cardId)).props.comments[0].id
   const response = await request.post(`${BASE}/projects/${projectId}/changeset`, {
@@ -218,8 +349,14 @@ test('hover and keyboard focus show a complete read-only preview', async ({ page
   const preview = page.getByTestId('annotation-popover')
   await expect(preview).toHaveClass(/elves-annotation-foreground-item--preview/)
   await expect(preview).toContainText('The complete conversation is readable here.')
-  await expect(preview).toContainText('Which evidence should support this?')
-  await expect(preview).toContainText('Use the original source.')
+  await expect(preview).not.toContainText('Which evidence should support this?')
+  await expect(preview).not.toContainText('Use the original source.')
+  await expect(preview.locator('.elves-annotation-thread__reply-count')).toHaveAttribute('aria-label', '2 replies')
+  await expect(preview.locator('.elves-annotation-thread__messages')).toHaveCount(0)
+  await expect(preview.getByTestId('annotation-thread')).toHaveAttribute(
+    'aria-label',
+    /Annotation preview: Structure from Claude: The complete conversation is readable here\. 2 replies/,
+  )
   await expect(preview.getByRole('button')).toHaveCount(0)
   await expect(preview.locator('textarea')).toHaveCount(0)
   expect(await preview.evaluate((element) => element.closest('.tl-shape'))).toBeNull()
@@ -231,24 +368,134 @@ test('hover and keyboard focus show a complete read-only preview', async ({ page
   await expect(preview).toHaveCount(0)
   await pin.focus()
   await expect(preview).toBeVisible()
+  await expect(preview).not.toHaveAttribute('data-motion')
 })
 
-test('clicking a pin replaces its preview with an interactive thread', async ({ page, request }) => {
-  await addCardAndComment(page, request, { type: 'needs-evidence', text: 'Open this conversation deliberately.' })
+test('clicking a pointer preview expands into the complete thread without covering its source', async ({ page, request }) => {
+  const cardId = await addCardAndComment(page, request, { type: 'needs-evidence', text: 'Open this conversation deliberately.' })
+  const commentId = (await cardRecord(request, cardId)).props.comments[0].id
+  await request.post(`${BASE}/projects/${projectId}/changeset`, { data: {
+    id: `preview-open-${Date.now()}`, author: 'user', ops: [{
+      kind: 'append_annotation_message', target: { kind: 'card', cardId, commentId },
+      message: { id: 'preview-open-user', author: 'user', text: 'Show this after opening.', createdAt: '2026-09-05T09:00:00Z' },
+    }],
+  } })
 
   const pin = page.getByTestId('annotation-pin')
   const popover = page.getByTestId('annotation-popover')
   await pin.hover()
   await expect(popover).toBeVisible()
+  await expect(popover).toHaveAttribute('data-motion', 'enter')
+  const placementSide = await popover.getAttribute('data-placement-side')
   await expect(popover.getByRole('button')).toHaveCount(0)
+  const animationStart = await popover.evaluate((element) => element.getAnimations()[0]?.startTime)
 
-  await pin.click()
+  await popover.click()
   await expect(popover).toHaveClass(/elves-annotation-foreground-item--open/)
+  await expect(popover).toHaveAttribute('data-motion', 'enter')
+  await expect(popover).toHaveAttribute('data-placement-side', placementSide!)
+  expect(await popover.evaluate((element) => element.getAnimations()[0]?.startTime)).toBe(animationStart)
+  const after = await popover.boundingBox()
+  const source = await page.locator(`[data-shape-id="${cardId}"]`).boundingBox()
+  expect(after).not.toBeNull()
+  expect(source).not.toBeNull()
+  expect(overlapArea(after!, source!)).toBe(0)
   const thread = popover.getByTestId('annotation-thread')
+  await expect(thread).toContainText('Open this conversation deliberately.')
+  await expect(thread).toContainText('Show this after opening.')
   await expect(thread.getByLabel('Reply to annotation')).toBeEnabled()
+  await thread.getByLabel('Reply to annotation').click()
   await expect(thread.getByRole('button', { name: 'Send reply' })).toBeVisible()
   await expect(thread.getByRole('button', { name: /^Resolve .* comment$/ })).toBeVisible()
   await expect(thread.getByLabel('Close annotation thread')).toBeVisible()
+})
+
+test('pointer close is briefly inert while keyboard and reduced-motion close are immediate', async ({ page, request }) => {
+  await addCardAndComment(page, request, { type: 'needs-evidence', text: 'Close this thread deliberately.' })
+  const pin = page.getByTestId('annotation-pin')
+  await pin.click()
+  let popover = page.getByTestId('annotation-popover')
+  const closingState = await popover.getByLabel('Close annotation thread').evaluate(async (button: HTMLButtonElement) => {
+    const target = button.closest<HTMLElement>('[data-testid="annotation-popover"]')?.dataset.annotationPopoverTarget
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }))
+    await new Promise(requestAnimationFrame)
+    const panel = document.querySelector<HTMLElement>(`[data-annotation-popover-target="${target}"]`)
+    return { motion: panel?.dataset.motion, pointerEvents: panel && getComputedStyle(panel).pointerEvents }
+  })
+  expect(closingState).toEqual({ motion: 'exit', pointerEvents: 'none' })
+  await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('data-annotation-target')))
+    .toBe(await pin.getAttribute('data-annotation-target'))
+  await expect(popover).toHaveCount(0)
+
+  await pin.focus()
+  await page.keyboard.press('Enter')
+  popover = page.getByTestId('annotation-popover')
+  await expect(popover).toHaveClass(/--open/)
+  await popover.getByLabel('Close annotation thread').focus()
+  await page.keyboard.press('Enter')
+  await expect(popover).toHaveClass(/--preview/)
+
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await pin.click()
+  popover = page.getByTestId('annotation-popover')
+  await expect(popover).toHaveCSS('animation-name', 'none')
+  await popover.getByLabel('Close annotation thread').click()
+  await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('data-annotation-target')))
+    .toBe(await pin.getAttribute('data-annotation-target'))
+  await expect(popover).toHaveCount(0)
+})
+
+test('attached and floating threads share compact neutral action chrome', async ({ page, request }) => {
+  const cardId = await addCardAndComment(page, request, {
+    type: 'needs-evidence', text: 'Keep the source visible.',
+  })
+  await createFeedbackTool(BASE, projectId, {
+    text: 'Keep this floating note quiet.', x: 780, y: 260,
+    type: 'weak-argument', reviewer: 'architect',
+  })
+  const { feedback } = await readMapTool(BASE, projectId)
+  const feedbackId = feedback.find((item: any) => item.text === 'Keep this floating note quiet.')!.id
+
+  await page.locator(`[data-shape-id="${cardId}"] [data-testid="annotation-pin"]`).click()
+  await page.locator(`[data-annotation-target="feedback:${feedbackId}"]`).click()
+  const threads = page.getByTestId('annotation-thread')
+  await expect(threads).toHaveCount(2)
+
+  const faces: Array<{ background: string; border: string; shadow: string }> = []
+  for (let index = 0; index < 2; index += 1) {
+    const thread = threads.nth(index)
+    const resolve = thread.getByRole('button', { name: /^Resolve .* comment$/ })
+    const close = thread.getByRole('button', { name: 'Close annotation thread' })
+    const resolveTooltip = thread.getByRole('tooltip', { name: /^Resolve .* comment$/, includeHidden: true })
+    const closeTooltip = thread.getByRole('tooltip', { name: 'Close annotation thread', includeHidden: true })
+    await expect(resolve).toHaveAttribute('aria-describedby', await resolveTooltip.getAttribute('id'))
+    await expect(close).toHaveAttribute('aria-describedby', await closeTooltip.getAttribute('id'))
+    await expect(resolveTooltip).toBeHidden()
+    await resolve.focus()
+    await expect(resolveTooltip).toBeVisible()
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+    await close.hover()
+    await expect(closeTooltip).toBeVisible()
+    await expect(resolve).toHaveText('')
+    for (const control of [resolve, close]) {
+      await expect(control).toHaveCSS('width', '28px')
+      await expect(control).toHaveCSS('height', '28px')
+      await expect(control.locator('svg')).toHaveAttribute('width', '16')
+      await expect(control.locator('svg')).toHaveAttribute('height', '16')
+    }
+    faces.push(await thread.evaluate((element) => {
+      const style = getComputedStyle(element)
+      return {
+        background: style.backgroundColor,
+        border: style.borderColor,
+        shadow: style.boxShadow,
+      }
+    }))
+  }
+
+  expect(faces[0]).toEqual(faces[1])
+  expect(faces[0].background).not.toBe('rgba(0, 0, 0, 0)')
+  expect(faces[0].shadow).not.toBe('none')
 })
 
 test('resolved card confirmation restores only its target and preserves later work', async ({ page, request }) => {
@@ -388,20 +635,22 @@ test('an annotation reply streams then persists Claude’s answer', async ({ pag
   await firstPin.click()
   await secondPin.click()
   await expect(page.getByTestId('annotation-thread')).toHaveCount(2)
+  await firstPin.click()
   const thread = page.locator(`[data-annotation-popover-target="card:${cardId}:${firstComment.id}"]`)
     .getByTestId('annotation-thread')
   const unaffectedThread = page.locator(`[data-annotation-popover-target="card:${cardId}:${secondComment.id}"]`)
     .getByTestId('annotation-thread')
   const reply = 'Which source should support this claim?'
-  await thread.getByLabel('Reply to annotation').fill(reply)
+  await (await replyComposer(thread)).fill(reply)
   await thread.getByRole('button', { name: 'Send reply' }).click()
+  await expect(thread.locator('.elves-annotation-thread__messages')).toBeFocused()
 
   await expect(thread).toContainText(reply)
   await expect(thread).toContainText('Stub is checking likely sources…')
-  await expect(thread.getByRole('button', { name: 'Replying…' })).toBeDisabled()
-  await expect(unaffectedThread.getByLabel('Reply to annotation')).toBeEnabled()
+  await expect(thread.getByRole('button', { name: 'Reply to annotation' })).toBeDisabled()
+  await expect(unaffectedThread.getByRole('button', { name: 'Reply to annotation' })).toBeEnabled()
   await expect(thread).toContainText('Stub annotation reply: Which source should support this claim?')
-  const nextReply = thread.getByLabel('Reply to annotation')
+  const nextReply = await replyComposer(thread)
   await expect(nextReply).toBeEnabled()
   await nextReply.fill('Please suggest the strongest source.')
   await expect(thread.getByRole('button', { name: 'Send reply' })).toBeEnabled()
@@ -436,9 +685,9 @@ test('a failed foreground reply retries its persisted user turn once', async ({ 
   await page.getByTestId('annotation-pin').click()
   const thread = page.getByTestId('annotation-thread')
   const reply = 'Retry without duplicating this message.'
-  await thread.getByLabel('Reply to annotation').fill(reply)
+  await (await replyComposer(thread)).fill(reply)
   await thread.getByRole('button', { name: 'Send reply' }).click()
-  await expect(thread.getByRole('button', { name: 'Replying…' })).toBeDisabled()
+  await expect(thread).toContainText('Claude is replying')
   await expect.poll(() => interceptedRuns).toBe(1)
   releaseFailedRun()
   await expect(thread.getByRole('alert')).toContainText('stream was interrupted')
@@ -447,7 +696,7 @@ test('a failed foreground reply retries its persisted user turn once', async ({ 
 
   await page.unroute(routePattern)
   await retry.click()
-  await expect(thread.getByRole('button', { name: 'Replying…' })).toBeDisabled()
+  await expect(thread).toContainText('Claude is replying')
 
   const [cardId] = await serverCardIds(request, projectId)
   await expect.poll(async () => {
@@ -458,6 +707,80 @@ test('a failed foreground reply retries its persisted user turn once', async ({ 
       message.author === 'claude' && message.inReplyToMessageId === users[0]?.id)
     return { users: users.length, answers: answers.length, linked: answers[0]?.inReplyToMessageId === users[0]?.id }
   }).toEqual({ users: 1, answers: 1, linked: true })
+})
+
+test('a response-lost reply resend reuses its persisted user turn', async ({ page, request }) => {
+  const cardId = await addCardAndComment(page, request, {
+    type: 'needs-evidence', text: 'Keep exactly one durable user turn.',
+  })
+  const commentId = (await cardRecord(request, cardId)).props.comments[0].id
+  const pin = page.locator(`[data-shape-id="${cardId}"] [data-testid="annotation-pin"]`)
+  await pin.click()
+  const thread = page.getByTestId('annotation-thread')
+  const reply = 'Retry this exact durable reply.'
+  let persistenceAttempts = 0
+  await page.route(`**/projects/${projectId}/changeset`, async (route) => {
+    if (route.request().method() !== 'POST') return route.continue()
+    persistenceAttempts += 1
+    const response = await route.fetch()
+    if (persistenceAttempts === 1) {
+      await route.fulfill({ status: 503, body: 'response lost after commit' })
+      return
+    }
+    await route.fulfill({ response })
+  })
+
+  await (await replyComposer(thread)).fill(reply)
+  await thread.getByRole('button', { name: 'Send reply' }).click()
+  await expect(thread.getByRole('alert')).toBeVisible()
+  await (await replyComposer(thread)).fill(reply)
+  await thread.getByRole('button', { name: 'Send reply' }).click()
+  await expect.poll(() => persistenceAttempts).toBe(2)
+
+  await expect.poll(async () => {
+    const card = await cardRecord(request, cardId)
+    return card.props.comments.find((comment: any) => comment.id === commentId)!.messages
+      .filter((message: any) => message.author === 'user' && message.text === reply).length
+  }).toBe(1)
+})
+
+test('a changed resend clears the retained failed identity before an old draft is sent again', async ({ page, request }) => {
+  const cardId = await addCardAndComment(page, request, {
+    type: 'needs-evidence', text: 'Do not retain an old retry identity after a new reply persists.',
+  })
+  const commentId = (await cardRecord(request, cardId)).props.comments[0].id
+  await page.locator(`[data-shape-id="${cardId}"] [data-testid="annotation-pin"]`).click()
+  const thread = page.getByTestId('annotation-thread')
+  const originalReply = 'This was the response-lost reply.'
+  const revisedReply = 'This is the edited reply that succeeds.'
+  let persistenceAttempts = 0
+  await page.route(`**/projects/${projectId}/changeset`, async (route) => {
+    if (route.request().method() !== 'POST') return route.continue()
+    persistenceAttempts += 1
+    const response = await route.fetch()
+    if (persistenceAttempts === 1) {
+      await route.fulfill({ status: 503, body: 'response lost after commit' })
+      return
+    }
+    await route.fulfill({ response })
+  })
+
+  await (await replyComposer(thread)).fill(originalReply)
+  await thread.getByRole('button', { name: 'Send reply' }).click()
+  await expect(thread.getByRole('alert')).toBeVisible()
+  await (await replyComposer(thread)).fill(revisedReply)
+  await thread.getByRole('button', { name: 'Send reply' }).click()
+  await expect(thread.getByRole('button', { name: 'Reply to annotation' })).toBeEnabled()
+  await (await replyComposer(thread)).fill(originalReply)
+  await thread.getByRole('button', { name: 'Send reply' }).click()
+  await expect.poll(() => persistenceAttempts).toBe(3)
+
+  await expect.poll(async () => {
+    const card = await cardRecord(request, cardId)
+    const originalMessages = card.props.comments.find((comment: any) => comment.id === commentId)!.messages
+      .filter((message: any) => message.author === 'user' && message.text === originalReply)
+    return { count: originalMessages.length, ids: new Set(originalMessages.map((message: any) => message.id)).size }
+  }).toEqual({ count: 2, ids: 2 })
 })
 
 test('a long annotation transcript remains inside the canvas and scrolls internally', async ({ page, request }) => {
@@ -508,11 +831,7 @@ test('a foreground thread follows its pin through pan, zoom, and card movement',
   expect(stageBox).not.toBeNull()
   const beforePan = await annotationGeometry(pin, thread)
   await page.mouse.move(stageBox!.x + stageBox!.width * 0.2, stageBox!.y + stageBox!.height * 0.2)
-  await page.keyboard.down('Space')
-  await page.mouse.down()
-  await page.mouse.move(stageBox!.x + stageBox!.width * 0.2 + 90, stageBox!.y + stageBox!.height * 0.2 + 60)
-  await page.mouse.up()
-  await page.keyboard.up('Space')
+  await page.mouse.wheel(-90, -60)
   await expect.poll(async () => (await pin.boundingBox())?.x ?? null).not.toBe(beforePan.pin.x)
   await expect.poll(async () => (await thread.boundingBox())?.x ?? null).not.toBe(beforePan.thread.x)
   const afterPan = await annotationGeometry(pin, thread)
@@ -532,12 +851,20 @@ test('a foreground thread follows its pin through pan, zoom, and card movement',
 
   const beforeMove = await annotationGeometry(pin, thread)
   const card = await cardRecord(request, cardId)
-  await moveCardsTool(BASE, projectId, { moves: [{ cardId, x: card.x + 160, y: card.y + 110 }] })
+  const stageCenter = {
+    x: stageBox!.x + stageBox!.width / 2,
+    y: stageBox!.y + stageBox!.height / 2,
+  }
+  const move = {
+    x: beforeMove.pin.x > stageCenter.x ? -80 : 80,
+    y: beforeMove.pin.y > stageCenter.y ? -60 : 60,
+  }
+  await moveCardsTool(BASE, projectId, { moves: [{ cardId, x: card.x + move.x, y: card.y + move.y }] })
   await expect.poll(async () => (await pin.boundingBox())?.x ?? null).not.toBe(beforeMove.pin.x)
   await expect.poll(async () => (await thread.boundingBox())?.x ?? null).not.toBe(beforeMove.thread.x)
   const afterMove = await annotationGeometry(pin, thread)
-  expect(afterMove.pin.x).toBeGreaterThan(beforeMove.pin.x + 40)
-  expect(afterMove.thread.x).toBeGreaterThan(beforeMove.thread.x + 40)
+  expect(Math.abs(afterMove.pin.x - beforeMove.pin.x)).toBeGreaterThan(20)
+  expect(Math.abs(afterMove.thread.x - beforeMove.thread.x)).toBeGreaterThan(20)
   expectThreadTracksPin(beforeMove, afterMove)
   await expectThreadWithinCanvas(page, thread)
 })

@@ -14,6 +14,7 @@
     "test:watch": "vitest",
     "e2e": "playwright test",
     "typecheck": "tsc --noEmit",
+    "data:recover": "tsx server/recoverDataOwnership.ts",
     "mcp": "tsx mcp/index.ts"
   },
   "dependencies": {
