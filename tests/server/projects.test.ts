@@ -9,6 +9,7 @@ import {
   renameProject,
   ProjectRenameRollbackError,
   resyncProjectIds,
+  migrateProjectStorageIds,
   isValidId,
   slugify,
   projectDir,
@@ -123,8 +124,27 @@ test('create then list round-trips; duplicate name gets a suffix', async () => {
   expect(a.id).toBe('climate-essay')
   expect(b.id).toBe('climate-essay-2')
   expect(a.name).toBe('Climate Essay')
+  expect(a.storageId).toMatch(/^[0-9a-f-]{36}$/)
+  expect(b.storageId).not.toBe(a.storageId)
   const list = await listProjects(d)
   expect(list.map((p) => p.id)).toEqual(['climate-essay', 'climate-essay-2'])
+})
+
+test('legacy project storage identity is generated once and survives rename', async () => {
+  const d = await root()
+  const directory = join(d, 'projects', 'legacy')
+  await fs.mkdir(directory, { recursive: true })
+  await fs.writeFile(join(directory, 'project.json'), JSON.stringify({
+    id: 'legacy', name: 'Legacy', createdAt: '2026-07-02T10:00:00.000Z',
+  }))
+
+  await migrateProjectStorageIds(d)
+  const first = await getProject(d, 'legacy')
+  expect(first?.storageId).toMatch(/^[0-9a-f-]{36}$/)
+  await migrateProjectStorageIds(d)
+  expect((await getProject(d, 'legacy'))?.storageId).toBe(first?.storageId)
+  const renamed = await renameProject(d, 'legacy', 'Renamed Legacy')
+  expect(renamed.storageId).toBe(first?.storageId)
 })
 
 test('listProjects is sorted by createdAt', async () => {

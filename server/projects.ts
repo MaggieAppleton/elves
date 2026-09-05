@@ -11,6 +11,7 @@ export interface Project {
   id: string
   name: string
   createdAt: string
+  storageId?: string
 }
 
 export class ProjectError extends Error {
@@ -99,7 +100,9 @@ export async function listProjects(dataRoot: string): Promise<Project[]> {
       // unreadable one: skip it rather than surfacing undefined downstream.
       if (typeof meta.name !== 'string' || !meta.name) continue
       if (typeof meta.createdAt !== 'string' || !meta.createdAt) continue
-      out.push({ id, name: meta.name, createdAt: meta.createdAt })
+      const project = { id, name: meta.name, createdAt: meta.createdAt }
+      const storageId = validStorageId(meta.storageId)
+      out.push(storageId ? { ...project, storageId } : project)
     } catch {
       // Skip anything that isn't a readable project folder.
     }
@@ -118,7 +121,9 @@ export async function getProject(dataRoot: string, id: string): Promise<Project 
     // treated as "not found", matching callers that only check truthiness.
     if (typeof meta.name !== 'string' || !meta.name) return null
     if (typeof meta.createdAt !== 'string' || !meta.createdAt) return null
-    return { id, name: meta.name, createdAt: meta.createdAt }
+    const project = { id, name: meta.name, createdAt: meta.createdAt }
+    const storageId = validStorageId(meta.storageId)
+    return storageId ? { ...project, storageId } : project
   } catch {
     return null
   }
@@ -195,7 +200,7 @@ export async function createProject(
       const created = await withProjectLock(dataRoot, id, async () => {
         try {
           await fs.mkdir(join(root, id))
-          const meta: Project = { id, name: trimmed, createdAt }
+          const meta: Project = { id, name: trimmed, createdAt, storageId: randomUUID() }
           await fs.writeFile(join(root, id, 'project.json'), JSON.stringify(meta, null, 2), 'utf8')
           return meta
         } catch (error) {
@@ -207,6 +212,43 @@ export async function createProject(
       if (attempt + 1 >= MAX_CREATE_ATTEMPTS) {
         throw new ProjectError('could not allocate a unique project id', 500)
       }
+    }
+  })
+}
+
+function validStorageId(value: unknown): string | undefined {
+  return typeof value === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+    ? value
+    : undefined
+}
+
+/** Give pre-recovery project metadata a durable identity before clients load it. */
+export async function migrateProjectStorageIds(dataRoot: string): Promise<void> {
+  await withProjectNamespaceLock(dataRoot, async () => {
+    let ids: string[]
+    try {
+      ids = await fs.readdir(projectsRoot(dataRoot))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+      throw error
+    }
+    for (const id of ids) {
+      if (!isValidId(id)) continue
+      await withProjectLock(dataRoot, id, async () => {
+        const path = join(projectsRoot(dataRoot), id, 'project.json')
+        let metadata: Project
+        try {
+          metadata = JSON.parse(await fs.readFile(path, 'utf8')) as Project
+        } catch {
+          return
+        }
+        if (!metadata.name || !metadata.createdAt || validStorageId(metadata.storageId)) return
+        const migrated = { ...metadata, id, storageId: randomUUID() }
+        const temporary = join(projectsRoot(dataRoot), id, `.project.json.storage-${randomUUID()}.tmp`)
+        await fs.writeFile(temporary, JSON.stringify(migrated, null, 2), { encoding: 'utf8', flag: 'wx' })
+        await fs.rename(temporary, path)
+      })
     }
   })
 }
