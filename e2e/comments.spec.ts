@@ -395,11 +395,11 @@ test('clicking a pointer preview expands into the complete thread without coveri
   await expect(popover).toHaveAttribute('data-motion', 'enter')
   await expect(popover).toHaveAttribute('data-placement-side', placementSide!)
   expect(await popover.evaluate((element) => element.getAnimations()[0]?.startTime)).toBe(animationStart)
-  const after = await popover.boundingBox()
-  const source = await page.locator(`[data-shape-id="${cardId}"]`).boundingBox()
-  expect(after).not.toBeNull()
-  expect(source).not.toBeNull()
-  expect(overlapArea(after!, source!)).toBe(0)
+  await expect.poll(async () => {
+    const after = await popover.boundingBox()
+    const source = await page.locator(`[data-shape-id="${cardId}"]`).boundingBox()
+    return after && source ? overlapArea(after, source) : null
+  }).toBe(0)
   const thread = popover.getByTestId('annotation-thread')
   await expect(thread).toContainText('Open this conversation deliberately.')
   await expect(thread).toContainText('Show this after opening.')
