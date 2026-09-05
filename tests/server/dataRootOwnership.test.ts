@@ -130,6 +130,28 @@ test('recovery refuses an ambiguous local PID and force-removes foreign or malfo
   }
 })
 
+test('forced recovery refuses a marker whose metadata names another canonical root', async () => {
+  const { base, dataRoot, runtimeRoot } = await fixture()
+  const otherRoot = join(base, 'other-data')
+  await mkdir(otherRoot)
+  const canonicalRoot = await canonicalDataRoot(dataRoot)
+  const markerPath = ownershipMarkerPath(canonicalRoot, runtimeRoot)
+  const raw = JSON.stringify({
+    pid: 42,
+    hostname: 'another-host',
+    startedAt: '2026-09-05T09:00:00.000Z',
+    instanceId: 'wrong-root',
+    format: 1,
+    canonicalRoot: await canonicalDataRoot(otherRoot),
+  })
+  await mkdir(markerPath, { recursive: true })
+  await writeFile(join(markerPath, 'owner.json'), raw)
+
+  await expect(recoverDataRootOwnership(dataRoot, { runtimeRoot, force: true }))
+    .rejects.toThrow(/different canonical root/)
+  await expect(readFile(join(markerPath, 'owner.json'), 'utf8')).resolves.toBe(raw)
+})
+
 test.each(['marker-file', 'owner-directory'])('malformed ownership node %s fails closed and forced recovery removes it', async (shape) => {
   const { dataRoot, runtimeRoot } = await fixture()
   const canonicalRoot = await canonicalDataRoot(dataRoot)

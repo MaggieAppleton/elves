@@ -154,6 +154,7 @@ export async function recoverDataRootOwnership(
   if (!first.exists && existingArtifacts.length === 0) {
     throw new DataRootOwnershipError(`No Elves ownership marker exists at ${markerPath}.`, canonicalRoot, markerPath)
   }
+  ensureOwnerMatchesRoot(first.owner, canonicalRoot, markerPath)
   ensureRecoverable(first.owner, canonicalRoot, markerPath, options)
   if (!options.force) {
     throw new DataRootOwnershipError(
@@ -176,6 +177,7 @@ export async function recoverDataRootOwnership(
         current.owner,
       )
     }
+    ensureOwnerMatchesRoot(current.owner, canonicalRoot, markerPath)
     ensureRecoverable(current.owner, canonicalRoot, markerPath, options)
     if (current.exists) {
       const quarantine = `${markerPath}.recovered-${randomUUID()}`
@@ -253,6 +255,24 @@ async function occupiedError(
         : `PID ${owner.pid} on ${owner.hostname} could not be checked conclusively`
   }
   return new DataRootOwnershipError(ownershipMessage(canonicalRoot, markerPath, reason), canonicalRoot, markerPath, owner)
+}
+
+function ensureOwnerMatchesRoot(
+  owner: DataRootOwner | undefined,
+  canonicalRoot: string,
+  markerPath: string,
+): void {
+  if (!owner || owner.canonicalRoot === canonicalRoot) return
+  throw new DataRootOwnershipError(
+    ownershipMessage(
+      canonicalRoot,
+      markerPath,
+      `marker metadata names a different canonical root (${owner.canonicalRoot})`,
+    ),
+    canonicalRoot,
+    markerPath,
+    owner,
+  )
 }
 
 function ensureRecoverable(
