@@ -18,10 +18,12 @@ vi.mock('tldraw', () => ({
   useValue: (_name: string, getValue: () => unknown) => getValue(),
 }))
 
-import { AnnotationPopoverLayer, foregroundEntries } from '../../src/components/AnnotationPopoverLayer'
+import { AnnotationPopoverLayer, annotationPopoverMotion, foregroundEntries } from '../../src/components/AnnotationPopoverLayer'
 import {
+  annotationClosingTargets,
   clearAnnotationPresentations,
   openAnnotationThread,
+  requestAnnotationClose,
   setAnnotationHover,
   setAnnotationThreadPresentation,
   subscribeAnnotationRetry,
@@ -79,6 +81,41 @@ test('hover preview is not duplicated when its target is already open', () => {
 
   expect(foregroundEntries([target], target)).toHaveLength(1)
   expect(foregroundEntries([], target)[0].mode).toBe('preview')
+})
+
+test('motion waits for final placement, skips keyboard, and cannot restart from geometry updates', () => {
+  expect(annotationPopoverMotion('preview', 'pointer', false, false)).toBe('pending')
+  expect(annotationPopoverMotion('preview', 'pointer', true, true)).toBe('enter')
+  expect(annotationPopoverMotion('open', 'pointer', true, true)).toBe('enter')
+  expect(annotationPopoverMotion('open', 'keyboard', true, true)).toBeUndefined()
+  expect(annotationPopoverMotion('closing', 'pointer', true, true)).toBe('exit')
+})
+
+test('pointer closing keeps only an inert exit panel until its single timer settles', () => {
+  vi.useFakeTimers()
+  openAnnotationThread(failedTarget, 'pointer')
+  let tree!: ReactTestRenderer
+  act(() => { tree = create(createElement(AnnotationPopoverLayer)) })
+
+  act(() => requestAnnotationClose(failedTarget, 'pointer'))
+  expect(annotationClosingTargets()).toHaveLength(1)
+  const closing = tree.root.findByProps({ 'data-annotation-popover-target': 'feedback:shape:failed' })
+  expect(closing.props).toMatchObject({ 'data-motion': 'exit', 'aria-hidden': true })
+  expect(closing.props.onPointerDown).toBeUndefined()
+  expect(closing.props.onClick).toBeUndefined()
+  expect(closing.props.onKeyDown).toBeUndefined()
+
+  act(() => { vi.advanceTimersByTime(100) })
+  expect(tree.root.findAllByProps({ 'data-annotation-popover-target': 'feedback:shape:failed' })).toHaveLength(0)
+  act(() => tree.unmount())
+  vi.useRealTimers()
+})
+
+test('re-hovering a closing target renders one preview rather than a duplicate-key exit', () => {
+  const closing = [{ target: failedTarget, origin: 'pointer' as const }]
+  const entries = foregroundEntries([], failedTarget, closing)
+  expect(entries).toHaveLength(1)
+  expect(entries[0]).toMatchObject({ target: failedTarget, mode: 'preview' })
 })
 
 test('foreground layer wires a failed target’s visible Retry control to its exact target', () => {

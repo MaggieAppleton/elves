@@ -2,8 +2,13 @@ export type AnnotationTarget =
   | { kind: 'card'; cardId: string; commentId: string }
   | { kind: 'feedback'; feedbackId: string }
 
+export type AnnotationInteractionOrigin = 'pointer' | 'keyboard'
+export type ClosingAnnotationTarget = { target: AnnotationTarget; origin: 'pointer' }
+
 export interface AnnotationThreadPresentation {
   running: boolean
+  phase?: 'saving' | 'awaiting-first-token' | 'streaming' | 'failed'
+  replyMessageId?: string
   streamingText?: string
   error?: string | null
 }
@@ -18,11 +23,17 @@ const retryListeners = new Set<AnnotationRetryListener>()
 const resolveListeners = new Set<AnnotationActionListener>()
 const presentationListeners = new Set<() => void>()
 const presentations = new Map<string, AnnotationThreadPresentation>()
+const replyDrafts = new Map<string, string>()
 const openTargets = new Map<string, AnnotationTarget>()
+const openOrigins = new Map<string, AnnotationInteractionOrigin>()
+const closingTargets = new Map<string, ClosingAnnotationTarget>()
+const closingTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const targetListeners = new Set<AnnotationTargetListener>()
 let annotationReplyLocked = false
 let popoverDismissTimer: ReturnType<typeof setTimeout> | null = null
 let hoverTarget: AnnotationTarget | null = null
+let hoverOrigin: AnnotationInteractionOrigin = 'pointer'
+let suppressedFocusTarget: string | null = null
 
 export function annotationTargetKey(target: AnnotationTarget): string {
   return target.kind === 'card'
@@ -30,9 +41,9 @@ export function annotationTargetKey(target: AnnotationTarget): string {
     : `feedback:${target.feedbackId}`
 }
 
-export function requestAnnotationOpen(target: AnnotationTarget): void {
+export function requestAnnotationOpen(target: AnnotationTarget, origin: AnnotationInteractionOrigin = 'pointer'): void {
   if (openTargets.has(annotationTargetKey(target))) promoteAnnotationThread(target)
-  else openAnnotationThread(target)
+  else openAnnotationThread(target, origin)
 }
 
 function emitTargets(): void {
@@ -47,15 +58,28 @@ export function annotationHoverTarget(): AnnotationTarget | null {
   return hoverTarget
 }
 
+export function annotationHoverOrigin(): AnnotationInteractionOrigin { return hoverOrigin }
+export function annotationOpenOrigin(target: AnnotationTarget): AnnotationInteractionOrigin {
+  return openOrigins.get(annotationTargetKey(target)) ?? 'keyboard'
+}
+export function annotationClosingTargets(): ClosingAnnotationTarget[] {
+  return Array.from(closingTargets.values())
+}
+
 export function subscribeAnnotationTargets(listener: AnnotationTargetListener): () => void {
   targetListeners.add(listener)
   return () => targetListeners.delete(listener)
 }
 
-export function openAnnotationThread(target: AnnotationTarget): void {
+export function openAnnotationThread(target: AnnotationTarget, origin: AnnotationInteractionOrigin = 'pointer'): void {
   const key = annotationTargetKey(target)
   if (openTargets.has(key)) return
+  const closingTimer = closingTimers.get(key)
+  if (closingTimer) clearTimeout(closingTimer)
+  closingTimers.delete(key)
+  closingTargets.delete(key)
   openTargets.set(key, target)
+  openOrigins.set(key, origin)
   if (hoverTarget && annotationTargetKey(hoverTarget) === key) hoverTarget = null
   emitTargets()
 }
@@ -71,12 +95,30 @@ export function promoteAnnotationThread(target: AnnotationTarget): void {
 }
 
 export function closeAnnotationThread(target: AnnotationTarget): void {
-  if (!openTargets.delete(annotationTargetKey(target))) return
+  const key = annotationTargetKey(target)
+  if (!openTargets.delete(key)) return
+  openOrigins.delete(key)
   emitTargets()
 }
 
-export function requestAnnotationClose(target: AnnotationTarget): void {
-  closeAnnotationThread(target)
+export function requestAnnotationClose(
+  target: AnnotationTarget,
+  origin: AnnotationInteractionOrigin = 'keyboard',
+): void {
+  const key = annotationTargetKey(target)
+  if (!openTargets.has(key)) return
+  if (origin === 'pointer') {
+    closingTargets.set(key, { target, origin })
+    const previousTimer = closingTimers.get(key)
+    if (previousTimer) clearTimeout(previousTimer)
+    closingTimers.set(key, setTimeout(() => {
+      closingTimers.delete(key)
+      if (closingTargets.delete(key)) emitTargets()
+    }, 100))
+  }
+  openTargets.delete(key)
+  openOrigins.delete(key)
+  emitTargets()
 }
 
 export function subscribeAnnotationResolve(listener: AnnotationActionListener): () => void {
@@ -94,31 +136,71 @@ export function pruneAnnotationThreads(isOpenTarget: (target: AnnotationTarget) 
   for (const [key, target] of openTargets) {
     if (!isOpenTarget(target)) {
       openTargets.delete(key)
+      openOrigins.delete(key)
       changed = true
     }
   }
   if (changed) emitTargets()
 }
 
-export function setAnnotationHover(target: AnnotationTarget | null): void {
+export function setAnnotationHover(
+  target: AnnotationTarget | null,
+  origin: AnnotationInteractionOrigin = 'pointer',
+): void {
+  const key = target && annotationTargetKey(target)
+  if (origin === 'keyboard' && key && suppressedFocusTarget === key) {
+    suppressedFocusTarget = null
+    return
+  }
+  if (origin === 'pointer') suppressedFocusTarget = null
   if (target && popoverDismissTimer !== null) {
     clearTimeout(popoverDismissTimer)
     popoverDismissTimer = null
   }
   hoverTarget = target && openTargets.has(annotationTargetKey(target)) ? null : target
+  if (target) hoverOrigin = origin
   emitTargets()
+}
+
+/** Consume the synchronous focus event caused by returning pointer-close focus to its pin. */
+export function suppressNextAnnotationFocus(target: AnnotationTarget): void {
+  const key = annotationTargetKey(target)
+  suppressedFocusTarget = key
+  queueMicrotask(() => {
+    if (suppressedFocusTarget === key) suppressedFocusTarget = null
+  })
 }
 
 /** Clear all ephemeral annotation state; none of this belongs in a canvas snapshot. */
 export function clearAnnotationPresentations(): void {
   openTargets.clear()
+  openOrigins.clear()
+  closingTargets.clear()
+  closingTimers.forEach((timer) => clearTimeout(timer))
+  closingTimers.clear()
   hoverTarget = null
+  suppressedFocusTarget = null
   if (popoverDismissTimer !== null) {
     clearTimeout(popoverDismissTimer)
     popoverDismissTimer = null
   }
   clearAnnotationThreadPresentations()
   emitTargets()
+}
+
+export function annotationReplyDraft(target: AnnotationTarget): string {
+  return replyDrafts.get(annotationTargetKey(target)) ?? ''
+}
+
+export function setAnnotationReplyDraft(target: AnnotationTarget, text: string): void {
+  const key = annotationTargetKey(target)
+  if (text) replyDrafts.set(key, text)
+  else replyDrafts.delete(key)
+  presentationListeners.forEach((listener) => listener())
+}
+
+export function clearAnnotationReplyDraft(target: AnnotationTarget): void {
+  setAnnotationReplyDraft(target, '')
 }
 
 export function subscribeAnnotationReply(listener: AnnotationReplyListener): () => void {
@@ -155,8 +237,9 @@ export function setAnnotationThreadPresentation(
 
 /** Project changes invalidate every shape-local presentation immediately. */
 export function clearAnnotationThreadPresentations(): void {
-  if (!presentations.size) return
+  if (!presentations.size && !replyDrafts.size) return
   presentations.clear()
+  replyDrafts.clear()
   presentationListeners.forEach((listener) => listener())
 }
 

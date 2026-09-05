@@ -4,7 +4,8 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { expect, test, vi } from 'vitest'
 import { AnnotationPin, AnnotationThread } from '../../src/components/AnnotationThread'
 import {
-  annotationHoverTarget, clearAnnotationPresentations, setAnnotationThreadPresentation,
+  annotationHoverTarget, annotationReplyDraft, clearAnnotationPresentations, clearAnnotationReplyDraft,
+  setAnnotationReplyDraft, setAnnotationThreadPresentation,
   subscribeAnnotationReply, subscribeAnnotationRetry,
 } from '../../src/client/annotationSelection'
 import { foregroundThreadProps } from '../../src/components/AnnotationPopoverLayer'
@@ -32,9 +33,37 @@ test('preview has no reply, retry, resolve, or close controls', () => {
     onClose: vi.fn(),
   }))
 
-  expect(tree.root.findAllByProps({ className: 'elves-annotation-thread__message' })).toHaveLength(2)
+  expect(tree.root.findAllByProps({ className: 'elves-annotation-thread__message' })).toHaveLength(0)
+  expect(tree.root.findAllByProps({ className: 'elves-annotation-thread__messages' })).toHaveLength(0)
+  expect(tree.root.findByProps({ className: 'elves-annotation-thread__preview-excerpt' }).children.join(''))
+    .toBe('Initial finding')
+  expect(tree.root.findByProps({ className: 'elves-annotation-thread__reply-count' }).props['aria-label'])
+    .toBe('1 reply')
+  expect(tree.root.findByProps({ 'data-testid': 'annotation-thread' }).props['aria-label'])
+    .toBe('Annotation preview: Structure from Claude: Initial finding 1 reply')
   expect(tree.root.findAllByType('textarea')).toHaveLength(0)
   expect(tree.root.findAllByType('button')).toHaveLength(0)
+})
+
+test('preview clamps the original annotation while open mode retains every durable turn', () => {
+  const comment = {
+    id: 'c1', type: 'needs-evidence' as const, text: 'Original annotation', resolved: false, author: 'claude',
+    messages: [
+      { id: 'm1', author: 'claude', text: 'Original annotation', createdAt: '2026-09-05T09:00:00Z' },
+      { id: 'm2', author: 'user', text: 'First reply', createdAt: '2026-09-05T09:01:00Z' },
+      { id: 'm3', author: 'claude', text: 'Second reply', createdAt: '2026-09-05T09:02:00Z' },
+      { id: 'm4', author: 'user', text: 'Third reply', createdAt: '2026-09-05T09:03:00Z' },
+    ],
+  }
+  const tree = create(createElement(AnnotationThread, { comment, mode: 'preview' }))
+  expect(tree.root.findByProps({ className: 'elves-annotation-thread__preview-excerpt' }).children.join(''))
+    .toBe('Original annotation')
+  expect(tree.root.findByProps({ className: 'elves-annotation-thread__reply-count' }).props['aria-label'])
+    .toBe('3 replies')
+  expect(tree.root.findAll((node) => node.children.some((child) => child === 'First reply'))).toHaveLength(0)
+
+  act(() => tree.update(createElement(AnnotationThread, { comment, mode: 'open', onReply: vi.fn() })))
+  expect(tree.root.findAllByProps({ className: 'elves-annotation-thread__message' })).toHaveLength(4)
 })
 
 test('open mode exposes reply, retry, resolve, and close actions', () => {
@@ -237,11 +266,106 @@ test('a streaming Claude reply retains its author provenance', () => {
   const tree = create(createElement(AnnotationThread, {
     comment: { id: 'c1', type: null, text: 'Needs evidence', resolved: false, author: 'claude' },
     mode: 'open',
+    phase: 'streaming',
     streamingText: 'I am checking the source now.',
   }))
 
   expect(tree.root.findAllByProps({ className: 'elves-annotation-thread__message-author' }).map((node) => node.children.join('')))
     .toEqual(['Claude', 'Claude'])
+})
+
+test('one Claude row moves from waiting into streaming without remounting or announcing every token', () => {
+  const comment = {
+    id: 'c1', type: null, text: 'Needs evidence', resolved: false, author: 'claude',
+    messages: [
+      { id: 'c1:initial', author: 'claude', text: 'Needs evidence', createdAt: '' },
+      { id: 'user-1', author: 'user', text: 'Which source?', createdAt: '2026-09-05T10:00:00Z' },
+    ],
+  }
+  const tree = create(createElement(AnnotationThread, {
+    comment, mode: 'open', running: true, phase: 'awaiting-first-token', replyMessageId: 'user-1', streamingText: '',
+  }))
+
+  const waiting = tree.root.findByProps({ 'data-reply-phase': 'awaiting-first-token' })
+  const sent = tree.root.findAllByProps({ 'data-author': 'user' })[0]
+  expect(sent.props.className).toContain('elves-annotation-thread__message--reply-transition')
+  expect(waiting.props.className).toBe('elves-annotation-thread__message')
+  expect(waiting.props).toMatchObject({ role: 'status', 'aria-live': 'polite' })
+  expect(waiting.findByProps({ className: 'elves-annotation-thread__text' }).children.join(''))
+    .toBe('Claude is replying')
+
+  act(() => tree.update(createElement(AnnotationThread, {
+    comment, mode: 'open', running: true, phase: 'streaming', replyMessageId: 'user-1', streamingText: 'The strongest source',
+  })))
+  const streaming = tree.root.findByProps({ 'data-reply-phase': 'streaming' })
+  expect(streaming).toBe(waiting)
+  expect(streaming.props).toMatchObject({ 'aria-live': 'off' })
+  expect(streaming.findByProps({ className: 'elves-annotation-thread__text' }).children.join(''))
+    .toBe('The strongest source')
+
+  const completedComment = {
+    ...comment,
+    messages: [
+      ...comment.messages,
+      { id: 'user-1:claude', author: 'claude', text: 'The strongest source', createdAt: '2026-09-05T10:01:00Z', inReplyToMessageId: 'user-1' },
+    ],
+  }
+  act(() => tree.update(createElement(AnnotationThread, { comment: completedComment, mode: 'open' })))
+  const completed = tree.root.findAllByProps({ className: 'elves-annotation-thread__message' }).at(-1)
+  expect(completed).toBe(streaming)
+  const completion = tree.root.findByProps({ className: 'elves-annotation-thread__announcement' })
+  expect(completion.props).toMatchObject({ role: 'status', 'aria-live': 'polite' })
+  expect(completion.children.join('')).toBe('Claude replied')
+})
+
+test('saving a human turn never claims that Claude has started', () => {
+  const tree = create(createElement(AnnotationThread, {
+    comment: { id: 'c1', type: null, text: 'Needs evidence', resolved: false, author: 'claude' },
+    mode: 'open', running: true, phase: 'saving',
+  }))
+
+  expect(tree.root.findAllByProps({ 'data-reply-phase': 'awaiting-first-token' })).toHaveLength(0)
+  expect(tree.root.findAll((node) => node.children.some((child) => child === 'Claude is replying'))).toHaveLength(0)
+})
+
+test('a target-scoped draft survives close and reopen until send succeeds or the user discards it', () => {
+  const target = { kind: 'card' as const, cardId: 'shape:draft', commentId: 'comment:draft' }
+  const comment = { id: 'comment:draft', type: null, text: 'Needs evidence', resolved: false, author: 'claude' }
+  clearAnnotationPresentations()
+  setAnnotationReplyDraft(target, 'Keep this draft')
+
+  let tree = create(createElement(AnnotationThread, { comment, mode: 'open', ...foregroundThreadProps(target) }))
+  openComposer(tree)
+  expect(tree.root.findByType('textarea').props.value).toBe('Keep this draft')
+  act(() => tree.unmount())
+
+  tree = create(createElement(AnnotationThread, { comment, mode: 'open', ...foregroundThreadProps(target) }))
+  openComposer(tree)
+  expect(tree.root.findByType('textarea').props.value).toBe('Keep this draft')
+  act(() => tree.root.findByProps({ className: 'elves-annotation-thread__discard' }).props.onClick())
+  expect(annotationReplyDraft(target)).toBe('')
+  clearAnnotationReplyDraft(target)
+  clearAnnotationPresentations()
+})
+
+test('a scrolled-up transcript preserves its position and exposes a keyboard-operable newest reply control', () => {
+  const transcript = { scrollTop: 300, scrollHeight: 400, clientHeight: 100, focus: vi.fn() }
+  const comment = { id: 'c1', type: null, text: 'Needs evidence', resolved: false, author: 'claude' }
+  const tree = create(createElement(AnnotationThread, { comment, mode: 'open' }), {
+    createNodeMock: (element) => element.props.className === 'elves-annotation-thread__messages' ? transcript : null,
+  })
+  transcript.scrollTop = 0
+  act(() => tree.root.findByProps({ className: 'elves-annotation-thread__messages' }).props.onScroll({ currentTarget: transcript }))
+
+  act(() => tree.update(createElement(AnnotationThread, {
+    comment, mode: 'open', running: true, phase: 'streaming', streamingText: 'A new answer',
+  })))
+  expect(transcript.scrollTop).toBe(0)
+  const newest = tree.root.findByProps({ className: 'elves-annotation-thread__newest' })
+  expect(newest.children.join('')).toBe('Newest reply')
+  act(() => newest.props.onClick())
+  expect(transcript.scrollTop).toBe(400)
+  expect(transcript.focus).toHaveBeenCalledOnce()
 })
 
 test('simultaneous threads keep reply state isolated', () => {
@@ -463,7 +587,7 @@ test('thread controls use the embedded composer and typed header layout', () => 
   expect(css).toMatch(/\.elves-annotation-thread__send\s*\{[^}]*position:\s*absolute/s)
   expect(css).toMatch(/\.elves-annotation-thread__send\s*\{[^}]*border-radius:\s*50%/s)
   expect(css).toMatch(/\.elves-annotation-thread__send\s*\{[^}]*right:\s*8px[^}]*bottom:\s*8px/s)
-  expect(css).toMatch(/\.elves-annotation-thread__reply\s+textarea\s*\{[^}]*padding:\s*9px 43px 9px 10px/s)
+  expect(css).toMatch(/\.elves-annotation-thread__reply\s+textarea\s*\{[^}]*padding:\s*9px 76px 9px 10px/s)
   expect(css).toMatch(/\.elves-annotation-thread__reply\s+textarea\s*\{[^}]*resize:\s*none/s)
   expect(css).not.toContain('.elves-annotation-thread__reply-resize')
   expect(css).toMatch(/\.elves-annotation-thread__reply\s+textarea:focus-visible\s*\{[^}]*outline:\s*none/s)
@@ -477,4 +601,22 @@ test('thread controls use the embedded composer and typed header layout', () => 
   expect(css).toMatch(/\.elves-annotation-thread__close\s*\{[^}]*width:\s*28px[^}]*height:\s*28px/s)
   expect(css).toMatch(/(?=[^{}]*\.elves-annotation-thread__resolve:hover)(?=[^{}]*\.elves-annotation-thread__retry:hover)[^{}]*\{[^}]*\}/s)
   expect(css).toMatch(/(?=[^{}]*\.elves-annotation-thread__resolve:focus-visible)(?=[^{}]*\.elves-annotation-thread__retry:focus-visible)[^{}]*\{[^}]*\}/s)
+  expect(css).toMatch(/\.elves-annotation-thread__message--reply-transition\s*\{[^}]*140ms/s)
+  expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*animation:\s*none/)
+})
+
+test('compact previews clamp to three lines and popover motion changes only opacity and transform', () => {
+  const css = readFileSync('src/components/annotationThread.css', 'utf8')
+  const previewRule = css.match(/\.elves-annotation-thread__preview-excerpt\s*\{([^}]*)\}/)?.[1] ?? ''
+  expect(previewRule).toMatch(/-webkit-line-clamp:\s*3/)
+  expect(previewRule).toMatch(/overflow:\s*hidden/)
+  expect(css).toMatch(/data-motion="enter"[^}]*120ms/)
+  expect(css).toMatch(/data-motion="exit"[^}]*100ms/)
+  expect(css).toMatch(/data-motion="exit"[^}]*ease-out/)
+  expect(css).toMatch(/data-motion="exit"[^}]*pointer-events:\s*none/)
+  const keyframes = css.match(/@keyframes elves-annotation-popover-(?:enter|exit)[\s\S]*?(?=@media)/)?.[0] ?? ''
+  expect(keyframes).toContain('opacity')
+  expect(keyframes).toContain('transform')
+  expect(keyframes).not.toMatch(/\b(?:left|top|width|height)\s*:/)
+  expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*animation:\s*none/)
 })

@@ -64,6 +64,32 @@ test.beforeEach(async ({ request }) => {
   await resetReviews(request)
 })
 
+test('Escape closes the review menu and returns focus to its trigger', async ({ page }) => {
+  await openCanvas(page)
+
+  const reviewButton = page.getByTestId('review-button')
+  const reviewMenu = page.getByTestId('review-menu')
+  const focusInput = page.getByTestId('review-focus')
+  const menuControl = page.getByTestId('review-summon-trimmer')
+  const projectSwitcher = page.getByTestId('project-switcher')
+
+  await reviewButton.click()
+  await focusInput.fill('opening')
+  await page.keyboard.press('Escape')
+  await expect(reviewMenu).toHaveCount(0)
+  await expect(reviewButton).toBeFocused()
+
+  await page.keyboard.press('Tab')
+  await expect(projectSwitcher).toBeFocused()
+
+  await reviewButton.click()
+  await menuControl.focus()
+  await page.keyboard.press('Escape')
+  await expect(reviewMenu).toHaveCount(0)
+  await expect(reviewButton).toBeFocused()
+
+})
+
 // Summoning now spawns a headless agent SERVER-SIDE (server/app.ts's
 // launchReviewRun) rather than leaving the pass `pending` for an external agent
 // to pick up. That agent can't be stubbed via browser-level page.route (it's

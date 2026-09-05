@@ -50,5 +50,11 @@ export function attachRealtime(httpServer: Server) {
     send(JSON.stringify({ projectId, reviews }))
   }
 
-  return { broadcast, broadcastPresence, broadcastReviews, wss }
+  function close() {
+    for (const ws of clients) ws.terminate()
+    clients.clear()
+    wss.close()
+  }
+
+  return { broadcast, broadcastPresence, broadcastReviews, wss, close }
 }
